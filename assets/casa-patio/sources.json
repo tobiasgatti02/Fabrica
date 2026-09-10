@@ -1,0 +1,105 @@
+[
+  {
+    "asset": "concrete_wall_006",
+    "map": "Diffuse",
+    "source": "https://polyhaven.com/a/concrete_wall_006",
+    "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/concrete_wall_006/concrete_wall_006_diff_1k.jpg",
+    "license": "CC0",
+    "path": "assets/casa-patio/concrete_wall_006_Diffuse.jpg"
+  },
+  {
+    "asset": "concrete_wall_006",
+    "map": "nor_gl",
+    "source": "https://polyhaven.com/a/concrete_wall_006",
+    "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/concrete_wall_006/concrete_wall_006_nor_gl_1k.jpg",
+    "license": "CC0",
+    "path": "assets/casa-patio/concrete_wall_006_nor_gl.jpg"
+  },
+  {
+    "asset": "concrete_wall_006",
+    "map": "Rough",
+    "source": "https://polyhaven.com/a/concrete_wall_006",
+    "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/concrete_wall_006/concrete_wall_006_rough_1k.jpg",
+    "license": "CC0",
+    "path": "assets/casa-patio/concrete_wall_006_rough.jpg"
+  },
+  {
+    "asset": "wood_table_001",
+    "map": "Diffuse",
+    "source": "https://polyhaven.com/a/wood_table_001",
+    "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/wood_table_001/wood_table_001_diff_1k.jpg",
+    "license": "CC0",
+    "path": "assets/casa-patio/wood_table_001_Diffuse.jpg"
+  },
+  {
+    "asset": "wood_table_001",
+    "map": "nor_gl",
+    "source": "https://polyhaven.com/a/wood_table_001",
+    "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/wood_table_001/wood_table_001_nor_gl_1k.jpg",
+    "license": "CC0",
+    "path": "assets/casa-patio/wood_table_001_nor_gl.jpg"
+  },
+  {
+    "asset": "wood_table_001",
+    "map": "Rough",
+    "source": "https://polyhaven.com/a/wood_table_001",
+    "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/wood_table_001/wood_table_001_rough_1k.jpg",
+    "license": "CC0",
+    "path": "assets/casa-patio/wood_table_001_rough.jpg"
+  },
+  {
+    "asset": "fabric_pattern_07",
+    "map": "col_1",
+    "source": "https://polyhaven.com/a/fabric_pattern_07",
+    "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/fabric_pattern_07/fabric_pattern_07_col_1_1k.jpg",
+    "license": "CC0",
+    "path": "assets/casa-patio/fabric_pattern_07_Diffuse.jpg"
+  },
+  {
+    "asset": "fabric_pattern_07",
+    "map": "nor_gl",
+    "source": "https://polyhaven.com/a/fabric_pattern_07",
+    "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/fabric_pattern_07/fabric_pattern_07_nor_gl_1k.jpg",
+    "license": "CC0",
+    "path": "assets/casa-patio/fabric_pattern_07_nor_gl.jpg"
+  },
+  {
+    "asset": "fabric_pattern_07",
+    "map": "Rough",
+    "source": "https://polyhaven.com/a/fabric_pattern_07",
+    "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/fabric_pattern_07/fabric_pattern_07_rough_1k.jpg",
+    "license": "CC0",
+    "path": "assets/casa-patio/fabric_pattern_07_rough.jpg"
+  },
+  {
+    "asset": "oak_wood_planks",
+    "map": "Diffuse",
+    "source": "https://polyhaven.com/a/oak_wood_planks",
+    "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/oak_wood_planks/oak_wood_planks_diff_1k.jpg",
+    "license": "CC0",
+    "path": "assets/casa-patio/oak_wood_planks_Diffuse.jpg"
+  },
+  {
+    "asset": "oak_wood_planks",
+    "map": "nor_gl",
+    "source": "https://polyhaven.com/a/oak_wood_planks",
+    "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/oak_wood_planks/oak_wood_planks_nor_gl_1k.jpg",
+    "license": "CC0",
+    "path": "assets/casa-patio/oak_wood_planks_nor_gl.jpg"
+  },
+  {
+    "asset": "oak_wood_planks",
+    "map": "Rough",
+    "source": "https://polyhaven.com/a/oak_wood_planks",
+    "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/oak_wood_planks/oak_wood_planks_rough_1k.jpg",
+    "license": "CC0",
+    "path": "assets/casa-patio/oak_wood_planks_rough.jpg"
+  },
+  {
+    "asset": "rosendal_plains_2",
+    "source": "https://polyhaven.com/a/rosendal_plains_2",
+    "url": "https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/1k/rosendal_plains_2_1k.hdr",
+    "license": "CC0",
+    "path": "web/public/environment/rosendal-plains-1k.hdr"
+  }
+]
