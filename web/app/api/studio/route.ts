@@ -200,7 +200,9 @@ export async function GET(request: Request) {
       share: owner ? project.share : null,
       owner,
       project: { id: project.id, name: project.name },
-      projects: owner ? projects : [],
+      projects: owner
+        ? projects.map((item) => ({ id: item.id, name: item.name }))
+        : [],
     });
   } catch (error) {
     return failure(error);
@@ -246,6 +248,8 @@ export async function POST(request: Request) {
           (!body.camera ||
             !Array.isArray(body.camera.position) ||
             !Array.isArray(body.camera.target) ||
+            body.camera.position.length !== 3 ||
+            body.camera.target.length !== 3 ||
             [...body.camera.position, ...body.camera.target].some(
               (number: unknown) =>
                 typeof number !== 'number' || !Number.isFinite(number),

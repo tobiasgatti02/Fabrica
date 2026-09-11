@@ -141,6 +141,20 @@ export async function POST(request: Request) {
       if (name.length < 2 || name.length > 100) {
         return json({ error: 'Ingresá tu nombre.' }, 400);
       }
+      const passwordSignals = [
+        /[a-z]/.test(password) && /[A-Z]/.test(password),
+        /\d/.test(password),
+        /[^A-Za-z0-9]/.test(password),
+      ].filter(Boolean).length;
+      if (passwordSignals < 1) {
+        return json(
+          {
+            error:
+              'Sumá una mayúscula, un número o un símbolo a tu contraseña.',
+          },
+          400,
+        );
+      }
       const [existing] = await database
         .select({ id: studioUsers.id })
         .from(studioUsers)

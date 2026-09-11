@@ -128,6 +128,18 @@ function parseStoredViews(value?: string): StoredView[] {
   }
 }
 
+function samePoint(
+  first?: [number, number, number],
+  second?: [number, number, number],
+) {
+  if (!first || !second) return false;
+  return Math.hypot(
+    first[0] - second[0],
+    first[1] - second[1],
+    first[2] - second[2],
+  ) < 0.02;
+}
+
 function addBox(
   group: THREE.Group,
   size: [number, number, number],
@@ -1388,7 +1400,8 @@ export default function Studio({
       : comment.scope === 'point' &&
         comment.version === version &&
         selection &&
-        comment.surface === selection.surface,
+        comment.surface === selection.surface &&
+        samePoint(comment.point, selection.point),
   );
   const activeVersion = versions.find((item) => item.id === version);
   const professional = role === 'professional' && canEdit;
@@ -1792,7 +1805,8 @@ export default function Studio({
                       (item) =>
                         item.scope === 'point' &&
                         item.version === version &&
-                        item.surface === selection.surface,
+                        item.surface === selection.surface &&
+                        samePoint(item.point, selection.point),
                     ).length
                   : '—'}
               </span>
@@ -1948,7 +1962,7 @@ export default function Studio({
 
         <footer className="version-dock">
           <div className="version-title">
-            <span>Entregas</span>
+            <span>Versiones</span>
             <strong>
               {activeVersion?.name ||
                 (version === 'v03'

@@ -216,10 +216,10 @@ export function ImportDialog({
       }}
     >
       <DialogContent className="import-dialog" showCloseButton={!busy}>
-        <DialogTitle>Una nueva entrega</DialogTitle>
+        <DialogTitle>Nueva versión</DialogTitle>
         <DialogDescription>
-          Importá el modelo con sus texturas. Se guardará como borrador hasta
-          que lo publiques para el cliente.
+          Elegí el proyecto, nombrá la versión e importá el modelo con sus
+          texturas. Se guardará como borrador hasta que lo publiques.
         </DialogDescription>
         <label
           className="import-drop"
@@ -343,7 +343,7 @@ export function ImportDialog({
               disabled={!files.length || !title.trim() || !project}
               onClick={save}
             >
-              <Upload /> Guardar entrega
+              <Upload /> Guardar versión
             </Button>
           )}
           {busy && <Loader2 className="animate-spin" />}

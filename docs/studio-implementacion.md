@@ -1,14 +1,14 @@
 # Studio: revisión, importación y entregas
 
-Implementado el 10 de septiembre de 2026. Disponible en la vista local `/estudio`; estos cambios no se publicaron en el sitio alojado.
+Actualizado el 11 de septiembre de 2026. Disponible en la vista local `/estudio`.
 
 ## Flujos implementados
 
-- Selector de entrada: cliente o profesional (arquitectura/interiorismo). En desarrollo se identifica explícitamente como prueba local. El build alojado usa el inicio de sesión de ChatGPT proporcionado por Sites; no incluye la identidad de desarrollo.
-- Cada identidad tiene un proyecto propio. El enlace de revisión contiene un token del proyecto y exige identidad. Quien accede por ese enlace puede leer entregas publicadas y comentar, pero no importar, publicar ni resolver. El propietario puede revisar su proyecto como cliente; esa elección de interfaz no modifica sus permisos de propietario.
-- Entregas importadas inicialmente como borradores, publicación explícita, selector de versiones y filtrado de comentarios por entrega. V02/V03 son dos variantes de materiales del proyecto de ejemplo.
-- Comentarios con coordenadas locales sobre el modelo, recuperación del punto al seleccionarlos, filtro por superficie o toda la versión y resolución limitada a la versión/superficie. Guardado en D1; actualización cada 15 segundos mientras la página está visible y al recuperar el foco.
-- Cámara orbital libre, desplazamiento, zoom, rotación automática, cinco vistas, regreso a la vista elegida y alternancia de pantalla completa. Las transiciones dejan de controlar la cámara cuando comienza un gesto manual.
+- Acceso con email y contraseña o con ChatGPT. El registro guarda PBKDF2-SHA-256 con salt único, nunca la contraseña original; la sesión usa una cookie `HttpOnly`, `SameSite=Lax` y `Secure` en HTTPS. El campo permite ver u ocultar la contraseña y comunica su fortaleza antes de crear la cuenta.
+- Cada identidad profesional puede crear varios proyectos y alternarlos desde la cabecera. Cada proyecto conserva su propio enlace de revisión. Quien accede por ese enlace puede leer entregas publicadas y comentar, pero no importar, publicar, crear vistas ni resolver.
+- El importador exige elegir el proyecto y nombrar la entrega. Las entregas nacen como borradores, se publican de forma explícita y siempre pertenecen al proyecto seleccionado.
+- Comentarios separados en dos alcances: “Todo el proyecto”, visible en todas sus entregas, y “Punto elegido”, guardado con versión, superficie, coordenadas y cámara. Cada comentario se resuelve individualmente para no cerrar por accidente otros puntos de la misma superficie.
+- Cámara orbital libre, desplazamiento, zoom, rotación automática, cinco vistas base y vistas guardadas por versión. Un profesional puede nombrar la posición actual de cámara y publicarla junto con esa entrega.
 - Panel de comentarios recuperable en escritorio y móvil, con estado accesible y contenido oculto fuera de la navegación por teclado.
 
 ## Importación real y límites
@@ -38,9 +38,10 @@ Fuentes:
 ## Verificación
 
 - TypeScript y build de producción completados.
-- Prueba de integración `web/tests/studio-api.mjs`: dos partes reales (8 MiB + 53 bytes), igualdad SHA-256 de descarga, archivos vacíos/excesivos rechazados, cancelación, borradores y archivos ocultos al cliente, publicación, comentario del cliente y resolución que no modifica otra versión.
+- Prueba de integración `web/tests/studio-api.mjs`: proyectos independientes, dos partes reales (8 MiB + 53 bytes), igualdad SHA-256 de descarga, archivos vacíos/excesivos rechazados, cancelación, borradores ocultos, publicación, vistas guardadas, comentarios generales y espaciales, permisos de cliente y resolución individual.
+- Prueba de registro, cierre de sesión y nuevo login contra la API local; los datos temporales de esa prueba se eliminaron al finalizar.
 - Lectura del modelo SketchUp y del importador mediante DOMParser de LinkeDOM en un entorno de prueba temporal; sin agregar dependencias a la aplicación.
-- Migración D1 generada e inspeccionada y aplicada únicamente a la base local. El despliegue debe aplicar la migración incluida antes de servir las rutas persistentes.
+- Migraciones Drizzle para Neon Postgres generadas, inspeccionadas y aplicadas a la rama de desarrollo configurada.
 - No se hizo QA visual automatizada en navegador ni se verificó el login del sitio alojado. El acceso y las invitaciones del sitio siguen sujetos a su política privada de Sites.
 
 Para repetir la integración: levantar el servidor de desarrollo en `http://localhost:3000` y ejecutar `node tests/studio-api.mjs` desde `web`. Usa una identidad de prueba aislada y deja registros de prueba en la base local de esa identidad.
