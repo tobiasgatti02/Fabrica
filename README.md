@@ -2,7 +2,7 @@
 
 Estudio virtual en español para arquitectos, ingenieros civiles, interioristas y sus clientes. Modelos navegables en la web, entregas versionadas y conversaciones ancladas al espacio.
 
-**Estado al 10 de septiembre de 2026:** documentación de producto y aplicación web en `web/`. La landing incluye una casa original de Blender con GLB/Draco, materiales PBR, construcción guiada por scroll y entrada al interior; `/estudio` incluye acceso cliente/profesional, cámara libre, versiones publicables, comentarios persistentes e importación multipart. Se probó un DAE exportado desde SketchUp; no hay importadores certificados ni resultados de rendimiento en dispositivos. Ver [estado y límites del Studio](docs/studio-implementacion.md). Ver [implementación de la landing](docs/landing-implementacion.md).
+**Estado al 11 de septiembre de 2026:** documentación de producto y aplicación web en `web/`. La landing incluye una casa original de Blender con GLB/Draco, materiales PBR, construcción guiada por scroll y entrada al interior; `/estudio` incluye acceso cliente/profesional, cámara libre, versiones publicables, comentarios persistentes e importación multipart. Los datos relacionales se guardan en Neon Postgres mediante Drizzle y los archivos grandes permanecen en almacenamiento de objetos. Se probó un DAE exportado desde SketchUp; no hay importadores certificados ni resultados de rendimiento en dispositivos. Ver [estado y límites del Studio](docs/studio-implementacion.md). Ver [implementación de la landing](docs/landing-implementacion.md).
 
 ## Recomendación
 
@@ -15,6 +15,18 @@ La fluidez se consigue preparando geometría y texturas, reutilizando instancias
 SketchUp y GLB son el punto de partida recomendado para casas/interiores. IFC se prueba temprano para BIM. AutoCAD DWG/DXF requiere diferenciar dibujos 2D y modelos 3D; RVT, PLN, 3DM y los archivos de render tienen rutas y restricciones propias. La matriz de importación distingue capacidades documentadas de integración aún pendiente.
 
 La landing contará una casa cálida que evoluciona con el scroll: **cimientos → construcción → pintura/materiales → interior**. La escena se produce especialmente para esa narrativa. La plataforma dará protagonismo al modelo, a las revisiones y al comentario del cliente, con una interfaz más contenida.
+
+## Desarrollo local
+
+La aplicación requiere Node.js 22.13 o posterior. Dentro de `web/`, copiá `.env.example` a `.env.local`, reemplazá los valores por las conexiones pooled y direct de tu proyecto de Neon y ejecutá:
+
+```bash
+npm install
+npm run db:migrate
+npm run dev
+```
+
+`DATABASE_URL` es la conexión pooled usada por la aplicación. `DATABASE_URL_UNPOOLED` es la conexión directa reservada para migraciones. Ninguno de los dos secretos se versiona.
 
 ## Documentos y orden de lectura
 

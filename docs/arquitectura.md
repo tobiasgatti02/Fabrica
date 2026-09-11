@@ -19,7 +19,7 @@ El navegador recibirá una representación preparada para visualizar. El archivo
 | Escenas visuales | glTF/GLB + texturas KTX2 + compresión Meshopt a evaluar frente a Draco | Recursos de visualización transportables; elegir compresión por tiempo hasta interacción y calidad, no solo por tamaño de descarga. |
 | BIM | IFC → That Open / Fragments como candidato | Mantiene geometría, propiedades y relaciones; su importador IFC admite ejecución en frontend y backend. Probar clipping, selección y materiales con la versión del renderer elegida. |
 | Animación landing | GSAP ScrollTrigger sobre scroll nativo | Un progreso controla cámara y etapas. No sumar otra biblioteca de scroll hasta justificarla en dispositivos reales. |
-| API y datos | API TypeScript, Postgres administrado y migraciones con Drizzle | Persistencia de proyectos, miembros, revisiones, comentarios y trabajos. Neon/Lakebase Postgres es un candidato; proveedor final pendiente. |
+| API y datos | API TypeScript, Neon Postgres y migraciones con Drizzle | Persistencia de proyectos, cuentas, sesiones, revisiones, comentarios y trabajos. La app usa el driver HTTP serverless y reserva la conexión directa para migraciones. |
 | Archivos | Almacenamiento de objetos privado compatible con S3 y entrega autorizada por CDN | Subida directa y reanudable; los archivos grandes no pasan por la API de interfaz. Elegir región, proveedor y caché tras medir latencia y coste. |
 | Conversión | Cola persistente + procesos aislados en contenedores | Trabajos asíncronos, límites de RAM/CPU y reintentos. Algunos SDK CAD requieren sistemas operativos o licencias específicos. |
 

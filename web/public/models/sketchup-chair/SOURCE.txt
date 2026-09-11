@@ -1,0 +1,18 @@
+SketchUp interoperability sample — Chair
+
+Source repository: ros-simulation/gazebo_ros_pkgs
+Branch: noetic-devel
+Source directory: gazebo_plugins/Media/models/chair
+https://github.com/ros-simulation/gazebo_ros_pkgs/tree/noetic-devel/gazebo_plugins/Media/models/chair
+
+Original files preserved without modification:
+models/Chair.dae -> Chair.dae
+images/texture0.jpg -> texture0.jpg
+images/texture1.jpg -> texture1.jpg
+
+DAE authoring_tool: Google SketchUp 7.0.8657
+Original creation date in DAE: 2008-11-26
+Repository package declares BSD and Apache 2.0 licenses in gazebo_plugins/package.xml.
+The asset contains no separate author credit or asset-specific license notice.
+Included as an interoperability test fixture, not as original Fabrica artwork.
+Retrieved 2026-09-10. Consult the upstream repository for licensing provenance before commercial reuse of this specific sample.
