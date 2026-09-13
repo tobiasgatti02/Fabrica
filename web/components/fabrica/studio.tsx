@@ -22,23 +22,32 @@ import {
   Rotate3D,
   Send,
   Share2,
+  Link2,
+  CalendarClock,
+  RotateCcw,
   Sparkles,
   Sun,
   FileBox as FileBoxIcon,
   UserRound,
+  UserPlus,
   Upload,
   Plus,
   Minus,
   Move,
   Play,
   BriefcaseBusiness,
+  UsersRound,
+  Mail,
   Download,
   Camera,
   FolderPlus,
-  LockKeyhole,
-  Mail,
-  ShieldCheck,
   LogOut,
+  Box,
+  CopyPlus,
+  FileText,
+  Files,
+  Ruler,
+  X,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
@@ -49,14 +58,21 @@ import {
   DialogTitle,
   DialogDescription,
 } from '@/components/ui/dialog';
+import { ImportDialog } from './import-dialog';
+import { studioRequest } from '@/features/studio/api';
 import {
-  ImportDialog,
-  studioRequest,
+  formatBytes,
+  parseJson,
+  parseVersionSettings,
+  versionLabel,
   type StoredVersion,
   type StoredFile,
+  type StoredClient,
   type StoredProject,
   type StoredView,
-} from './import-dialog';
+  type StoredMeasurement,
+  type StoredPlan,
+} from '@/features/studio/domain';
 import {
   loadModel,
   disposeModel,
@@ -64,6 +80,7 @@ import {
   viewFormats,
 } from './model-import';
 import { Wordmark } from './landing';
+import { StudioAuthPanel } from './studio-auth-panel';
 
 type Stage = 0 | 1 | 2 | 3;
 type Version = string;
@@ -71,6 +88,7 @@ type Version = string;
 type SurfaceSelection = {
   surface: string;
   point: [number, number, number];
+  anchor?: string;
 };
 
 type Viewpoint = {
@@ -80,6 +98,8 @@ type Viewpoint = {
 
 type Comment = {
   id: string | number;
+  anchor: string;
+  parent?: string | null;
   author: string;
   initials: string;
   text: string;
@@ -90,6 +110,20 @@ type Comment = {
   point?: [number, number, number];
   camera?: Viewpoint;
   state: 'abierto' | 'resuelto';
+};
+
+type SceneObject = { key: string; label: string };
+type ReferencePoint = {
+  id: string;
+  label: string;
+  point: [number, number, number];
+  count: number;
+  resolved: boolean;
+};
+
+type Measurement = Omit<StoredMeasurement, 'startPoint' | 'endPoint'> & {
+  startPoint: [number, number, number];
+  endPoint: [number, number, number];
 };
 
 const stages = [
@@ -119,13 +153,8 @@ const importedViewDirections: Record<string, THREE.Vector3> = {
 };
 
 function parseStoredViews(value?: string): StoredView[] {
-  if (!value) return [];
-  try {
-    const parsed = JSON.parse(value);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
+  const parsed = parseJson<StoredView[]>(value, []);
+  return Array.isArray(parsed) ? parsed : [];
 }
 
 function samePoint(
@@ -133,11 +162,13 @@ function samePoint(
   second?: [number, number, number],
 ) {
   if (!first || !second) return false;
-  return Math.hypot(
-    first[0] - second[0],
-    first[1] - second[1],
-    first[2] - second[2],
-  ) < 0.02;
+  return (
+    Math.hypot(
+      first[0] - second[0],
+      first[1] - second[1],
+      first[2] - second[2],
+    ) < 0.02
+  );
 }
 
 function addBox(
@@ -158,12 +189,18 @@ function addBox(
 
 function HouseScene({
   stage,
-  version,
-  roofVisible,
-  commentMode,
+  palette,
+  interactionMode,
   view,
   selection,
   onSelect,
+  onMeasure,
+  hiddenObjects,
+  referencePoints,
+  measurements,
+  measurementStart,
+  onReferenceSelect,
+  onObjectCatalog,
   cameraCommand,
   imported,
   savedViews,
@@ -174,42 +211,58 @@ function HouseScene({
   savedViews: StoredView[];
   onCameraChange: (viewpoint: Viewpoint) => void;
   stage: Stage;
-  version: Version;
-  roofVisible: boolean;
-  commentMode: boolean;
+  palette: 'original' | 'warm';
+  interactionMode: 'navigate' | 'comment' | 'measure';
   view: string;
   selection: SurfaceSelection | null;
   onSelect: (selection: SurfaceSelection) => void;
+  onMeasure: (selection: SurfaceSelection) => void;
+  hiddenObjects: string[];
+  referencePoints: ReferencePoint[];
+  measurements: Measurement[];
+  measurementStart: SurfaceSelection | null;
+  onReferenceSelect: (reference: ReferencePoint) => void;
+  onObjectCatalog: (objects: SceneObject[]) => void;
 }) {
   const host = useRef<HTMLDivElement>(null);
   const state = useRef({
     stage,
-    version,
-    roofVisible,
-    commentMode,
+    palette,
+    interactionMode,
     view,
     selection,
     onSelect,
+    onMeasure,
+    hiddenObjects,
+    referencePoints,
+    measurements,
+    measurementStart,
+    onReferenceSelect,
+    onObjectCatalog,
     cameraCommand,
     imported,
     savedViews,
     onCameraChange,
   });
-  const [pin, setPin] = useState<{ x: number; y: number; visible: boolean }>({
-    x: 0,
-    y: 0,
-    visible: false,
-  });
+  const [pins, setPins] = useState<
+    Array<ReferencePoint & { x: number; y: number; visible: boolean }>
+  >([]);
 
   useEffect(() => {
     state.current = {
       stage,
-      version,
-      roofVisible,
-      commentMode,
+      palette,
+      interactionMode,
       view,
       selection,
       onSelect,
+      onMeasure,
+      hiddenObjects,
+      referencePoints,
+      measurements,
+      measurementStart,
+      onReferenceSelect,
+      onObjectCatalog,
       cameraCommand,
       imported,
       savedViews,
@@ -217,12 +270,18 @@ function HouseScene({
     };
   }, [
     stage,
-    version,
-    roofVisible,
-    commentMode,
+    palette,
+    interactionMode,
     view,
     selection,
     onSelect,
+    onMeasure,
+    hiddenObjects,
+    referencePoints,
+    measurements,
+    measurementStart,
+    onReferenceSelect,
+    onObjectCatalog,
     cameraCommand,
     imported,
     savedViews,
@@ -290,6 +349,22 @@ function HouseScene({
     const model = new THREE.Group();
     model.rotation.y = -0.11;
     scene.add(model);
+    const markup = new THREE.Group();
+    scene.add(markup);
+
+    const clearMarkup = () => {
+      while (markup.children.length) {
+        const child = markup.children[0];
+        markup.remove(child);
+        if (child instanceof THREE.Line || child instanceof THREE.Mesh) {
+          child.geometry.dispose();
+          const material = Array.isArray(child.material)
+            ? child.material
+            : [child.material];
+          material.forEach((item) => item.dispose());
+        }
+      }
+    };
 
     const concrete = new THREE.MeshStandardMaterial({
       color: '#bbb9ae',
@@ -511,6 +586,24 @@ function HouseScene({
       (object): object is THREE.Mesh =>
         object instanceof THREE.Mesh && Boolean(object.userData.surface),
     );
+    const describeObjects = (root: THREE.Object3D) => {
+      const seen = new Map<string, string>();
+      let unnamed = 0;
+      root.traverse((object) => {
+        if (!(object instanceof THREE.Mesh)) return;
+        const label =
+          object.userData.surface ||
+          object.name.trim() ||
+          `Objeto ${++unnamed}`;
+        const key = String(label);
+        if (!seen.has(key)) seen.set(key, String(label));
+        object.userData.fabricaObjectKey = key;
+      });
+      return Array.from(seen, ([key, label]) => ({ key, label })).sort((a, b) =>
+        a.label.localeCompare(b.label, 'es'),
+      );
+    };
+    state.current.onObjectCatalog(describeObjects(model));
     const raycaster = new THREE.Raycaster();
     const pointer = new THREE.Vector2();
     let down = { x: 0, y: 0 };
@@ -519,7 +612,7 @@ function HouseScene({
     };
     const onPointerUp = (event: PointerEvent) => {
       if (
-        !state.current.commentMode ||
+        state.current.interactionMode === 'navigate' ||
         Math.hypot(event.clientX - down.x, event.clientY - down.y) > 5
       )
         return;
@@ -540,22 +633,30 @@ function HouseScene({
         });
       if (!hit) return;
       const local = root.worldToLocal(hit.point.clone());
-      state.current.onSelect({
+      const next = {
         surface:
           hit.object.userData.surface ||
           hit.object.name ||
           'Superficie del modelo',
         point: [local.x, local.y, local.z],
-      });
+      } as SurfaceSelection;
+      if (state.current.interactionMode === 'measure') {
+        state.current.onMeasure(next);
+      } else {
+        state.current.onSelect(next);
+      }
     };
     renderer.domElement.addEventListener('pointerdown', onPointerDown);
     renderer.domElement.addEventListener('pointerup', onPointerUp);
 
     let frame = 0;
+    let tick = 0;
     let lastView = 'Exterior';
     let lastCommand = 0;
     let transitioning = false;
     let loaded: THREE.Group | null = null;
+    let catalogRoot: THREE.Object3D | null = model;
+    let measurementSignature = '';
     const stopTransition = () => {
       transitioning = false;
     };
@@ -618,11 +719,17 @@ function HouseScene({
 
     const render = () => {
       frame = requestAnimationFrame(render);
+      tick++;
       const current = state.current;
       if (loaded !== current.imported) {
         if (loaded) scene.remove(loaded);
         loaded = current.imported;
         if (loaded) scene.add(loaded);
+        const nextCatalogRoot = loaded || model;
+        if (catalogRoot !== nextCatalogRoot) {
+          catalogRoot = nextCatalogRoot;
+          current.onObjectCatalog(describeObjects(nextCatalogRoot));
+        }
         frameView(current.view, loaded);
         transitioning = true;
       }
@@ -631,19 +738,71 @@ function HouseScene({
       structure.visible = current.stage >= 1;
       materials.visible = current.stage >= 2;
       interior.visible = current.stage >= 3;
-      roof.visible = current.stage >= 1 && current.roofVisible;
+      roof.visible = current.stage >= 1;
+      const hidden = new Set(current.hiddenObjects);
+      (loaded || model).traverse((object) => {
+        if (object instanceof THREE.Mesh) {
+          object.visible = !hidden.has(
+            String(
+              object.userData.fabricaObjectKey ||
+                object.userData.surface ||
+                object.name,
+            ),
+          );
+        }
+      });
+      const nextMeasurementSignature = JSON.stringify([
+        current.measurements.map((item) => [
+          item.id,
+          item.startPoint,
+          item.endPoint,
+        ]),
+        current.measurementStart?.point,
+        Boolean(loaded),
+      ]);
+      if (nextMeasurementSignature !== measurementSignature) {
+        measurementSignature = nextMeasurementSignature;
+        clearMarkup();
+        const root = loaded || model;
+        const addMarker = (point: [number, number, number]) => {
+          const world = new THREE.Vector3(...point);
+          root.localToWorld(world);
+          const marker = new THREE.Mesh(
+            new THREE.SphereGeometry(0.075, 14, 10),
+            new THREE.MeshBasicMaterial({ color: '#d7ea87', depthTest: false }),
+          );
+          marker.position.copy(world);
+          marker.renderOrder = 20;
+          markup.add(marker);
+        };
+        for (const item of current.measurements) {
+          const start = new THREE.Vector3(...item.startPoint);
+          const end = new THREE.Vector3(...item.endPoint);
+          root.localToWorld(start);
+          root.localToWorld(end);
+          const line = new THREE.Line(
+            new THREE.BufferGeometry().setFromPoints([start, end]),
+            new THREE.LineBasicMaterial({ color: '#e7ff91', depthTest: false }),
+          );
+          line.renderOrder = 19;
+          markup.add(line);
+          addMarker(item.startPoint);
+          addMarker(item.endPoint);
+        }
+        if (current.measurementStart) addMarker(current.measurementStart.point);
+      }
       structure.children.forEach((object) => {
         if (object instanceof THREE.Mesh && object.material === plasterOld)
           object.material = plaster;
         if (object instanceof THREE.Mesh && object.material === plaster)
-          object.material = current.version === 'v03' ? plaster : plasterOld;
+          object.material = current.palette === 'warm' ? plaster : plasterOld;
       });
       materials.children.forEach((object) => {
         if (
           object instanceof THREE.Mesh &&
           (object.material === timber || object.material === timberOld)
         ) {
-          object.material = current.version === 'v03' ? timber : timberOld;
+          object.material = current.palette === 'warm' ? timber : timberOld;
         }
       });
       if (lastView !== current.view) {
@@ -689,41 +848,62 @@ function HouseScene({
         )
           transitioning = false;
       }
-      controls.enabled = !current.commentMode;
-      renderer.domElement.style.cursor = current.commentMode
-        ? 'crosshair'
-        : 'grab';
+      controls.enabled = current.interactionMode === 'navigate';
+      renderer.domElement.style.cursor =
+        current.interactionMode !== 'navigate' ? 'crosshair' : 'grab';
       controls.update();
-      current.onCameraChange({
-        position: camera.position.toArray() as [number, number, number],
-        target: controls.target.toArray() as [number, number, number],
-      });
+      if (tick % 6 === 0) {
+        current.onCameraChange({
+          position: camera.position.toArray() as [number, number, number],
+          target: controls.target.toArray() as [number, number, number],
+        });
+      }
 
-      if (current.selection) {
-        anchorWorld.set(...current.selection.point);
-        (current.imported || model).localToWorld(anchorWorld);
-        projected.copy(anchorWorld).project(camera);
-        const visible =
-          projected.z > -1 &&
-          projected.z < 1 &&
-          Math.abs(projected.x) <= 1 &&
-          Math.abs(projected.y) <= 1;
-        setPin((previous) => {
-          const next = {
+      if (tick % 2 === 0) {
+        const projectedPoints = [...current.referencePoints];
+        if (
+          current.selection &&
+          !projectedPoints.some((item) => item.id === current.selection?.anchor)
+        ) {
+          projectedPoints.push({
+            id: current.selection.anchor || 'current-selection',
+            label: current.selection.surface,
+            point: current.selection.point,
+            count: 0,
+            resolved: false,
+          });
+        }
+        const nextPins = projectedPoints.map((item) => {
+          anchorWorld.set(...item.point);
+          (current.imported || model).localToWorld(anchorWorld);
+          projected.copy(anchorWorld).project(camera);
+          return {
+            ...item,
             x: (projected.x * 0.5 + 0.5) * container.clientWidth,
             y: (-projected.y * 0.5 + 0.5) * container.clientHeight,
-            visible,
+            visible:
+              projected.z > -1 &&
+              projected.z < 1 &&
+              Math.abs(projected.x) <= 1 &&
+              Math.abs(projected.y) <= 1,
           };
-          return Math.abs(previous.x - next.x) > 0.6 ||
-            Math.abs(previous.y - next.y) > 0.6 ||
-            previous.visible !== visible
-            ? next
-            : previous;
         });
-      } else {
-        setPin((previous) =>
-          previous.visible ? { x: 0, y: 0, visible: false } : previous,
-        );
+        setPins((previous) => {
+          if (
+            previous.length === nextPins.length &&
+            previous.every(
+              (item, index) =>
+                item.id === nextPins[index].id &&
+                item.visible === nextPins[index].visible &&
+                Math.abs(item.x - nextPins[index].x) < 0.6 &&
+                Math.abs(item.y - nextPins[index].y) < 0.6 &&
+                item.count === nextPins[index].count,
+            )
+          ) {
+            return previous;
+          }
+          return nextPins;
+        });
       }
       renderer.render(scene, camera);
     };
@@ -735,6 +915,7 @@ function HouseScene({
       renderer.domElement.removeEventListener('pointerdown', onPointerDown);
       renderer.domElement.removeEventListener('pointerup', onPointerUp);
       controls.dispose();
+      clearMarkup();
       scene.traverse((object) => {
         if (object instanceof THREE.Mesh) {
           object.geometry.dispose();
@@ -755,241 +936,36 @@ function HouseScene({
       className="studio-canvas"
       aria-label="Modelo 3D navegable de Casa Patio"
     >
-      {pin.visible && (
-        <span
-          className="surface-pin"
-          style={{ left: pin.x, top: pin.y }}
-          aria-label="Superficie seleccionada"
-        >
-          <span />
-        </span>
+      {pins.map(
+        (pin) =>
+          pin.visible && (
+            <button
+              type="button"
+              key={pin.id}
+              className={`surface-pin ${pin.resolved ? 'resolved' : ''} ${
+                selection?.anchor === pin.id ||
+                (!selection?.anchor && pin.id === 'current-selection')
+                  ? 'selected'
+                  : ''
+              }`}
+              style={{ left: pin.x, top: pin.y }}
+              aria-label={`${pin.label}, ${pin.count || 'sin'} comentarios`}
+              onClick={() => onReferenceSelect(pin)}
+            >
+              <span>{pin.count || ''}</span>
+            </button>
+          ),
       )}
       <div className="canvas-help">
         <MousePointer2 size={14} />
-        {commentMode
-          ? 'Elegí una superficie'
-          : 'Arrastrá: rotar · clic derecho: desplazar · rueda: zoom'}
+        {interactionMode === 'comment'
+          ? 'Elegí el punto de referencia en una superficie'
+          : interactionMode === 'measure'
+            ? measurementStart
+              ? 'Elegí el segundo punto de la medida'
+              : 'Elegí el primer punto de la medida'
+            : 'Arrastrá: rotar · clic derecho: desplazar · rueda: zoom'}
       </div>
-    </div>
-  );
-}
-
-function AuthPanel({
-  customerSignIn,
-  professionalSignIn,
-  sharedToken,
-}: {
-  customerSignIn: string;
-  professionalSignIn: string;
-  sharedToken: string;
-}) {
-  const [mode, setMode] = useState<'login' | 'register'>('login');
-  const [accessRole, setAccessRole] = useState<'customer' | 'professional'>(
-    sharedToken ? 'customer' : 'professional',
-  );
-  const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-  const strength = [
-    password.length >= 10,
-    /[a-z]/.test(password) && /[A-Z]/.test(password),
-    /\d/.test(password),
-    /[^A-Za-z0-9]/.test(password),
-  ].filter(Boolean).length;
-  const returnTo = `/estudio?role=${accessRole}${sharedToken ? `&share=${encodeURIComponent(sharedToken)}` : ''}`;
-  const chatgptHref = sharedToken
-    ? `/signin-with-chatgpt?return_to=${encodeURIComponent(returnTo)}`
-    : accessRole === 'customer'
-      ? customerSignIn
-      : professionalSignIn;
-
-  const submit = async (event: { preventDefault(): void }) => {
-    event.preventDefault();
-    if (busy) return;
-    setBusy(true);
-    setError('');
-    try {
-      const response = await fetch('/api/auth', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: mode, name, email, password }),
-      });
-      const data = (await response.json()) as { error?: string };
-      if (!response.ok)
-        throw new Error(data.error || 'No pudimos completar el acceso.');
-      window.location.assign(returnTo);
-    } catch (requestError) {
-      setError((requestError as Error).message);
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div className="auth-layout">
-      <section className="auth-intro">
-        <span className="auth-mark">
-          <ShieldCheck />
-        </span>
-        <p className="section-kicker">Acceso seguro</p>
-        <h3>Tu estudio, tus proyectos y cada conversación.</h3>
-        <p>
-          Entrá para continuar donde dejaste el trabajo o creá una cuenta nueva.
-        </p>
-        <div className="auth-trust">
-          <LockKeyhole />
-          <span>
-            <strong>Contraseña protegida</strong>Se guarda como hash PBKDF2 con
-            salt único. Nunca en texto plano.
-          </span>
-        </div>
-      </section>
-      <section className="auth-form-wrap">
-        <div className="auth-tabs" role="tablist" aria-label="Acceso a Fabrica">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={mode === 'login'}
-            className={mode === 'login' ? 'active' : ''}
-            onClick={() => {
-              setMode('login');
-              setError('');
-            }}
-          >
-            Iniciar sesión
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={mode === 'register'}
-            className={mode === 'register' ? 'active' : ''}
-            onClick={() => {
-              setMode('register');
-              setError('');
-            }}
-          >
-            Crear cuenta
-          </button>
-        </div>
-        <div className="auth-role" aria-label="Tipo de acceso">
-          <button
-            type="button"
-            className={accessRole === 'professional' ? 'active' : ''}
-            disabled={!!sharedToken}
-            onClick={() => setAccessRole('professional')}
-          >
-            Profesional
-          </button>
-          <button
-            type="button"
-            className={accessRole === 'customer' ? 'active' : ''}
-            onClick={() => setAccessRole('customer')}
-          >
-            Cliente
-          </button>
-        </div>
-        <form onSubmit={submit}>
-          {mode === 'register' && (
-            <label>
-              Nombre y apellido
-              <div className="auth-field">
-                <UserRound />
-                <input
-                  autoComplete="name"
-                  value={name}
-                  onChange={(event) => setName(event.target.value)}
-                  placeholder="Cómo querés que te vean"
-                  required
-                />
-              </div>
-            </label>
-          )}
-          <label>
-            Email
-            <div className="auth-field">
-              <Mail />
-              <input
-                type="email"
-                autoComplete="email"
-                value={email}
-                onChange={(event) => setEmail(event.target.value)}
-                placeholder="nombre@estudio.com"
-                required
-              />
-            </div>
-          </label>
-          <label>
-            Contraseña
-            <div className="auth-field">
-              <LockKeyhole />
-              <input
-                type={showPassword ? 'text' : 'password'}
-                autoComplete={
-                  mode === 'register' ? 'new-password' : 'current-password'
-                }
-                minLength={10}
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-                placeholder="Mínimo 10 caracteres"
-                required
-              />
-              <button
-                type="button"
-                onClick={() => setShowPassword((value) => !value)}
-                aria-label={
-                  showPassword ? 'Ocultar contraseña' : 'Ver contraseña'
-                }
-                title={showPassword ? 'Ocultar contraseña' : 'Ver contraseña'}
-              >
-                {showPassword ? <EyeOff /> : <Eye />}
-              </button>
-            </div>
-          </label>
-          {mode === 'register' && (
-            <div className="password-strength" aria-live="polite">
-              <span>
-                {[0, 1, 2, 3].map((index) => (
-                  <i key={index} className={index < strength ? 'filled' : ''} />
-                ))}
-              </span>
-              <small>
-                {password
-                  ? ['Muy débil', 'Débil', 'Buena', 'Fuerte', 'Muy fuerte'][
-                      strength
-                    ]
-                  : 'Usá mayúsculas, números y un símbolo'}
-              </small>
-            </div>
-          )}
-          {error && (
-            <p className="auth-error" role="alert">
-              {error}
-            </p>
-          )}
-          <Button
-            type="submit"
-            disabled={busy || (mode === 'register' && strength < 2)}
-          >
-            {busy
-              ? 'Verificando…'
-              : mode === 'register'
-                ? 'Crear mi cuenta'
-                : 'Entrar al estudio'}
-          </Button>
-        </form>
-        <div className="auth-divider">
-          <span>o</span>
-        </div>
-        <a className="chatgpt-access" target="_top" href={chatgptHref}>
-          Continuar con ChatGPT <span>→</span>
-        </a>
-        <p className="auth-legal">
-          Al continuar aceptás usar tu identidad para atribuir proyectos y
-          comentarios.
-        </p>
-      </section>
     </div>
   );
 }
@@ -997,24 +973,35 @@ function AuthPanel({
 export default function Studio({
   user,
   localPreview,
-  customerSignIn,
+  initialSharedToken,
   professionalSignIn,
 }: {
   user: { name: string; email: string; provider: 'chatgpt' | 'fabrica' } | null;
   localPreview: boolean;
-  customerSignIn: string;
+  initialSharedToken: string;
   professionalSignIn: string;
 }) {
   const signedIn = Boolean(user);
-  const [role, setRole] = useState<'customer' | 'professional' | null>(null);
-  const [roleOpen, setRoleOpen] = useState(true);
+  const [role, setRole] = useState<'customer' | 'professional' | null>(
+    initialSharedToken ? 'customer' : null,
+  );
+  const [roleOpen, setRoleOpen] = useState(!initialSharedToken);
   const [importOpen, setImportOpen] = useState(false);
   const [versions, setVersions] = useState<StoredVersion[]>([]);
+  const [clients, setClients] = useState<StoredClient[]>([]);
   const [projects, setProjects] = useState<StoredProject[]>([]);
   const [activeProject, setActiveProject] = useState('');
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const [projectDialogOpen, setProjectDialogOpen] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
+  const [newProjectClient, setNewProjectClient] = useState('');
+  const [clientsDialogOpen, setClientsDialogOpen] = useState(false);
+  const [clientDialogOpen, setClientDialogOpen] = useState(false);
+  const [newClientName, setNewClientName] = useState('');
+  const [newClientEmail, setNewClientEmail] = useState('');
+  const [versionDialogOpen, setVersionDialogOpen] = useState(false);
+  const [versionName, setVersionName] = useState('');
+  const [versionDescription, setVersionDescription] = useState('');
   const [viewDialogOpen, setViewDialogOpen] = useState(false);
   const [viewName, setViewName] = useState('');
   const [imported, setImported] = useState<THREE.Group | null>(null);
@@ -1026,9 +1013,28 @@ export default function Studio({
   const [modelError, setModelError] = useState('');
   const [storageError, setStorageError] = useState('');
   const [share, setShare] = useState('');
-  const [sharedToken, setSharedToken] = useState('');
+  const [shareEnabled, setShareEnabled] = useState(false);
+  const [shareExpires, setShareExpires] = useState(0);
+  const [shareDays, setShareDays] = useState(30);
+  const [shareDialogOpen, setShareDialogOpen] = useState(false);
+  const [sharedToken, setSharedToken] = useState(initialSharedToken);
+  const [viewerName, setViewerName] = useState('Cliente invitado');
   const [canEdit, setCanEdit] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [inspector, setInspector] = useState<
+    'objects' | 'measurements' | 'plans' | null
+  >(null);
+  const [objectCatalog, setObjectCatalog] = useState<SceneObject[]>([]);
+  const [hiddenObjects, setHiddenObjects] = useState<string[]>([]);
+  const [measurements, setMeasurements] = useState<Measurement[]>([]);
+  const [plans, setPlans] = useState<StoredPlan[]>([]);
+  const [measurementStart, setMeasurementStart] =
+    useState<SurfaceSelection | null>(null);
+  const [measurementEnd, setMeasurementEnd] = useState<SurfaceSelection | null>(
+    null,
+  );
+  const [measurementName, setMeasurementName] = useState('');
+  const [measurementDialogOpen, setMeasurementDialogOpen] = useState(false);
   const [commentScope, setCommentScope] = useState<'point' | 'project'>(
     'project',
   );
@@ -1048,6 +1054,13 @@ export default function Studio({
           ? previous
           : data.versions,
       );
+      const selectedVersion =
+        data.versions.find((item) => item.id === version) ||
+        data.versions.at(-1);
+      setVersion(selectedVersion?.id || '');
+      setHiddenObjects(
+        parseVersionSettings(selectedVersion?.settings).hiddenObjects,
+      );
       setProjects(
         data.projects?.length
           ? data.projects
@@ -1055,14 +1068,20 @@ export default function Studio({
             ? [data.project]
             : [],
       );
+      setClients(data.clients || []);
       if (data.project?.id) setActiveProject(data.project.id);
       setShare(data.share || '');
+      setShareEnabled(Boolean(data.shareEnabled));
+      setShareExpires(data.shareExpires || 0);
+      setViewerName(data.viewer?.name || 'Cliente invitado');
       setCanEdit(data.owner);
       setStorageError('');
       setComments(
         data.comments.map(
           (comment: {
             id: string;
+            anchor: string;
+            parent?: string | null;
             author: string;
             text: string;
             created: number;
@@ -1074,6 +1093,7 @@ export default function Studio({
             state: 'abierto' | 'resuelto';
           }) => ({
             ...comment,
+            anchor: comment.anchor || comment.id,
             scope: comment.scope || 'point',
             point: comment.point ? JSON.parse(comment.point) : undefined,
             camera: comment.camera ? JSON.parse(comment.camera) : undefined,
@@ -1085,6 +1105,14 @@ export default function Studio({
           }),
         ),
       );
+      setMeasurements(
+        (data.measurements || []).map((measurement) => ({
+          ...measurement,
+          startPoint: parseJson(measurement.startPoint, [0, 0, 0]),
+          endPoint: parseJson(measurement.endPoint, [0, 0, 0]),
+        })),
+      );
+      setPlans(data.plans || []);
       return data;
     } catch (error) {
       setStorageError((error as Error).message);
@@ -1093,20 +1121,24 @@ export default function Studio({
   };
   const changeVersion = (id: string) => {
     setVersion(id);
+    setHiddenObjects(
+      parseVersionSettings(versions.find((item) => item.id === id)?.settings)
+        .hiddenObjects,
+    );
     setSelection(null);
     setCommentScope('project');
     setDraft('');
-    setCommentMode(false);
+    setInteractionMode('navigate');
+    setMeasurementStart(null);
+    setMeasurementEnd(null);
   };
 
   const [stage, setStage] = useState<Stage>(3);
-  const [version, setVersion] = useState<Version>('v03');
-  const [roofVisible, setRoofVisible] = useState(true);
-  const [commentMode, setCommentMode] = useState(false);
-  const [selection, setSelection] = useState<SurfaceSelection | null>({
-    surface: 'Ventanal del estar',
-    point: [-1.1, 1.8, 3.22],
-  });
+  const [version, setVersion] = useState<Version>('');
+  const [interactionMode, setInteractionMode] = useState<
+    'navigate' | 'comment' | 'measure'
+  >('navigate');
+  const [selection, setSelection] = useState<SurfaceSelection | null>(null);
   const [view, setView] = useState('Exterior');
   // On a phone the canvas is the primary surface. Keep the conversation one tap
   // away instead of opening a drawer over the model on arrival.
@@ -1121,13 +1153,14 @@ export default function Studio({
     setSharedToken(token);
     const requested = params.get('role');
     if (
-      (signedIn || localPreview) &&
+      (signedIn || localPreview || token) &&
       (requested === 'customer' || requested === 'professional' || token)
     ) {
       setRole(token ? 'customer' : (requested as 'customer' | 'professional'));
       setRoleOpen(false);
     }
-    if (signedIn || localPreview) void refresh('', token).catch(() => {});
+    if (signedIn || localPreview || token)
+      void refresh('', token).catch(() => {});
   }, []);
 
   const activeFiles = versions.find((item) => item.id === version)?.files;
@@ -1144,6 +1177,13 @@ export default function Studio({
     const selected = versions.find((item) => item.id === version);
     if (!selected) return;
     const files: StoredFile[] = JSON.parse(selected.files);
+    if (selected.modelKind === 'demo') return;
+    if (!files.length) {
+      setModelError(
+        'Esta versión todavía no tiene un modelo. Importá un archivo para comenzar.',
+      );
+      return;
+    }
     if (
       !viewFormats.includes(extension(files[0].name)) ||
       files.reduce((sum, f) => sum + f.size, 0) > 200 * 1024 ** 2
@@ -1187,7 +1227,7 @@ export default function Studio({
   }, [version, activeFiles, role, sharedToken, activeProject]);
 
   useEffect(() => {
-    if (!role || (!signedIn && !localPreview)) return;
+    if (!role || (!signedIn && !localPreview && !sharedToken)) return;
     const update = () => {
       if (document.visibilityState === 'visible')
         void refresh(activeProject).catch(() => {});
@@ -1216,7 +1256,8 @@ export default function Studio({
   const selectSurface = (next: SurfaceSelection) => {
     setSelection(next);
     setCommentScope('point');
-    setCommentMode(false);
+    setInteractionMode('navigate');
+    setInspector(null);
     setPanelOpen(true);
   };
 
@@ -1234,6 +1275,7 @@ export default function Studio({
           point: selection?.point,
           camera: cameraSnapshot.current,
           version,
+          anchor: selection?.anchor,
         },
         sharedToken,
         activeProject,
@@ -1268,18 +1310,61 @@ export default function Studio({
       setSaving(false);
     }
   };
+  const shareUrl = (token: string) =>
+    `${location.origin}/estudio?role=customer&share=${encodeURIComponent(token)}`;
+  const createShare = async (copy = false) => {
+    if (saving) return;
+    setSaving(true);
+    try {
+      const data = await studioRequest(
+        { action: 'share', days: shareDays },
+        '',
+        activeProject,
+      );
+      setShare(data.share);
+      setShareEnabled(true);
+      setShareExpires(data.shareExpires);
+      if (copy) {
+        await navigator.clipboard.writeText(shareUrl(data.share));
+        showToast('Nuevo enlace de revisión copiado');
+      } else {
+        showToast('Enlace privado actualizado');
+      }
+    } catch (error) {
+      showToast((error as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
   const copyShare = async () => {
     try {
-      if (!share)
-        throw new Error(
-          'El proyecto todavía no está disponible para compartir.',
-        );
-      await navigator.clipboard.writeText(
-        `${location.origin}/estudio?role=customer&share=${encodeURIComponent(share)}`,
-      );
+      if (
+        !shareEnabled ||
+        !share ||
+        (shareExpires > 0 && shareExpires <= Date.now())
+      ) {
+        await createShare(true);
+        return;
+      }
+      await navigator.clipboard.writeText(shareUrl(share));
       showToast('Enlace de revisión copiado');
     } catch (error) {
       showToast((error as Error).message);
+    }
+  };
+  const revokeShare = async () => {
+    if (saving) return;
+    setSaving(true);
+    try {
+      await studioRequest({ action: 'revoke-share' }, '', activeProject);
+      setShare('');
+      setShareEnabled(false);
+      setShareExpires(0);
+      showToast('El acceso anterior fue revocado');
+    } catch (error) {
+      showToast((error as Error).message);
+    } finally {
+      setSaving(false);
     }
   };
   const example = async () => {
@@ -1335,9 +1420,13 @@ export default function Studio({
       const available = (data.versions as StoredVersion[]).filter(
         (item) => item.published || role === 'professional',
       );
-      changeVersion(available.at(-1)?.id || 'v03');
+      changeVersion(available.at(-1)?.id || '');
       setView('Exterior');
-      showToast(`Proyecto abierto: ${data.project.name}`);
+      showToast(
+        data.project
+          ? `Proyecto abierto: ${data.project.name}`
+          : 'Proyecto abierto',
+      );
     } catch (error) {
       showToast((error as Error).message);
     }
@@ -1347,15 +1436,48 @@ export default function Studio({
     setSaving(true);
     try {
       const data = await studioRequest(
-        { action: 'create-project', name: newProjectName.trim() },
+        {
+          action: 'create-project',
+          name: newProjectName.trim(),
+          client: newProjectClient || null,
+        },
         '',
         activeProject,
       );
       setNewProjectName('');
+      setNewProjectClient('');
       setProjectDialogOpen(false);
+      if (!data.project)
+        throw new Error('No se pudo abrir el proyecto creado.');
       await refresh(data.project.id, '');
-      changeVersion('v03');
+      changeVersion('');
       showToast('Proyecto creado');
+    } catch (error) {
+      showToast((error as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+  const createClient = async () => {
+    if (!newClientName.trim() || saving) return;
+    setSaving(true);
+    try {
+      const data = await studioRequest(
+        {
+          action: 'create-client',
+          name: newClientName.trim(),
+          email: newClientEmail.trim(),
+        },
+        '',
+        activeProject,
+      );
+      await refresh(activeProject, '');
+      setNewClientName('');
+      setNewClientEmail('');
+      setClientDialogOpen(false);
+      setClientsDialogOpen(true);
+      if (data.client?.id) setNewProjectClient(data.client.id);
+      showToast('Cliente agregado a tu cartera');
     } catch (error) {
       showToast((error as Error).message);
     } finally {
@@ -1386,6 +1508,195 @@ export default function Studio({
       setSaving(false);
     }
   };
+  const createVersion = async () => {
+    if (!versionName.trim() || !activeVersion || saving) return;
+    setSaving(true);
+    try {
+      const created = await studioRequest(
+        {
+          action: 'create-version',
+          name: versionName.trim(),
+          description: versionDescription.trim(),
+          sourceVersion: activeVersion.id,
+        },
+        '',
+        activeProject,
+      );
+      await refresh(activeProject, '');
+      changeVersion(created.id);
+      setVersionName('');
+      setVersionDescription('');
+      setVersionDialogOpen(false);
+      showToast('Nueva versión creada como borrador');
+    } catch (error) {
+      showToast((error as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+  const saveVisibility = async (next: string[], previous: string[]) => {
+    setHiddenObjects(next);
+    try {
+      await studioRequest(
+        { action: 'visibility', version, hiddenObjects: next },
+        '',
+        activeProject,
+      );
+      setVersions((items) =>
+        items.map((item) =>
+          item.id === version
+            ? {
+                ...item,
+                settings: JSON.stringify({
+                  ...parseVersionSettings(item.settings),
+                  hiddenObjects: next,
+                }),
+              }
+            : item,
+        ),
+      );
+    } catch (error) {
+      setHiddenObjects(previous);
+      showToast((error as Error).message);
+    }
+  };
+  const toggleObject = (key: string) => {
+    if (!professional || !activeVersion) return;
+    const previous = hiddenObjects;
+    const next = previous.includes(key)
+      ? previous.filter((item) => item !== key)
+      : [...previous, key];
+    void saveVisibility(next, previous);
+  };
+  const selectMeasurePoint = (point: SurfaceSelection) => {
+    if (!measurementStart) {
+      setMeasurementStart(point);
+      setInspector('measurements');
+      showToast('Primer punto fijado. Elegí el segundo.');
+      return;
+    }
+    if (samePoint(measurementStart.point, point.point)) {
+      showToast('Elegí un segundo punto diferente.');
+      return;
+    }
+    setMeasurementEnd(point);
+    setMeasurementName(`Medida ${versionMeasurements.length + 1}`);
+    setMeasurementDialogOpen(true);
+    setInteractionMode('navigate');
+  };
+  const saveMeasurement = async () => {
+    if (
+      !measurementStart ||
+      !measurementEnd ||
+      !measurementName.trim() ||
+      !activeVersion
+    )
+      return;
+    const value = Math.hypot(
+      measurementEnd.point[0] - measurementStart.point[0],
+      measurementEnd.point[1] - measurementStart.point[1],
+      measurementEnd.point[2] - measurementStart.point[2],
+    );
+    setSaving(true);
+    try {
+      await studioRequest(
+        {
+          action: 'measurement',
+          version: activeVersion.id,
+          name: measurementName.trim(),
+          startPoint: measurementStart.point,
+          endPoint: measurementEnd.point,
+          value,
+          unit: activeVersion.unit,
+        },
+        '',
+        activeProject,
+      );
+      await refresh(activeProject, '');
+      setMeasurementStart(null);
+      setMeasurementEnd(null);
+      setMeasurementName('');
+      setMeasurementDialogOpen(false);
+      showToast('Medida guardada en la versión');
+    } catch (error) {
+      showToast((error as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+  const uploadPlan = async (file: File | undefined) => {
+    if (!file || !activeVersion || saving) return;
+    if (
+      !['application/pdf', 'image/png', 'image/jpeg', 'image/webp'].includes(
+        file.type,
+      ) ||
+      file.size > 100 * 1024 ** 2
+    ) {
+      showToast('Usá un PDF, PNG, JPG o WebP de hasta 100 MB.');
+      return;
+    }
+    setSaving(true);
+    let uploadId = '';
+    try {
+      const upload = await studioRequest(
+        { action: 'begin', name: file.name, size: file.size },
+        '',
+        activeProject,
+      );
+      uploadId = upload.id;
+      const parts: Array<{ partNumber: number; etag: string }> = [];
+      for (
+        let offset = 0, partNumber = 1;
+        offset < file.size;
+        offset += upload.partSize, partNumber++
+      ) {
+        const response = await fetch(
+          `/api/studio?project=${encodeURIComponent(activeProject)}&upload=${upload.id}&part=${partNumber}`,
+          { method: 'PUT', body: file.slice(offset, offset + upload.partSize) },
+        );
+        const part = (await response.json()) as {
+          partNumber: number;
+          etag: string;
+          error?: string;
+        };
+        if (!response.ok)
+          throw new Error(part.error || 'No se pudo subir el plano.');
+        parts.push(part);
+      }
+      const completed = await studioRequest(
+        { action: 'finish', id: upload.id, parts },
+        '',
+        activeProject,
+      );
+      uploadId = '';
+      await studioRequest(
+        {
+          action: 'plan',
+          version: activeVersion.id,
+          name: file.name.replace(/\.[^.]+$/, ''),
+          sheet: '',
+          mime: file.type,
+          key: completed.key,
+          size: completed.size,
+        },
+        '',
+        activeProject,
+      );
+      await refresh(activeProject, '');
+      showToast('Plano añadido a la versión');
+    } catch (error) {
+      if (uploadId) {
+        await studioRequest(
+          { action: 'abort', id: uploadId },
+          '',
+          activeProject,
+        ).catch(() => {});
+      }
+      showToast((error as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
   const logout = async () => {
     await fetch('/api/auth', {
       method: 'POST',
@@ -1394,26 +1705,88 @@ export default function Studio({
     });
     window.location.assign('/estudio');
   };
+  const activeVersion = versions.find((item) => item.id === version);
+  const professional = role === 'professional' && canEdit;
+  const shownVersions = versions.filter(
+    (item) => professional || item.published,
+  );
+  const versionMeasurements = measurements.filter(
+    (item) => item.version === version,
+  );
+  const versionPlans = plans.filter((item) => item.version === version);
+  const referencePoints = Array.from(
+    comments
+      .filter(
+        (comment) =>
+          comment.scope === 'point' &&
+          comment.version === version &&
+          comment.point,
+      )
+      .reduce((groups, comment) => {
+        const key = comment.anchor || String(comment.id);
+        const group = groups.get(key) || [];
+        group.push(comment);
+        groups.set(key, group);
+        return groups;
+      }, new Map<string, Comment[]>()),
+    ([id, items]) => ({
+      id,
+      label: items[0].surface,
+      point: items[0].point as [number, number, number],
+      count: items.length,
+      resolved: items.every((item) => item.state === 'resuelto'),
+    }),
+  );
   const visibleComments = comments.filter((comment) =>
     commentScope === 'project'
       ? comment.scope === 'project'
       : comment.scope === 'point' &&
         comment.version === version &&
         selection &&
-        comment.surface === selection.surface &&
-        samePoint(comment.point, selection.point),
-  );
-  const activeVersion = versions.find((item) => item.id === version);
-  const professional = role === 'professional' && canEdit;
-  const shownVersions = versions.filter(
-    (item) => professional || item.published,
+        (selection.anchor
+          ? comment.anchor === selection.anchor
+          : comment.surface === selection.surface &&
+            samePoint(comment.point, selection.point)),
   );
   const savedViews = parseStoredViews(activeVersion?.views);
-  const activeProjectName =
-    projects.find((item) => item.id === activeProject)?.name || 'Casa Patio';
+  const roofKeys = objectCatalog
+    .filter((item) => /cubierta|techo|roof|pérgola/i.test(item.label))
+    .map((item) => item.key);
+  const roofVisible = roofKeys.length
+    ? roofKeys.some((key) => !hiddenObjects.includes(key))
+    : true;
+  const activeProjectRecord = projects.find(
+    (item) => item.id === activeProject,
+  );
+  const activeProjectName = activeProjectRecord?.name || 'Casa Patio';
+  const activeClient = clients.find(
+    (client) => client.id === activeProjectRecord?.client,
+  );
+  const shareActive =
+    shareEnabled &&
+    Boolean(share) &&
+    (shareExpires === 0 || shareExpires > Date.now());
+  const shareExpiryLabel = shareExpires
+    ? new Date(shareExpires).toLocaleDateString('es-AR', {
+        day: 'numeric',
+        month: 'long',
+        year: 'numeric',
+      })
+    : 'sin vencimiento';
+  const clientGroups = clients.map((client) => ({
+    ...client,
+    projects: projects.filter((project) => project.client === client.id),
+  }));
+  const unassignedProjects = projects.filter((project) => !project.client);
+  const canSwitchProject =
+    professional || (!sharedToken && projects.length > 1);
 
   return (
-    <main className={`studio-shell ${panelOpen ? 'panel-is-open' : ''}`}>
+    <main
+      className={`studio-shell ${panelOpen ? 'panel-is-open' : ''} ${
+        inspector ? 'inspector-is-open' : ''
+      }`}
+    >
       <header className="studio-header">
         <div className="studio-brand">
           <a href="/" className="studio-back" aria-label="Volver a la landing">
@@ -1426,50 +1799,131 @@ export default function Studio({
               className="project-switcher"
               type="button"
               onClick={() =>
-                professional
+                canSwitchProject
                   ? setProjectMenuOpen((value) => !value)
                   : setRoleOpen(true)
               }
-              aria-expanded={professional ? projectMenuOpen : undefined}
+              aria-expanded={canSwitchProject ? projectMenuOpen : undefined}
             >
               <span>
                 <strong>{activeProjectName}</strong>
                 <small>
-                  {activeVersion?.name || 'Proyecto de muestra'} ·{' '}
                   {professional
-                    ? 'Espacio profesional'
-                    : 'Revisión del cliente'}
+                    ? `${activeClient?.name || 'Sin cliente asignado'} · ${
+                        activeVersion?.name || 'Sin entregas'
+                      }`
+                    : `${activeVersion?.name || 'Proyecto de muestra'} · Revisión del cliente`}
                 </small>
               </span>
               <ChevronDown size={16} />
             </button>
-            {professional && projectMenuOpen && (
+            {canSwitchProject && projectMenuOpen && (
               <div className="project-menu" role="menu">
-                <p>
-                  Mis proyectos <span>{projects.length}</span>
+                <p className="project-menu-title">
+                  {professional ? 'Clientes y proyectos' : 'Mis revisiones'}{' '}
+                  <span>{professional ? clients.length : projects.length}</span>
                 </p>
-                {projects.map((item) => (
-                  <button
-                    type="button"
-                    role="menuitem"
-                    key={item.id}
-                    className={item.id === activeProject ? 'active' : ''}
-                    onClick={() => void switchProject(item.id)}
-                  >
-                    <span>{item.name}</span>
-                    {item.id === activeProject && <Check />}
-                  </button>
-                ))}
-                <button
-                  type="button"
-                  className="new-project"
-                  onClick={() => {
-                    setProjectMenuOpen(false);
-                    setProjectDialogOpen(true);
-                  }}
-                >
-                  <FolderPlus /> Nuevo proyecto
-                </button>
+                <div className="project-menu-scroll">
+                  {professional ? (
+                    <>
+                      {clientGroups.map((client) => (
+                        <div className="client-project-group" key={client.id}>
+                          <div className="client-project-heading">
+                            <span>{client.name.slice(0, 2).toUpperCase()}</span>
+                            <strong>{client.name}</strong>
+                            <small>{client.projects.length}</small>
+                          </div>
+                          {client.projects.length ? (
+                            client.projects.map((item) => (
+                              <button
+                                type="button"
+                                role="menuitem"
+                                key={item.id}
+                                className={
+                                  item.id === activeProject ? 'active' : ''
+                                }
+                                onClick={() => void switchProject(item.id)}
+                              >
+                                <span>{item.name}</span>
+                                {item.id === activeProject && <Check />}
+                              </button>
+                            ))
+                          ) : (
+                            <span className="client-without-projects">
+                              Sin proyectos todavía
+                            </span>
+                          )}
+                        </div>
+                      ))}
+                      {!!unassignedProjects.length && (
+                        <div className="client-project-group unassigned">
+                          <div className="client-project-heading">
+                            <span>—</span>
+                            <strong>Sin cliente asignado</strong>
+                            <small>{unassignedProjects.length}</small>
+                          </div>
+                          {unassignedProjects.map((item) => (
+                            <button
+                              type="button"
+                              role="menuitem"
+                              key={item.id}
+                              className={
+                                item.id === activeProject ? 'active' : ''
+                              }
+                              onClick={() => void switchProject(item.id)}
+                            >
+                              <span>{item.name}</span>
+                              {item.id === activeProject && <Check />}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      {!clients.length && !unassignedProjects.length && (
+                        <p className="project-menu-empty">
+                          Agregá un cliente para empezar a organizar tu cartera.
+                        </p>
+                      )}
+                    </>
+                  ) : (
+                    <div className="client-project-group customer-projects">
+                      {projects.map((item) => (
+                        <button
+                          type="button"
+                          role="menuitem"
+                          key={item.id}
+                          className={item.id === activeProject ? 'active' : ''}
+                          onClick={() => void switchProject(item.id)}
+                        >
+                          <span>{item.name}</span>
+                          {item.id === activeProject && <Check />}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                {professional && (
+                  <div className="project-menu-actions">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setProjectMenuOpen(false);
+                        setClientsDialogOpen(true);
+                      }}
+                    >
+                      <UsersRound /> Ver clientes
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setProjectMenuOpen(false);
+                        setNewProjectClient(activeClient?.id || '');
+                        setProjectDialogOpen(true);
+                      }}
+                    >
+                      <FolderPlus /> Nuevo proyecto
+                    </button>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -1481,26 +1935,56 @@ export default function Studio({
               : 'Cliente'}
           </span>
           {professional && (
-            <Button
-              className="studio-import"
-              onClick={() => setImportOpen(true)}
-            >
-              <Upload /> Importar modelo
-            </Button>
+            <>
+              <Button
+                variant="outline"
+                className="studio-new-version"
+                disabled={!activeVersion}
+                onClick={() => {
+                  setVersionName(
+                    activeVersion
+                      ? `Iteración ${String(activeVersion.sequence + 1).padStart(2, '0')}`
+                      : '',
+                  );
+                  setVersionDialogOpen(true);
+                }}
+              >
+                <CopyPlus /> Nueva versión
+              </Button>
+              <Button
+                className="studio-import"
+                onClick={() => setImportOpen(true)}
+              >
+                <Upload /> Importar modelo
+              </Button>
+            </>
           )}
-          <Button
-            variant="outline"
-            className="studio-share"
-            onClick={copyShare}
-            disabled={!share}
-          >
-            <Share2 /> Compartir
-          </Button>
+          {professional ? (
+            <Button
+              variant="outline"
+              className="studio-share"
+              onClick={() => setShareDialogOpen(true)}
+              disabled={!activeProject}
+            >
+              <Share2 /> Compartir
+            </Button>
+          ) : (
+            !signedIn &&
+            sharedToken && (
+              <Button
+                variant="outline"
+                className="studio-share guest-account"
+                onClick={() => setRoleOpen(true)}
+              >
+                <UserPlus /> Crear cuenta
+              </Button>
+            )
+          )}
           <button
             className="profile-button"
             type="button"
             aria-label="Ver cuenta y modo de acceso"
-            title={user?.name || 'Cuenta'}
+            title={user?.name || viewerName}
             onClick={() => setRoleOpen(true)}
           >
             <UserRound size={17} />
@@ -1509,16 +1993,34 @@ export default function Studio({
       </header>
 
       <section className="studio-workspace">
-        {role && !loading && !modelError && (
+        {role && activeVersion && !loading && !modelError && (
           <HouseScene
             key={version}
             stage={stage}
-            version={version}
-            roofVisible={roofVisible}
-            commentMode={commentMode}
+            palette={
+              parseVersionSettings(activeVersion.settings).palette || 'warm'
+            }
+            interactionMode={interactionMode}
             view={view}
             selection={selection}
             onSelect={selectSurface}
+            onMeasure={selectMeasurePoint}
+            hiddenObjects={hiddenObjects}
+            referencePoints={referencePoints}
+            measurements={versionMeasurements}
+            measurementStart={measurementStart}
+            onReferenceSelect={(reference) => {
+              setSelection({
+                surface: reference.label,
+                point: reference.point,
+                anchor: reference.id,
+              });
+              setCommentScope('point');
+              setPanelOpen(true);
+              setInspector(null);
+              command('focus-point');
+            }}
+            onObjectCatalog={setObjectCatalog}
             cameraCommand={cameraCommand}
             imported={imported}
             savedViews={savedViews}
@@ -1526,6 +2028,21 @@ export default function Studio({
               cameraSnapshot.current = viewpoint;
             }}
           />
+        )}
+        {role && !activeVersion && !loading && (
+          <div className="empty-project" role="status">
+            <FileBoxIcon />
+            <span>Proyecto nuevo</span>
+            <h2>Importá el primer modelo</h2>
+            <p>
+              La primera versión se crea al guardar el modelo y sus recursos.
+            </p>
+            {professional && (
+              <Button onClick={() => setImportOpen(true)}>
+                <Upload /> Importar modelo
+              </Button>
+            )}
+          </div>
         )}
         {(loading || modelError) && (
           <div className="model-status" role="status">
@@ -1582,27 +2099,54 @@ export default function Studio({
           </div>
         </aside>
 
-        <div className="viewer-toolbar" aria-label="Herramientas del modelo">
+        <div
+          className="viewer-toolbar"
+          aria-label="Herramientas del modelo"
+          hidden={!activeVersion}
+        >
           <Button
-            variant={!commentMode ? 'default' : 'ghost'}
+            variant={interactionMode === 'navigate' ? 'default' : 'ghost'}
             size="icon"
             aria-label="Orbitar modelo"
             title="Orbitar"
             onClick={() => {
-              setCommentMode(false);
+              setInteractionMode('navigate');
               command('orbit');
             }}
           >
             <Rotate3D />
           </Button>
           <Button
-            variant={commentMode ? 'default' : 'ghost'}
+            variant={interactionMode === 'comment' ? 'default' : 'ghost'}
             size="icon"
             aria-label="Comentar una superficie"
             title="Comentar superficie"
-            onClick={() => setCommentMode((value) => !value)}
+            onClick={() =>
+              setInteractionMode((value) =>
+                value === 'comment' ? 'navigate' : 'comment',
+              )
+            }
           >
             <MessageSquarePlus />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label="Medir entre dos puntos"
+            title="Medir"
+            onClick={() => {
+              const next =
+                interactionMode === 'measure' ? 'navigate' : 'measure';
+              setInteractionMode(next);
+              setMeasurementStart(null);
+              setMeasurementEnd(null);
+              if (next === 'measure') {
+                setInspector('measurements');
+                setPanelOpen(false);
+              }
+            }}
+          >
+            <Ruler />
           </Button>
           <Button
             variant="ghost"
@@ -1610,7 +2154,7 @@ export default function Studio({
             aria-label="Desplazar cámara"
             title="Desplazar"
             onClick={() => {
-              setCommentMode(false);
+              setInteractionMode('navigate');
               command('pan');
             }}
           >
@@ -1721,21 +2265,254 @@ export default function Studio({
           )}
         </div>
 
-        <div className="roof-control" hidden={!!activeVersion}>
+        <div
+          className="roof-control"
+          hidden={!activeVersion || !objectCatalog.length}
+        >
           <span>{roofVisible ? <Eye size={15} /> : <EyeOff size={15} />}</span>
-          <label htmlFor="roof-switch">Cubierta</label>
+          <label htmlFor="roof-switch">
+            Cubierta <small>{roofVisible ? 'visible' : 'oculta'}</small>
+          </label>
           <Switch
             id="roof-switch"
             checked={roofVisible}
-            onCheckedChange={setRoofVisible}
+            disabled={!professional}
+            onCheckedChange={(visible) => {
+              const previous = hiddenObjects;
+              const next = visible
+                ? previous.filter((item) => !roofKeys.includes(item))
+                : Array.from(new Set([...previous, ...roofKeys]));
+              void saveVisibility(next, previous);
+            }}
             aria-label="Mostrar cubierta"
           />
         </div>
 
+        <nav className="project-tool-tabs" aria-label="Datos de la versión">
+          {[
+            {
+              id: 'objects' as const,
+              label: 'Objetos',
+              icon: <Box />,
+              count: hiddenObjects.length,
+            },
+            {
+              id: 'measurements' as const,
+              label: 'Medidas',
+              icon: <Ruler />,
+              count: versionMeasurements.length,
+            },
+            {
+              id: 'plans' as const,
+              label: 'Planos',
+              icon: <Files />,
+              count: versionPlans.length,
+            },
+          ].map((item) => (
+            <button
+              type="button"
+              key={item.id}
+              className={inspector === item.id ? 'active' : ''}
+              disabled={!activeVersion}
+              onClick={() => {
+                setInspector((value) => (value === item.id ? null : item.id));
+                setPanelOpen(false);
+              }}
+              aria-expanded={inspector === item.id}
+              aria-controls="version-inspector"
+            >
+              {item.icon}
+              <span>{item.label}</span>
+              {!!item.count && <b>{item.count}</b>}
+            </button>
+          ))}
+        </nav>
+
+        <aside
+          id="version-inspector"
+          className={`version-inspector ${inspector ? 'open' : ''}`}
+          inert={!inspector}
+          aria-label="Información de la versión"
+        >
+          <header>
+            <div>
+              <span className="section-kicker">
+                {activeVersion ? versionLabel(activeVersion) : ''}
+              </span>
+              <h2>
+                {inspector === 'objects'
+                  ? 'Objetos y capas'
+                  : inspector === 'measurements'
+                    ? 'Medidas'
+                    : 'Planos'}
+              </h2>
+            </div>
+            <button
+              type="button"
+              onClick={() => setInspector(null)}
+              aria-label="Cerrar panel"
+            >
+              <X />
+            </button>
+          </header>
+          {inspector === 'objects' && (
+            <div className="object-list">
+              <div className="object-summary">
+                <span>{objectCatalog.length} objetos</span>
+                <button
+                  type="button"
+                  disabled={!professional || !hiddenObjects.length}
+                  onClick={() => void saveVisibility([], hiddenObjects)}
+                >
+                  Mostrar todos
+                </button>
+              </div>
+              {objectCatalog.map((object) => {
+                const visible = !hiddenObjects.includes(object.key);
+                return (
+                  <div className="object-row" key={object.key}>
+                    <span>
+                      <Box /> {object.label}
+                    </span>
+                    <button
+                      type="button"
+                      disabled={!professional}
+                      onClick={() => toggleObject(object.key)}
+                      aria-label={`${visible ? 'Ocultar' : 'Mostrar'} ${object.label}`}
+                      title={`${visible ? 'Ocultar' : 'Mostrar'} ${object.label}`}
+                    >
+                      {visible ? <Eye /> : <EyeOff />}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {inspector === 'measurements' && (
+            <div className="measurement-list">
+              {professional && (
+                <button
+                  className={`measure-cta ${interactionMode === 'measure' ? 'active' : ''}`}
+                  type="button"
+                  onClick={() => {
+                    setMeasurementStart(null);
+                    setMeasurementEnd(null);
+                    setInteractionMode(
+                      interactionMode === 'measure' ? 'navigate' : 'measure',
+                    );
+                  }}
+                >
+                  <Ruler />
+                  <span>
+                    <strong>
+                      {interactionMode === 'measure'
+                        ? 'Cancelar medición'
+                        : 'Añadir medida'}
+                    </strong>
+                    <small>Marcá dos puntos sobre el modelo</small>
+                  </span>
+                </button>
+              )}
+              {versionMeasurements.map((measurement) => (
+                <article key={measurement.id}>
+                  <span>
+                    <Ruler />
+                  </span>
+                  <div>
+                    <strong>{measurement.name}</strong>
+                    <small>
+                      {new Date(measurement.created).toLocaleDateString(
+                        'es-AR',
+                      )}
+                    </small>
+                  </div>
+                  <b>
+                    {measurement.value.toLocaleString('es-AR', {
+                      maximumFractionDigits: 2,
+                    })}{' '}
+                    {measurement.unit}
+                  </b>
+                </article>
+              ))}
+              {!versionMeasurements.length && interactionMode !== 'measure' && (
+                <div className="inspector-empty">
+                  <Ruler />
+                  <p>Todavía no hay medidas guardadas en esta versión.</p>
+                </div>
+              )}
+              {measurementStart && interactionMode === 'measure' && (
+                <p className="measure-progress">
+                  <span /> Primer punto listo. Elegí el segundo.
+                </p>
+              )}
+            </div>
+          )}
+          {inspector === 'plans' && (
+            <div className="plan-list">
+              {professional && (
+                <label className={`plan-upload ${saving ? 'disabled' : ''}`}>
+                  <FileText />
+                  <span>
+                    <strong>{saving ? 'Subiendo…' : 'Añadir plano'}</strong>
+                    <small>PDF o imagen · hasta 100 MB</small>
+                  </span>
+                  <input
+                    type="file"
+                    accept="application/pdf,image/png,image/jpeg,image/webp"
+                    disabled={saving}
+                    onChange={(event) => {
+                      void uploadPlan(event.target.files?.[0]);
+                      event.target.value = '';
+                    }}
+                  />
+                </label>
+              )}
+              {versionPlans.map((plan) => (
+                <article key={plan.id}>
+                  <span>
+                    <FileText />
+                  </span>
+                  <div>
+                    <strong>{plan.name}</strong>
+                    <small>
+                      {[
+                        plan.sheet,
+                        plan.size ? formatBytes(plan.size) : 'Referencia',
+                      ]
+                        .filter(Boolean)
+                        .join(' · ')}
+                    </small>
+                  </div>
+                  {plan.key ? (
+                    <a
+                      download={plan.name}
+                      href={`/api/studio?asset=${encodeURIComponent(plan.key)}${sharedToken ? `&share=${encodeURIComponent(sharedToken)}` : `&project=${encodeURIComponent(activeProject)}`}`}
+                      aria-label={`Descargar ${plan.name}`}
+                    >
+                      <Download />
+                    </a>
+                  ) : (
+                    <span className="plan-reference">Referencia</span>
+                  )}
+                </article>
+              ))}
+              {!versionPlans.length && (
+                <div className="inspector-empty">
+                  <Files />
+                  <p>Todavía no hay planos vinculados a esta versión.</p>
+                </div>
+              )}
+            </div>
+          )}
+        </aside>
+
         <button
           className="mobile-panel-toggle"
           type="button"
-          onClick={() => setPanelOpen((value) => !value)}
+          onClick={() => {
+            setInspector(null);
+            setPanelOpen((value) => !value);
+          }}
           aria-label={panelOpen ? 'Ocultar comentarios' : 'Mostrar comentarios'}
           aria-expanded={panelOpen}
           aria-controls="project-comments"
@@ -1801,17 +2578,47 @@ export default function Studio({
               Punto elegido{' '}
               <span>
                 {selection
-                  ? comments.filter(
-                      (item) =>
-                        item.scope === 'point' &&
-                        item.version === version &&
-                        item.surface === selection.surface &&
-                        samePoint(item.point, selection.point),
+                  ? comments.filter((item) =>
+                      selection.anchor
+                        ? item.anchor === selection.anchor
+                        : item.scope === 'point' &&
+                          item.version === version &&
+                          item.surface === selection.surface &&
+                          samePoint(item.point, selection.point),
                     ).length
                   : '—'}
               </span>
             </button>
           </div>
+          {commentScope === 'point' && referencePoints.length > 0 && (
+            <div className="reference-list" aria-label="Puntos de referencia">
+              {referencePoints.map((reference, index) => (
+                <button
+                  type="button"
+                  key={reference.id}
+                  className={selection?.anchor === reference.id ? 'active' : ''}
+                  onClick={() => {
+                    setSelection({
+                      surface: reference.label,
+                      point: reference.point,
+                      anchor: reference.id,
+                    });
+                    command('focus-point');
+                  }}
+                >
+                  <span>{index + 1}</span>
+                  <span>
+                    <strong>{reference.label}</strong>
+                    <small>
+                      {reference.count}{' '}
+                      {reference.count === 1 ? 'comentario' : 'comentarios'}
+                    </small>
+                  </span>
+                  <i className={reference.resolved ? 'resolved' : ''} />
+                </button>
+              ))}
+            </div>
+          )}
           {commentScope === 'project' || selection ? (
             <>
               <div className="selected-surface">
@@ -1862,6 +2669,7 @@ export default function Studio({
                                 setSelection({
                                   surface: comment.surface,
                                   point: comment.point,
+                                  anchor: comment.anchor,
                                 });
                                 setCommentScope('point');
                                 command('focus-point');
@@ -1950,7 +2758,7 @@ export default function Studio({
               <Button
                 variant="outline"
                 onClick={() => {
-                  setCommentMode(true);
+                  setInteractionMode('comment');
                   setPanelOpen(false);
                 }}
               >
@@ -1963,45 +2771,33 @@ export default function Studio({
         <footer className="version-dock">
           <div className="version-title">
             <span>Versiones</span>
-            <strong>
-              {activeVersion?.name ||
-                (version === 'v03'
-                  ? 'Materiales cálidos'
-                  : 'Propuesta inicial')}
-            </strong>
+            <strong>{activeVersion?.name || 'Sin versiones'}</strong>
           </div>
           <div className="version-track" aria-label="Versiones del proyecto">
-            <button
-              type="button"
-              className={version === 'v02' ? 'active' : ''}
-              onClick={() => changeVersion('v02')}
-            >
-              <span>V02</span>
-              <small>Propuesta inicial</small>
-              <time>28 ago</time>
-            </button>
-            <span className="track-line" />
-            <button
-              type="button"
-              className={version === 'v03' ? 'active' : ''}
-              onClick={() => changeVersion('v03')}
-            >
-              <span>V03</span>
-              <small>Materiales cálidos</small>
-              <time>Hoy</time>
-            </button>
-            {shownVersions.map((item, index) => (
+            {shownVersions.map((item) => (
               <button
                 type="button"
                 key={item.id}
                 className={version === item.id ? 'active' : ''}
                 onClick={() => changeVersion(item.id)}
               >
-                <span>{String(index + 4).padStart(2, '0')}</span>
+                <span>{versionLabel(item)}</span>
                 <small>{item.name}</small>
-                <time>{item.published ? 'Publicada' : 'Borrador'}</time>
+                <time>
+                  {item.published
+                    ? new Date(item.created).toLocaleDateString('es-AR', {
+                        day: '2-digit',
+                        month: 'short',
+                      })
+                    : 'Borrador'}
+                </time>
               </button>
             ))}
+            {!shownVersions.length && (
+              <span className="empty-version-track">
+                Importá el primer modelo
+              </span>
+            )}
           </div>
           <div className="version-status">
             {activeVersion && !activeVersion.published && professional ? (
@@ -2027,7 +2823,7 @@ export default function Studio({
                 <span />
                 {activeVersion
                   ? 'Publicada para el cliente'
-                  : 'Proyecto de ejemplo'}
+                  : 'Proyecto sin entregas'}
               </>
             )}
           </div>
@@ -2064,12 +2860,18 @@ export default function Studio({
           showCloseButton={!!role}
         >
           <DialogTitle>
-            {signedIn || localPreview ? 'Elegí tu espacio' : 'Entrá a Fabrica'}
+            {signedIn || localPreview
+              ? 'Elegí tu espacio'
+              : sharedToken
+                ? 'Tu acceso de invitado'
+                : 'Entrá a Fabrica'}
           </DialogTitle>
           <DialogDescription>
             {signedIn || localPreview
               ? 'Podés recorrer como cliente o gestionar tus proyectos como profesional.'
-              : 'Una cuenta para presentar, revisar y conversar sobre cada proyecto.'}
+              : sharedToken
+                ? 'Ya podés revisar y comentar sin registrarte. Crear una cuenta es opcional.'
+                : 'La cuenta profesional reúne proyectos, entregas y conversaciones.'}
           </DialogDescription>
           {signedIn || localPreview ? (
             <>
@@ -2111,7 +2913,11 @@ export default function Studio({
                       'Creá proyectos, versiones y vistas; publicá para tus clientes.',
                   },
                 ]
-                  .filter((item) => !sharedToken || item.value === 'customer')
+                  .filter(
+                    (item) =>
+                      (!sharedToken || item.value === 'customer') &&
+                      (item.value === 'customer' || canEdit || localPreview),
+                  )
                   .map((item) => (
                     <button
                       key={item.value}
@@ -2123,7 +2929,11 @@ export default function Studio({
                           activeVersion &&
                           !activeVersion.published
                         )
-                          changeVersion('v03');
+                          changeVersion(
+                            versions
+                              .filter((version) => version.published)
+                              .at(-1)?.id || '',
+                          );
                       }}
                     >
                       {item.icon}
@@ -2143,12 +2953,230 @@ export default function Studio({
               </a>
             </>
           ) : (
-            <AuthPanel
-              customerSignIn={customerSignIn}
+            <StudioAuthPanel
               professionalSignIn={professionalSignIn}
               sharedToken={sharedToken}
             />
           )}
+        </DialogContent>
+      </Dialog>
+      <Dialog open={shareDialogOpen} onOpenChange={setShareDialogOpen}>
+        <DialogContent className="small-studio-dialog share-access-dialog">
+          <DialogTitle>Compartir revisión</DialogTitle>
+          <DialogDescription>
+            El cliente entra desde un enlace privado, sin crear una cuenta. Sólo
+            verá las entregas que publiques y podrá dejar comentarios.
+          </DialogDescription>
+          <div className="share-recipient">
+            <span>
+              <UserRound />
+            </span>
+            <div>
+              <strong>{activeClient?.name || 'Cliente del proyecto'}</strong>
+              <small>
+                {activeClient?.email ||
+                  'Sin email cargado · compartilo por el canal que prefieras'}
+              </small>
+            </div>
+          </div>
+          <div className={`share-status ${shareActive ? 'active' : ''}`}>
+            <span className="share-status-icon">
+              {shareActive ? <Link2 /> : <CalendarClock />}
+            </span>
+            <div>
+              <strong>
+                {shareActive ? 'Enlace activo' : 'No hay un enlace activo'}
+              </strong>
+              <small>
+                {shareActive
+                  ? `Disponible hasta ${shareExpiryLabel}`
+                  : 'Creá uno nuevo para habilitar la revisión.'}
+              </small>
+            </div>
+          </div>
+          <label>
+            Duración del nuevo enlace
+            <select
+              value={shareDays}
+              onChange={(event) => setShareDays(Number(event.target.value))}
+            >
+              <option value={7}>7 días</option>
+              <option value={30}>30 días</option>
+              <option value={90}>90 días</option>
+            </select>
+          </label>
+          <p className="share-help">
+            Crear o renovar el enlace invalida el anterior. También podés
+            revocarlo inmediatamente desde acá.
+          </p>
+          <div className="share-actions">
+            {shareActive && (
+              <Button
+                variant="outline"
+                disabled={saving}
+                onClick={() => void revokeShare()}
+              >
+                Revocar
+              </Button>
+            )}
+            {shareActive && (
+              <Button
+                variant="outline"
+                disabled={saving}
+                onClick={() => void createShare(false)}
+              >
+                <RotateCcw /> Renovar
+              </Button>
+            )}
+            <Button disabled={saving} onClick={() => void copyShare()}>
+              <Link2 />
+              {saving
+                ? 'Preparando…'
+                : shareActive
+                  ? 'Copiar enlace'
+                  : 'Crear y copiar'}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={clientsDialogOpen} onOpenChange={setClientsDialogOpen}>
+        <DialogContent className="client-directory-dialog">
+          <DialogTitle>Tu cartera de clientes</DialogTitle>
+          <DialogDescription>
+            Cada cliente reúne sus proyectos para que encuentres rápidamente el
+            trabajo y la conversación que necesitás.
+          </DialogDescription>
+          <div className="client-directory-list">
+            {clientGroups.length ? (
+              clientGroups.map((client) => (
+                <article className="client-directory-card" key={client.id}>
+                  <header>
+                    <span className="client-avatar">
+                      {client.name.slice(0, 2).toUpperCase()}
+                    </span>
+                    <div>
+                      <strong>{client.name}</strong>
+                      <small>
+                        {client.email ? (
+                          <>
+                            <Mail /> {client.email}
+                          </>
+                        ) : (
+                          'Sin email de contacto'
+                        )}
+                      </small>
+                    </div>
+                    <b>
+                      {client.projects.length}{' '}
+                      {client.projects.length === 1 ? 'proyecto' : 'proyectos'}
+                    </b>
+                  </header>
+                  <div className="client-project-links">
+                    {client.projects.map((project) => (
+                      <button
+                        key={project.id}
+                        type="button"
+                        onClick={() => {
+                          setClientsDialogOpen(false);
+                          void switchProject(project.id);
+                        }}
+                      >
+                        <span>{project.name}</span>
+                        <small>Abrir →</small>
+                      </button>
+                    ))}
+                    {!client.projects.length && (
+                      <span>Todavía no tiene proyectos asociados.</span>
+                    )}
+                    <button
+                      type="button"
+                      className="client-new-project"
+                      onClick={() => {
+                        setNewProjectClient(client.id);
+                        setClientsDialogOpen(false);
+                        setProjectDialogOpen(true);
+                      }}
+                    >
+                      <Plus /> Crear proyecto para {client.name}
+                    </button>
+                  </div>
+                </article>
+              ))
+            ) : (
+              <div className="client-directory-empty">
+                <UsersRound />
+                <strong>Tu cartera está lista para el primer cliente</strong>
+                <span>
+                  Guardá su nombre y después asociá todos sus proyectos.
+                </span>
+              </div>
+            )}
+          </div>
+          <div className="client-directory-actions">
+            <Button
+              variant="outline"
+              onClick={() => setClientsDialogOpen(false)}
+            >
+              Cerrar
+            </Button>
+            <Button
+              onClick={() => {
+                setClientsDialogOpen(false);
+                setClientDialogOpen(true);
+              }}
+            >
+              <Plus /> Nuevo cliente
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+      <Dialog
+        open={clientDialogOpen}
+        onOpenChange={(open) => {
+          setClientDialogOpen(open);
+          if (!open && clientsDialogOpen) setClientsDialogOpen(true);
+        }}
+      >
+        <DialogContent className="small-studio-dialog">
+          <DialogTitle>Nuevo cliente</DialogTitle>
+          <DialogDescription>
+            Sumalo a tu cartera. Después podrás asociarle uno o más proyectos.
+          </DialogDescription>
+          <label>
+            Nombre del cliente
+            <input
+              autoFocus
+              maxLength={120}
+              value={newClientName}
+              onChange={(event) => setNewClientName(event.target.value)}
+            />
+          </label>
+          <label>
+            Email <span className="optional-label">Opcional</span>
+            <input
+              type="email"
+              maxLength={200}
+              value={newClientEmail}
+              onChange={(event) => setNewClientEmail(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') void createClient();
+              }}
+            />
+          </label>
+          <div>
+            <Button
+              variant="outline"
+              onClick={() => setClientDialogOpen(false)}
+            >
+              Cancelar
+            </Button>
+            <Button
+              disabled={!newClientName.trim() || saving}
+              onClick={() => void createClient()}
+            >
+              <Plus /> {saving ? 'Guardando…' : 'Agregar cliente'}
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
       <Dialog open={projectDialogOpen} onOpenChange={setProjectDialogOpen}>
@@ -2168,6 +3196,20 @@ export default function Studio({
               }}
               placeholder="Ej. Casa del Lago"
             />
+          </label>
+          <label>
+            Cliente
+            <select
+              value={newProjectClient}
+              onChange={(event) => setNewProjectClient(event.target.value)}
+            >
+              <option value="">Sin cliente asignado</option>
+              {clients.map((client) => (
+                <option key={client.id} value={client.id}>
+                  {client.name}
+                </option>
+              ))}
+            </select>
           </label>
           <div>
             <Button
@@ -2213,6 +3255,102 @@ export default function Studio({
               onClick={() => void saveView()}
             >
               <Camera /> {saving ? 'Guardando…' : 'Guardar vista'}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={versionDialogOpen} onOpenChange={setVersionDialogOpen}>
+        <DialogContent className="small-studio-dialog version-dialog">
+          <DialogTitle>Nueva versión</DialogTitle>
+          <DialogDescription>
+            Partirá de{' '}
+            {activeVersion
+              ? `${versionLabel(activeVersion)} · ${activeVersion.name}`
+              : 'la versión actual'}{' '}
+            y quedará como borrador.
+          </DialogDescription>
+          <label>
+            Nombre de la versión
+            <input
+              maxLength={150}
+              value={versionName}
+              onChange={(event) => setVersionName(event.target.value)}
+              placeholder="Ej. Ajuste de carpinterías"
+            />
+          </label>
+          <label htmlFor="studio-version-description">
+            Qué cambia
+            <Textarea
+              id="studio-version-description"
+              maxLength={1000}
+              value={versionDescription}
+              onChange={(event) => setVersionDescription(event.target.value)}
+              placeholder="Resumen breve para el equipo y el cliente"
+            />
+          </label>
+          <div>
+            <Button
+              variant="outline"
+              onClick={() => setVersionDialogOpen(false)}
+            >
+              Cancelar
+            </Button>
+            <Button
+              disabled={!versionName.trim() || saving}
+              onClick={() => void createVersion()}
+            >
+              <CopyPlus /> {saving ? 'Creando…' : 'Crear borrador'}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+      <Dialog
+        open={measurementDialogOpen}
+        onOpenChange={(open) => {
+          setMeasurementDialogOpen(open);
+          if (!open) {
+            setMeasurementStart(null);
+            setMeasurementEnd(null);
+          }
+        }}
+      >
+        <DialogContent className="small-studio-dialog">
+          <DialogTitle>Guardar medida</DialogTitle>
+          <DialogDescription>
+            {measurementStart && measurementEnd
+              ? `${Math.hypot(
+                  measurementEnd.point[0] - measurementStart.point[0],
+                  measurementEnd.point[1] - measurementStart.point[1],
+                  measurementEnd.point[2] - measurementStart.point[2],
+                ).toLocaleString('es-AR', {
+                  maximumFractionDigits: 2,
+                })} ${activeVersion?.unit || 'm'} entre los dos puntos.`
+              : 'Nombrá esta medida para encontrarla luego.'}
+          </DialogDescription>
+          <label>
+            Nombre de la medida
+            <input
+              maxLength={100}
+              value={measurementName}
+              onChange={(event) => setMeasurementName(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') void saveMeasurement();
+              }}
+              placeholder="Ej. Ancho libre"
+            />
+          </label>
+          <div>
+            <Button
+              variant="outline"
+              onClick={() => setMeasurementDialogOpen(false)}
+            >
+              Cancelar
+            </Button>
+            <Button
+              disabled={!measurementName.trim() || saving}
+              onClick={() => void saveMeasurement()}
+            >
+              <Ruler /> {saving ? 'Guardando…' : 'Guardar medida'}
             </Button>
           </div>
         </DialogContent>

@@ -1,13 +1,17 @@
 import { env } from 'cloudflare:workers';
-import { and, asc, eq, inArray, or } from 'drizzle-orm';
-import { getFabricaUser } from '@/app/fabrica-auth';
+import { and, asc, eq, gt, inArray, isNull, max, or } from 'drizzle-orm';
+import { getFabricaUser, randomToken } from '@/app/fabrica-auth';
 import { getDb } from '@/db';
 import {
+  studioClients,
   studioComments,
+  studioMeasurements,
+  studioPlans,
   studioProjects,
   studioUploads,
   studioVersions,
 } from '@/db/schema';
+import { createStarterProject } from '@/features/studio/server/seed';
 
 const PART = 8 * 1024 * 1024;
 const MAX_FILE = 5 * 1024 ** 3;
@@ -26,6 +30,21 @@ type StudioBody = {
   files?: unknown;
   position?: unknown;
   target?: unknown;
+  description?: unknown;
+  sourceVersion?: unknown;
+  hiddenObjects?: unknown;
+  anchor?: unknown;
+  parent?: unknown;
+  startPoint?: unknown;
+  endPoint?: unknown;
+  value?: unknown;
+  unit?: unknown;
+  key?: unknown;
+  sheet?: unknown;
+  mime?: unknown;
+  client?: unknown;
+  email?: unknown;
+  days?: unknown;
 };
 const json = (value: unknown, status = 200) =>
   Response.json(value, {
@@ -38,6 +57,70 @@ function db() {
 }
 
 async function context(request: Request) {
+  const database = db();
+  const share = new URL(request.url).searchParams.get('share');
+  if (share) {
+    const [project] = await database
+      .select()
+      .from(studioProjects)
+      .where(
+        and(
+          eq(studioProjects.share, share),
+          eq(studioProjects.shareEnabled, 1),
+          or(
+            eq(studioProjects.shareExpires, 0),
+            gt(studioProjects.shareExpires, Date.now()),
+          ),
+        ),
+      )
+      .limit(1);
+    if (!project) throw new Error('404');
+
+    const authenticated = await getFabricaUser(request);
+    const [client] = project.client
+      ? await database
+          .select({
+            name: studioClients.name,
+            email: studioClients.email,
+            account: studioClients.account,
+          })
+          .from(studioClients)
+          .where(eq(studioClients.id, project.client))
+          .limit(1)
+      : [];
+    if (
+      authenticated &&
+      client &&
+      project.client &&
+      client.email &&
+      authenticated.email.toLowerCase() === client.email.toLowerCase() &&
+      (!client.account || client.account === authenticated.userId)
+    ) {
+      await database
+        .update(studioClients)
+        .set({ account: authenticated.userId })
+        .where(
+          and(
+            eq(studioClients.id, project.client),
+            or(
+              isNull(studioClients.account),
+              eq(studioClients.account, authenticated.userId),
+            ),
+          ),
+        );
+    }
+    const identity =
+      authenticated ||
+      ({
+        userId: `guest:${project.id}`,
+        displayName: client?.name || 'Cliente invitado',
+        email: client?.email || '',
+        fullName: client?.name || null,
+        provider: 'guest' as const,
+      } as const);
+    return { project, projects: [], clients: [], identity, owner: false };
+  }
+
   const user = await getFabricaUser(request);
   // This identity exists only in the local development build, never on the hosted site.
   const identity =
@@ -53,43 +136,59 @@ async function context(request: Request) {
       : null);
   if (!identity) throw new Error('401');
 
-  const database = db();
-  const share = new URL(request.url).searchParams.get('share');
-  if (share) {
-    const [project] = await database
-      .select()
-      .from(studioProjects)
-      .where(eq(studioProjects.share, share))
-      .limit(1);
-    if (!project) throw new Error('404');
-    return { project, projects: [], identity, owner: false };
-  }
-
   let projects = await database
     .select()
     .from(studioProjects)
     .where(eq(studioProjects.owner, identity.userId))
     .orderBy(asc(studioProjects.created));
   if (!projects.length) {
-    await database.insert(studioProjects).values({
-      id: crypto.randomUUID(),
-      owner: identity.userId,
-      share: crypto.randomUUID(),
-      name: 'Casa Patio',
-      created: Date.now(),
-    });
+    const linkedClients = await database
+      .select({ id: studioClients.id })
+      .from(studioClients)
+      .where(eq(studioClients.account, identity.userId));
+    if (linkedClients.length) {
+      projects = await database
+        .select()
+        .from(studioProjects)
+        .where(
+          inArray(
+            studioProjects.client,
+            linkedClients.map((client) => client.id),
+          ),
+        )
+        .orderBy(asc(studioProjects.created));
+    }
+  }
+  if (!projects.length) {
+    await createStarterProject(database, identity.userId);
     projects = await database
       .select()
       .from(studioProjects)
       .where(eq(studioProjects.owner, identity.userId))
       .orderBy(asc(studioProjects.created));
   }
+  const ownsProjects = projects.some(
+    (project) => project.owner === identity.userId,
+  );
+  if (!ownsProjects) {
+    const requestedProject = new URL(request.url).searchParams.get('project');
+    const project = requestedProject
+      ? projects.find((item) => item.id === requestedProject)
+      : projects[0];
+    if (!project) throw new Error('404');
+    return { project, projects, clients: [], identity, owner: false };
+  }
+  const clients = await database
+    .select()
+    .from(studioClients)
+    .where(eq(studioClients.owner, identity.userId))
+    .orderBy(asc(studioClients.name), asc(studioClients.created));
   const requestedProject = new URL(request.url).searchParams.get('project');
   const project = requestedProject
     ? projects.find((item) => item.id === requestedProject)
     : projects[0];
   if (!project) throw new Error(requestedProject ? '404' : '503');
-  return { project, projects, identity, owner: true };
+  return { project, projects, clients, identity, owner: true };
 }
 
 function failure(error: unknown) {
@@ -119,13 +218,14 @@ function failure(error: unknown) {
 
 export async function GET(request: Request) {
   try {
-    const { project, projects, owner } = await context(request);
+    const { project, projects, clients, identity, owner } =
+      await context(request);
     const database = db();
     const params = new URL(request.url).searchParams;
     const asset = params.get('asset');
     if (asset) {
       const versions = await database
-        .select({ files: studioVersions.files })
+        .select({ id: studioVersions.id, files: studioVersions.files })
         .from(studioVersions)
         .where(
           owner
@@ -135,13 +235,26 @@ export async function GET(request: Request) {
                 eq(studioVersions.published, 1),
               ),
         );
-      if (
-        !versions.some((version) =>
-          (JSON.parse(version.files) as { key: string }[]).some(
-            (file) => file.key === asset,
+      if (!versions.length) throw new Error('404');
+      const plans = await database
+        .select({ key: studioPlans.key })
+        .from(studioPlans)
+        .where(
+          and(
+            eq(studioPlans.project, project.id),
+            inArray(
+              studioPlans.version,
+              versions.map((version) => version.id),
+            ),
           ),
-        )
-      ) {
+        );
+      const isVersionFile = versions.some((version) =>
+        (JSON.parse(version.files) as { key: string }[]).some(
+          (file) => file.key === asset,
+        ),
+      );
+      const isPlanFile = plans.some((plan) => plan.key === asset);
+      if (!isVersionFile && !isPlanFile) {
         throw new Error('404');
       }
       const file = await env.FILES.get(asset);
@@ -176,7 +289,7 @@ export async function GET(request: Request) {
               eq(studioVersions.published, 1),
             ),
       )
-      .orderBy(asc(studioVersions.created));
+      .orderBy(asc(studioVersions.sequence), asc(studioVersions.created));
     const comments = await database
       .select()
       .from(studioComments)
@@ -187,22 +300,66 @@ export async function GET(request: Request) {
               eq(studioComments.project, project.id),
               or(
                 eq(studioComments.version, '*'),
-                inArray(studioComments.version, ['v02', 'v03']),
                 inArray(studioComments.version, publishedVersionIds),
               ),
             ),
       )
       .orderBy(asc(studioComments.created));
+    const measurements = await database
+      .select()
+      .from(studioMeasurements)
+      .where(
+        owner
+          ? eq(studioMeasurements.project, project.id)
+          : and(
+              eq(studioMeasurements.project, project.id),
+              inArray(studioMeasurements.version, publishedVersionIds),
+            ),
+      )
+      .orderBy(asc(studioMeasurements.created));
+    const plans = await database
+      .select()
+      .from(studioPlans)
+      .where(
+        owner
+          ? eq(studioPlans.project, project.id)
+          : and(
+              eq(studioPlans.project, project.id),
+              inArray(studioPlans.version, publishedVersionIds),
+            ),
+      )
+      .orderBy(asc(studioPlans.created));
 
     return json({
       versions,
       comments,
-      share: owner ? project.share : null,
+      measurements,
+      plans,
+      share: owner && project.shareEnabled ? project.share : null,
+      shareEnabled: owner ? Boolean(project.shareEnabled) : true,
+      shareExpires: owner ? project.shareExpires : 0,
       owner,
-      project: { id: project.id, name: project.name },
-      projects: owner
-        ? projects.map((item) => ({ id: item.id, name: item.name }))
+      viewer: {
+        name: identity.displayName,
+        guest: identity.provider === 'guest',
+      },
+      project: {
+        id: project.id,
+        name: project.name,
+        client: owner ? project.client : null,
+      },
+      clients: owner
+        ? clients.map((item) => ({
+            id: item.id,
+            name: item.name,
+            email: item.email,
+          }))
         : [],
+      projects: projects.map((item) => ({
+        id: item.id,
+        name: item.name,
+        client: owner ? item.client : null,
+      })),
     });
   } catch (error) {
     return failure(error);
@@ -263,7 +420,7 @@ export async function POST(request: Request) {
         scope === 'project'
           ? 'Todo el proyecto'
           : (body.surface as string).trim();
-      if (scope === 'point' && !['v02', 'v03'].includes(commentVersion)) {
+      if (scope === 'point') {
         const [version] = await database
           .select({ id: studioVersions.id })
           .from(studioVersions)
@@ -282,12 +439,36 @@ export async function POST(request: Request) {
           .limit(1);
         if (!version) throw new Error('404');
       }
+      let anchor = scope === 'project' ? 'project' : crypto.randomUUID();
+      if (
+        scope === 'point' &&
+        typeof body.anchor === 'string' &&
+        body.anchor.length <= 100
+      ) {
+        const [existingAnchor] = await database
+          .select({ anchor: studioComments.anchor })
+          .from(studioComments)
+          .where(
+            and(
+              eq(studioComments.project, project.id),
+              eq(studioComments.version, commentVersion),
+              eq(studioComments.anchor, body.anchor),
+            ),
+          )
+          .limit(1);
+        if (existingAnchor) anchor = existingAnchor.anchor;
+      }
       await database.insert(studioComments).values({
         id: crypto.randomUUID(),
         project: project.id,
         version: commentVersion,
         author: identity.displayName,
         text: body.text.trim(),
+        anchor,
+        parent:
+          typeof body.parent === 'string' && body.parent.length <= 100
+            ? body.parent
+            : null,
         scope,
         surface: commentSurface,
         point: scope === 'point' ? JSON.stringify(body.point) : null,
@@ -299,23 +480,106 @@ export async function POST(request: Request) {
     }
 
     if (!owner) throw new Error('403');
-    if (body.action === 'create-project') {
+    if (body.action === 'create-client') {
       if (
         typeof body.name !== 'string' ||
         !body.name.trim() ||
-        body.name.trim().length > 120
+        body.name.trim().length > 120 ||
+        (body.email !== undefined &&
+          (typeof body.email !== 'string' || body.email.trim().length > 200))
       ) {
+        throw new Error('400');
+      }
+      const email =
+        typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
+      if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
         throw new Error('400');
       }
       const created = {
         id: crypto.randomUUID(),
         owner: identity.userId,
+        name: body.name.trim(),
+        email,
+        created: Date.now(),
+      };
+      await database.insert(studioClients).values(created);
+      return json(
+        {
+          client: {
+            id: created.id,
+            name: created.name,
+            email: created.email,
+          },
+        },
+        201,
+      );
+    } else if (body.action === 'create-project') {
+      if (
+        typeof body.name !== 'string' ||
+        !body.name.trim() ||
+        body.name.trim().length > 120 ||
+        (body.client !== undefined &&
+          body.client !== null &&
+          typeof body.client !== 'string')
+      ) {
+        throw new Error('400');
+      }
+      const clientId =
+        typeof body.client === 'string' && body.client ? body.client : null;
+      if (clientId) {
+        const [client] = await database
+          .select({ id: studioClients.id })
+          .from(studioClients)
+          .where(
+            and(
+              eq(studioClients.id, clientId),
+              eq(studioClients.owner, identity.userId),
+            ),
+          )
+          .limit(1);
+        if (!client) throw new Error('400');
+      }
+      const created = {
+        id: crypto.randomUUID(),
+        owner: identity.userId,
+        client: clientId,
         share: crypto.randomUUID(),
+        shareEnabled: 1,
+        shareExpires: Date.now() + 30 * 86400_000,
         name: body.name.trim(),
         created: Date.now(),
       };
       await database.insert(studioProjects).values(created);
-      return json({ project: { id: created.id, name: created.name } }, 201);
+      return json(
+        {
+          project: {
+            id: created.id,
+            name: created.name,
+            client: created.client,
+          },
+        },
+        201,
+      );
+    } else if (body.action === 'share') {
+      const days = Number(body.days);
+      if (![7, 30, 90].includes(days)) throw new Error('400');
+      const token = randomToken();
+      const expires = Date.now() + days * 86400_000;
+      await database
+        .update(studioProjects)
+        .set({ share: token, shareEnabled: 1, shareExpires: expires })
+        .where(eq(studioProjects.id, project.id));
+      return json({ share: token, shareEnabled: true, shareExpires: expires });
+    } else if (body.action === 'revoke-share') {
+      await database
+        .update(studioProjects)
+        .set({
+          share: randomToken(),
+          shareEnabled: 0,
+          shareExpires: Date.now(),
+        })
+        .where(eq(studioProjects.id, project.id));
+      return json({ share: '', shareEnabled: false, shareExpires: 0 });
     } else if (body.action === 'resolve') {
       if (typeof body.id !== 'string' || !body.id) throw new Error('400');
       await database
@@ -433,17 +697,72 @@ export async function POST(request: Request) {
         if (!upload) throw new Error('400');
         files.push(upload);
       }
+      const [{ nextSequence }] = await database
+        .select({ nextSequence: max(studioVersions.sequence) })
+        .from(studioVersions)
+        .where(eq(studioVersions.project, project.id));
       const id = crypto.randomUUID();
       await database.insert(studioVersions).values({
         id,
         project: project.id,
         name: body.name.trim(),
+        description: '',
+        sequence: (nextSequence || 0) + 1,
+        sourceVersion: null,
+        modelKind: 'files',
         files: JSON.stringify(files),
         views: '[]',
+        settings: JSON.stringify({ hiddenObjects: [], palette: 'warm' }),
+        unit: 'm',
         published: 0,
         created: Date.now(),
       });
       return json({ id });
+    } else if (body.action === 'create-version') {
+      if (
+        typeof body.name !== 'string' ||
+        !body.name.trim() ||
+        body.name.trim().length > 150 ||
+        (body.description !== undefined &&
+          (typeof body.description !== 'string' ||
+            body.description.trim().length > 1000)) ||
+        typeof body.sourceVersion !== 'string'
+      ) {
+        throw new Error('400');
+      }
+      const [source] = await database
+        .select()
+        .from(studioVersions)
+        .where(
+          and(
+            eq(studioVersions.id, body.sourceVersion),
+            eq(studioVersions.project, project.id),
+          ),
+        )
+        .limit(1);
+      if (!source) throw new Error('404');
+      const [{ lastSequence }] = await database
+        .select({ lastSequence: max(studioVersions.sequence) })
+        .from(studioVersions)
+        .where(eq(studioVersions.project, project.id));
+      const id = crypto.randomUUID();
+      await database.insert(studioVersions).values({
+        id,
+        project: project.id,
+        name: body.name.trim(),
+        description:
+          typeof body.description === 'string' ? body.description.trim() : '',
+        sequence: (lastSequence || 0) + 1,
+        sourceVersion: source.id,
+        modelKind: source.modelKind,
+        files: source.files,
+        views: source.views,
+        settings: source.settings,
+        unit: source.unit,
+        published: 0,
+        created: Date.now(),
+      });
+      return json({ id }, 201);
     } else if (body.action === 'view') {
       if (
         typeof body.version !== 'string' ||
@@ -486,6 +805,146 @@ export async function POST(request: Request) {
         .set({ views: JSON.stringify(current) })
         .where(eq(studioVersions.id, body.version));
       return json({ ok: true });
+    } else if (body.action === 'visibility') {
+      if (
+        typeof body.version !== 'string' ||
+        !Array.isArray(body.hiddenObjects) ||
+        body.hiddenObjects.length > 500 ||
+        !body.hiddenObjects.every(
+          (item: unknown) => typeof item === 'string' && item.length <= 500,
+        )
+      ) {
+        throw new Error('400');
+      }
+      const [stored] = await database
+        .select({ settings: studioVersions.settings })
+        .from(studioVersions)
+        .where(
+          and(
+            eq(studioVersions.id, body.version),
+            eq(studioVersions.project, project.id),
+          ),
+        )
+        .limit(1);
+      if (!stored) throw new Error('404');
+      let settings: Record<string, unknown> = {};
+      try {
+        settings = JSON.parse(stored.settings) as Record<string, unknown>;
+      } catch {}
+      settings.hiddenObjects = Array.from(
+        new Set(body.hiddenObjects as string[]),
+      );
+      await database
+        .update(studioVersions)
+        .set({ settings: JSON.stringify(settings) })
+        .where(eq(studioVersions.id, body.version));
+    } else if (body.action === 'measurement') {
+      const points = [body.startPoint, body.endPoint];
+      if (
+        typeof body.version !== 'string' ||
+        typeof body.name !== 'string' ||
+        !body.name.trim() ||
+        body.name.trim().length > 100 ||
+        !points.every(
+          (point) =>
+            Array.isArray(point) &&
+            point.length === 3 &&
+            point.every(
+              (number: unknown) =>
+                typeof number === 'number' && Number.isFinite(number),
+            ),
+        ) ||
+        !['m', 'cm', 'mm'].includes(String(body.unit))
+      ) {
+        throw new Error('400');
+      }
+      const [start, end] = points as [number[], number[]];
+      const value = Math.hypot(
+        end[0] - start[0],
+        end[1] - start[1],
+        end[2] - start[2],
+      );
+      if (value <= 0 || value > 1_000_000) throw new Error('400');
+      const [version] = await database
+        .select({ id: studioVersions.id })
+        .from(studioVersions)
+        .where(
+          and(
+            eq(studioVersions.id, body.version),
+            eq(studioVersions.project, project.id),
+          ),
+        )
+        .limit(1);
+      if (!version) throw new Error('404');
+      const id = crypto.randomUUID();
+      await database.insert(studioMeasurements).values({
+        id,
+        project: project.id,
+        version: version.id,
+        name: body.name.trim(),
+        startPoint: JSON.stringify(body.startPoint),
+        endPoint: JSON.stringify(body.endPoint),
+        value,
+        unit: String(body.unit),
+        createdBy: identity.displayName,
+        created: Date.now(),
+      });
+      return json({ id }, 201);
+    } else if (body.action === 'plan') {
+      if (
+        typeof body.version !== 'string' ||
+        typeof body.name !== 'string' ||
+        !body.name.trim() ||
+        body.name.trim().length > 150 ||
+        typeof body.key !== 'string' ||
+        typeof body.size !== 'number' ||
+        typeof body.mime !== 'string' ||
+        !['application/pdf', 'image/png', 'image/jpeg', 'image/webp'].includes(
+          body.mime,
+        ) ||
+        (body.sheet !== undefined &&
+          (typeof body.sheet !== 'string' || body.sheet.trim().length > 40))
+      ) {
+        throw new Error('400');
+      }
+      const [version] = await database
+        .select({ id: studioVersions.id })
+        .from(studioVersions)
+        .where(
+          and(
+            eq(studioVersions.id, body.version),
+            eq(studioVersions.project, project.id),
+          ),
+        )
+        .limit(1);
+      const [upload] = await database
+        .select()
+        .from(studioUploads)
+        .where(
+          and(
+            eq(studioUploads.key, body.key),
+            eq(studioUploads.project, project.id),
+            eq(studioUploads.completed, 1),
+          ),
+        )
+        .limit(1);
+      if (!version || !upload || upload.size !== body.size) {
+        throw new Error('400');
+      }
+      const id = crypto.randomUUID();
+      await database.insert(studioPlans).values({
+        id,
+        project: project.id,
+        version: version.id,
+        name: body.name.trim(),
+        sheet: typeof body.sheet === 'string' ? body.sheet.trim() : '',
+        mime: body.mime,
+        key: upload.key,
+        size: upload.size,
+        createdBy: identity.displayName,
+        created: Date.now(),
+      });
+      return json({ id }, 201);
     } else if (body.action === 'publish') {
       if (typeof body.id !== 'string' || !body.id) throw new Error('400');
       await database

@@ -12,7 +12,8 @@
     "lint": "oxlint",
     "format": "oxfmt",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate"
+    "db:migrate": "drizzle-kit migrate",
+    "db:seed": "node --import tsx db/seed.ts"
   },
   "dependencies": {
     "@base-ui/react": "1.7.0",
@@ -59,6 +60,7 @@
     "oxlint-tsgolint": "7.0.2001",
     "tailwindcss": "4.2.1",
     "typescript": "5.9.3",
+    "tsx": "4.20.6",
     "vite": "8.0.13",
     "wrangler": "4.92.0"
   },

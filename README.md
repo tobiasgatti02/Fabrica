@@ -2,7 +2,7 @@
 
 Estudio virtual en español para arquitectos, ingenieros civiles, interioristas y sus clientes. Modelos navegables en la web, entregas versionadas y conversaciones ancladas al espacio.
 
-**Estado al 11 de septiembre de 2026:** documentación de producto y aplicación web en `web/`. La landing incluye una casa original de Blender con GLB/Draco, materiales PBR, construcción guiada por scroll y entrada al interior; `/estudio` incluye login/registro seguro, varios proyectos por profesional, versiones asignadas y nombradas, vistas de cámara guardadas, comentarios generales y espaciales, publicación e importación multipart. Los datos relacionales se guardan en Neon Postgres mediante Drizzle y los archivos grandes permanecen en almacenamiento de objetos. Se probó un DAE exportado desde SketchUp; no hay importadores certificados ni resultados de rendimiento en dispositivos. Ver [estado y límites del Studio](docs/studio-implementacion.md). Ver [implementación de la landing](docs/landing-implementacion.md).
+**Estado al 12 de septiembre de 2026:** documentación de producto y aplicación web en `web/`. La landing incluye una casa original de Blender con GLB/Draco, materiales PBR, construcción guiada por scroll y entrada al interior; `/estudio` incluye cuenta profesional segura, acceso de cliente por enlace privado sin registro obligatorio, enlaces revocables con vencimiento, varios proyectos por profesional, versiones dinámicas que pueden derivarse como borrador, vistas de cámara, visibilidad de objetos por entrega, puntos de referencia con conversaciones, medidas, planos, publicación e importación multipart. Los datos relacionales se guardan en Neon Postgres mediante Drizzle y los archivos grandes permanecen en almacenamiento de objetos. Se probó un DAE exportado desde SketchUp; no hay importadores certificados ni resultados de rendimiento en dispositivos. Ver [estado y límites del Studio](docs/studio-implementacion.md). Ver [implementación de la landing](docs/landing-implementacion.md).
 
 ## Recomendación
 
@@ -23,10 +23,13 @@ La aplicación requiere Node.js 22.13 o posterior. Dentro de `web/`, copiá `.en
 ```bash
 npm install
 npm run db:migrate
+npm run db:seed
 npm run dev
 ```
 
 `DATABASE_URL` es la conexión pooled usada por la aplicación. `DATABASE_URL_UNPOOLED` es la conexión directa reservada para migraciones. Ninguno de los dos secretos se versiona.
+
+El seed es idempotente: completa el proyecto local “Casa Patio”, conserva las importaciones existentes y normaliza la numeración y los puntos de referencia previos.
 
 ## Documentos y orden de lectura
 

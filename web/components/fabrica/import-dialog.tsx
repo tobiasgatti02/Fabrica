@@ -9,74 +9,15 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog';
 import { extension, viewFormats } from './model-import';
-
-export type StoredFile = { key: string; name: string; size: number };
-export type StoredView = {
-  id: string;
-  name: string;
-  position: [number, number, number];
-  target: [number, number, number];
-};
-export type StoredProject = { id: string; name: string };
-export type StoredVersion = {
-  id: string;
-  project: string;
-  name: string;
-  files: string;
-  views: string;
-  published: number;
-  created: number;
-};
-type StudioResponse = {
-  error?: string;
-  id: string;
-  partSize: number;
-  key: string;
-  name: string;
-  size: number;
-  share: string;
-  owner: boolean;
-  versions: StoredVersion[];
-  comments: Array<{
-    id: string;
-    author: string;
-    text: string;
-    created: number;
-    scope?: 'point' | 'project';
-    surface: string;
-    point: string | null;
-    camera?: string | null;
-    version: string;
-    state: 'abierto' | 'resuelto';
-  }>;
-  projects: StoredProject[];
-  project: StoredProject;
-};
+import { studioRequest } from '@/features/studio/api';
+import type { StoredFile, StoredProject } from '@/features/studio/domain';
+export type {
+  StoredFile,
+  StoredProject,
+  StoredVersion,
+  StoredView,
+} from '@/features/studio/domain';
 type MultipartPart = { partNumber: number; etag: string };
-
-export async function studioRequest(
-  body?: unknown,
-  share = '',
-  project = '',
-): Promise<StudioResponse> {
-  const params = new URLSearchParams();
-  if (share) params.set('share', share);
-  if (project) params.set('project', project);
-  const response = await fetch(
-    `/api/studio${params.size ? `?${params}` : ''}`,
-    body
-      ? {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        }
-      : undefined,
-  );
-  const data = (await response.json()) as StudioResponse;
-  if (!response.ok)
-    throw new Error(data.error || 'No se pudo completar la operación.');
-  return data;
-}
 
 export function ImportDialog({
   open,

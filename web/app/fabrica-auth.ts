@@ -9,6 +9,10 @@ const SESSION_COOKIE = 'fabrica_session';
 
 export type FabricaUser = ChatGPTUser & { provider: 'chatgpt' | 'fabrica' };
 
+type FabricaAuthOptions = {
+  allowChatGPT?: boolean;
+};
+
 function cookieValue(cookie: string | null, name: string) {
   return (
     cookie
@@ -29,39 +33,44 @@ export async function sha256(value: string) {
 
 export async function getFabricaUser(
   request?: Request,
+  { allowChatGPT = true }: FabricaAuthOptions = {},
 ): Promise<FabricaUser | null> {
-  const chatgpt = await getChatGPTUser();
-  if (chatgpt) return { ...chatgpt, provider: 'chatgpt' };
-
   const requestHeaders = request?.headers || (await headers());
   const token = cookieValue(requestHeaders.get('cookie'), SESSION_COOKIE);
-  if (!token || !env.DATABASE_URL) return null;
+  if (token && env.DATABASE_URL) {
+    const database = getDb(env.DATABASE_URL);
+    const [user] = await database
+      .select({
+        id: studioUsers.id,
+        email: studioUsers.email,
+        name: studioUsers.name,
+      })
+      .from(studioSessions)
+      .innerJoin(studioUsers, eq(studioUsers.id, studioSessions.user))
+      .where(
+        and(
+          eq(studioSessions.tokenHash, await sha256(token)),
+          gt(studioSessions.expires, Date.now()),
+        ),
+      )
+      .limit(1);
+    if (user) {
+      return {
+        userId: `fabrica:${user.id}`,
+        displayName: user.name,
+        email: user.email,
+        fullName: user.name,
+        provider: 'fabrica',
+      };
+    }
+  }
 
-  const database = getDb(env.DATABASE_URL);
-  const [user] = await database
-    .select({
-      id: studioUsers.id,
-      email: studioUsers.email,
-      name: studioUsers.name,
-    })
-    .from(studioSessions)
-    .innerJoin(studioUsers, eq(studioUsers.id, studioSessions.user))
-    .where(
-      and(
-        eq(studioSessions.tokenHash, await sha256(token)),
-        gt(studioSessions.expires, Date.now()),
-      ),
-    )
-    .limit(1);
-  if (!user) return null;
+  if (allowChatGPT) {
+    const chatgpt = await getChatGPTUser(requestHeaders);
+    if (chatgpt) return { ...chatgpt, provider: 'chatgpt' };
+  }
 
-  return {
-    userId: `fabrica:${user.id}`,
-    displayName: user.name,
-    email: user.email,
-    fullName: user.name,
-    provider: 'fabrica',
-  };
+  return null;
 }
 
 export function sessionCookie(token: string, request: Request) {

@@ -123,7 +123,8 @@ export async function POST(request: Request) {
     const email = body.email?.trim().toLowerCase() || '';
     const password = body.password || '';
     if (
-      !/^\S+@\S+\.\S+$/.test(email) ||
+      email.length > 254 ||
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ||
       password.length < 10 ||
       password.length > 200
     ) {
@@ -146,11 +147,11 @@ export async function POST(request: Request) {
         /\d/.test(password),
         /[^A-Za-z0-9]/.test(password),
       ].filter(Boolean).length;
-      if (passwordSignals < 1) {
+      if (passwordSignals < 2) {
         return json(
           {
             error:
-              'Sumá una mayúscula, un número o un símbolo a tu contraseña.',
+              'Combiná mayúsculas y minúsculas con un número o un símbolo.',
           },
           400,
         );
