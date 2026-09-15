@@ -11,6 +11,8 @@
     "start": "wrangler dev --config dist/server/wrangler.json",
     "lint": "oxlint",
     "format": "oxfmt",
+    "test:auth": "node --import tsx tests/auth-core.mts",
+    "test:auth-api": "node tests/auth-api.mjs",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:seed": "node --import tsx db/seed.ts"

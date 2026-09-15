@@ -35,6 +35,7 @@ export function ImportDialog({
   const [files, setFiles] = useState<File[]>([]);
   const [primary, setPrimary] = useState('');
   const [title, setTitle] = useState('');
+  const [upAxis, setUpAxis] = useState<'auto' | 'x' | 'y' | 'z'>('auto');
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState('');
@@ -129,7 +130,12 @@ export function ImportDialog({
       }
       if (cancelled.current) throw new Error('Importación cancelada.');
       const version = await studioRequest(
-        { action: 'version', name: title, files: saved.map((f) => f.key) },
+        {
+          action: 'version',
+          name: title,
+          files: saved.map((f) => f.key),
+          upAxis,
+        },
         '',
         project,
       );
@@ -220,6 +226,21 @@ export function ImportDialog({
                 {files.map((file) => (
                   <option key={file.name}>{file.name}</option>
                 ))}
+              </select>
+            </label>
+            <label>
+              Eje vertical
+              <select
+                value={upAxis}
+                disabled={busy}
+                onChange={(event) =>
+                  setUpAxis(event.target.value as 'auto' | 'x' | 'y' | 'z')
+                }
+              >
+                <option value="auto">Detectar automáticamente</option>
+                <option value="y">Y hacia arriba</option>
+                <option value="z">Z hacia arriba · CAD / FreeCAD</option>
+                <option value="x">X hacia arriba</option>
               </select>
             </label>
           </div>

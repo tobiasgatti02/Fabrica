@@ -1,24 +1,29 @@
 import Studio from '@/components/fabrica/studio';
-import { chatGPTSignInPath } from '@/app/chatgpt-auth';
-import { getFabricaUser } from '@/app/fabrica-auth';
+import { getFabricaUser } from '@/features/auth/server';
 import './studio.css';
 export const dynamic = 'force-dynamic';
 
 export default async function StudioPage({
   searchParams,
 }: {
-  searchParams?: Promise<{ auth?: string; share?: string }>;
+  searchParams?: Promise<{ share?: string; auth_error?: string }>;
 }) {
   const params = await searchParams;
-  const auth = params?.auth;
   const sharedToken = params?.share || '';
-  const user = await getFabricaUser(undefined, {
-    allowChatGPT: auth === 'chatgpt',
-  });
+  const authError =
+    params?.auth_error === 'google_unavailable'
+      ? 'El acceso con Google todavía no está configurado.'
+      : params?.auth_error === 'google_cancelled'
+        ? 'No se completó el acceso con Google.'
+        : params?.auth_error === 'google_failed'
+          ? 'No pudimos ingresar con Google. Intentá nuevamente.'
+          : '';
+  const user = await getFabricaUser();
   return (
     <Studio
       localPreview={false}
       initialSharedToken={sharedToken}
+      initialAuthError={authError}
       user={
         user
           ? {
@@ -28,9 +33,6 @@ export default async function StudioPage({
             }
           : null
       }
-      professionalSignIn={chatGPTSignInPath(
-        '/estudio?role=professional&auth=chatgpt',
-      )}
     />
   );
 }

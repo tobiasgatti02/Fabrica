@@ -19,6 +19,7 @@ export type StoredView = CameraView & {
 export type VersionSettings = {
   hiddenObjects: string[];
   palette?: 'original' | 'warm';
+  upAxis?: 'auto' | 'x' | 'y' | 'z';
 };
 
 export type StoredProject = {
@@ -114,6 +115,7 @@ export type StudioResponse = {
 export const DEFAULT_VERSION_SETTINGS: VersionSettings = {
   hiddenObjects: [],
   palette: 'warm',
+  upAxis: 'auto',
 };
 
 export function parseJson<T>(value: string | null | undefined, fallback: T): T {
@@ -134,6 +136,9 @@ export function parseVersionSettings(value?: string): VersionSettings {
         )
       : [],
     palette: parsed.palette === 'original' ? 'original' : 'warm',
+    upAxis: ['x', 'y', 'z'].includes(String(parsed.upAxis))
+      ? (parsed.upAxis as 'x' | 'y' | 'z')
+      : 'auto',
   };
 }
 

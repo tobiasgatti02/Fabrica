@@ -12,7 +12,6 @@ import {
   EyeOff,
   Focus,
   House,
-  Layers3,
   Maximize2,
   MessageCircle,
   MessageSquarePlus,
@@ -26,7 +25,6 @@ import {
   CalendarClock,
   RotateCcw,
   Sparkles,
-  Sun,
   FileBox as FileBoxIcon,
   UserRound,
   UserPlus,
@@ -35,11 +33,11 @@ import {
   Minus,
   Move,
   Play,
-  BriefcaseBusiness,
   UsersRound,
   Mail,
   Download,
   Camera,
+  LoaderCircle,
   FolderPlus,
   LogOut,
   Box,
@@ -133,23 +131,10 @@ const stages = [
   { number: '04', label: 'Interior', detail: 'El espacio habitado' },
 ] as const;
 
-const views: Record<
-  string,
-  { position: [number, number, number]; target: [number, number, number] }
-> = {
-  Exterior: { position: [10.8, 7.4, 12.5], target: [0, 1.2, 0] },
-  Estar: { position: [4.3, 2.7, 4.7], target: [-0.4, 1.35, -0.2] },
-  Planta: { position: [0, 20, 0.01], target: [0, 0, 0] },
-  Frente: { position: [0, 3, 16], target: [0, 1.5, 0] },
-  Jardín: { position: [-8.5, 4.4, 9.4], target: [0.1, 1.1, 0.2] },
-};
-
-const importedViewDirections: Record<string, THREE.Vector3> = {
-  Exterior: new THREE.Vector3(1, 0.55, 1),
-  Estar: new THREE.Vector3(1, 0.25, 1),
-  Planta: new THREE.Vector3(0, 1, 0.001),
-  Frente: new THREE.Vector3(0, 0.15, 1),
-  Jardín: new THREE.Vector3(-1, 0.45, 1),
+// Neutral starting camera; saved views are authored or supplied by the model.
+const initialCamera: Viewpoint = {
+  position: [10.8, 7.4, 12.5],
+  target: [0, 1.2, 0],
 };
 
 function parseStoredViews(value?: string): StoredView[] {
@@ -205,10 +190,14 @@ function HouseScene({
   imported,
   savedViews,
   onCameraChange,
+  onReady,
+  onError,
 }: {
   cameraCommand: { id: number; action: string };
   imported: THREE.Group | null;
   savedViews: StoredView[];
+  onReady: () => void;
+  onError: (message: string) => void;
   onCameraChange: (viewpoint: Viewpoint) => void;
   stage: Stage;
   palette: 'original' | 'warm';
@@ -297,8 +286,16 @@ function HouseScene({
     scene.fog = new THREE.Fog('#d8d7ce', 22, 42);
 
     const camera = new THREE.PerspectiveCamera(36, 1, 0.1, 100);
-    camera.position.set(...views.Exterior.position);
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+    camera.position.set(...initialCamera.position);
+    let renderer: THREE.WebGLRenderer;
+    try {
+      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+    } catch {
+      onError(
+        'No se pudo iniciar el visor 3D. Comprobá que WebGL esté disponible y volvé a intentar.',
+      );
+      return;
+    }
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.8));
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -314,7 +311,7 @@ function HouseScene({
     controls.maxDistance = 100;
     controls.maxPolarAngle = Math.PI;
     controls.screenSpacePanning = true;
-    controls.target.set(...views.Exterior.target);
+    controls.target.set(...initialCamera.target);
 
     scene.add(new THREE.HemisphereLight('#fff9e8', '#7a806f', 2.8));
     const sun = new THREE.DirectionalLight('#fff2d2', 4.2);
@@ -651,8 +648,8 @@ function HouseScene({
 
     let frame = 0;
     let tick = 0;
-    let lastView = 'Exterior';
-    let lastCommand = 0;
+    let lastView = '__uninitialized__';
+    let lastCommand = state.current.cameraCommand.id;
     let transitioning = false;
     let loaded: THREE.Group | null = null;
     let catalogRoot: THREE.Object3D | null = model;
@@ -661,8 +658,8 @@ function HouseScene({
       transitioning = false;
     };
     controls.addEventListener('start', stopTransition);
-    const desiredPosition = new THREE.Vector3(...views.Exterior.position);
-    const desiredTarget = new THREE.Vector3(...views.Exterior.target);
+    const desiredPosition = new THREE.Vector3(...initialCamera.position);
+    const desiredTarget = new THREE.Vector3(...initialCamera.target);
     const anchorWorld = new THREE.Vector3();
     const projected = new THREE.Vector3();
     const importedBounds = new THREE.Box3();
@@ -674,15 +671,17 @@ function HouseScene({
       if (saved) {
         desiredPosition.set(...saved.position);
         desiredTarget.set(...saved.target);
+        camera.near = 0.01;
+        camera.far = Math.max(
+          100,
+          desiredPosition.distanceTo(desiredTarget) * 10,
+        );
+        camera.updateProjectionMatrix();
         return;
       }
       if (!imported) {
-        const preset = views[viewName] || views.Exterior;
-        desiredPosition.set(...preset.position);
-        desiredTarget.set(...preset.target);
-        camera.near = 0.1;
-        camera.far = 100;
-        camera.updateProjectionMatrix();
+        desiredPosition.set(...initialCamera.position);
+        desiredTarget.set(...initialCamera.target);
         return;
       }
 
@@ -693,9 +692,7 @@ function HouseScene({
         (radius / Math.sin(THREE.MathUtils.degToRad(camera.fov / 2))) * 1.15;
       desiredTarget.copy(importedSphere.center);
       desiredPosition
-        .copy(
-          importedViewDirections[viewName] || importedViewDirections.Exterior,
-        )
+        .set(1, 0.55, 1)
         .normalize()
         .multiplyScalar(distance)
         .add(importedSphere.center);
@@ -905,7 +902,13 @@ function HouseScene({
           return nextPins;
         });
       }
-      renderer.render(scene, camera);
+      try {
+        renderer.render(scene, camera);
+        if (tick === 1) onReady();
+      } catch {
+        cancelAnimationFrame(frame);
+        onError('No se pudo dibujar el modelo. Intentá abrirlo nuevamente.');
+      }
     };
     render();
 
@@ -916,6 +919,7 @@ function HouseScene({
       renderer.domElement.removeEventListener('pointerup', onPointerUp);
       controls.dispose();
       clearMarkup();
+      if (loaded) scene.remove(loaded);
       scene.traverse((object) => {
         if (object instanceof THREE.Mesh) {
           object.geometry.dispose();
@@ -931,11 +935,7 @@ function HouseScene({
   }, []);
 
   return (
-    <div
-      ref={host}
-      className="studio-canvas"
-      aria-label="Modelo 3D navegable de Casa Patio"
-    >
+    <div ref={host} className="studio-canvas" aria-label="Modelo 3D navegable">
       {pins.map(
         (pin) =>
           pin.visible && (
@@ -974,18 +974,24 @@ export default function Studio({
   user,
   localPreview,
   initialSharedToken,
-  professionalSignIn,
+  initialAuthError,
 }: {
-  user: { name: string; email: string; provider: 'chatgpt' | 'fabrica' } | null;
+  user: {
+    name: string;
+    email: string;
+    provider: 'chatgpt' | 'google' | 'fabrica';
+  } | null;
   localPreview: boolean;
   initialSharedToken: string;
-  professionalSignIn: string;
+  initialAuthError?: string;
 }) {
   const signedIn = Boolean(user);
-  const [role, setRole] = useState<'customer' | 'professional' | null>(
-    initialSharedToken ? 'customer' : null,
-  );
-  const [roleOpen, setRoleOpen] = useState(!initialSharedToken);
+  const accessMode = initialSharedToken
+    ? 'customer'
+    : signedIn || localPreview
+      ? 'professional'
+      : null;
+  const [accountOpen, setAccountOpen] = useState(!accessMode);
   const [importOpen, setImportOpen] = useState(false);
   const [versions, setVersions] = useState<StoredVersion[]>([]);
   const [clients, setClients] = useState<StoredClient[]>([]);
@@ -1010,6 +1016,10 @@ export default function Studio({
     action: 'reset',
   });
   const [loading, setLoading] = useState(false);
+  const [dataLoading, setDataLoading] = useState(Boolean(accessMode));
+  const [preparedModel, setPreparedModel] = useState('');
+  const [readyModel, setReadyModel] = useState('');
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const [modelError, setModelError] = useState('');
   const [storageError, setStorageError] = useState('');
   const [share, setShare] = useState('');
@@ -1039,10 +1049,11 @@ export default function Studio({
     'project',
   );
   const loadSequence = useRef(0);
+  const selectedVersion = useRef<Version>('');
   const activeModel = useRef<THREE.Group | null>(null);
   const cameraSnapshot = useRef<Viewpoint>({
-    position: views.Exterior.position,
-    target: views.Exterior.target,
+    position: initialCamera.position,
+    target: initialCamera.target,
   });
   const command = (action: string) =>
     setCameraCommand((previous) => ({ id: previous.id + 1, action }));
@@ -1054,12 +1065,13 @@ export default function Studio({
           ? previous
           : data.versions,
       );
-      const selectedVersion =
-        data.versions.find((item) => item.id === version) ||
+      const refreshedVersion =
+        data.versions.find((item) => item.id === selectedVersion.current) ||
         data.versions.at(-1);
-      setVersion(selectedVersion?.id || '');
+      selectedVersion.current = refreshedVersion?.id || '';
+      setVersion(selectedVersion.current);
       setHiddenObjects(
-        parseVersionSettings(selectedVersion?.settings).hiddenObjects,
+        parseVersionSettings(refreshedVersion?.settings).hiddenObjects,
       );
       setProjects(
         data.projects?.length
@@ -1117,9 +1129,13 @@ export default function Studio({
     } catch (error) {
       setStorageError((error as Error).message);
       throw error;
+    } finally {
+      setDataLoading(false);
     }
   };
   const changeVersion = (id: string) => {
+    setView('');
+    selectedVersion.current = id;
     setVersion(id);
     setHiddenObjects(
       parseVersionSettings(versions.find((item) => item.id === id)?.settings)
@@ -1139,7 +1155,7 @@ export default function Studio({
     'navigate' | 'comment' | 'measure'
   >('navigate');
   const [selection, setSelection] = useState<SurfaceSelection | null>(null);
-  const [view, setView] = useState('Exterior');
+  const [view, setView] = useState('');
   // On a phone the canvas is the primary surface. Keep the conversation one tap
   // away instead of opening a drawer over the model on arrival.
   const [panelOpen, setPanelOpen] = useState(false);
@@ -1148,27 +1164,20 @@ export default function Studio({
   const [toast, setToast] = useState('');
 
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const token = params.get('share') || '';
-    setSharedToken(token);
-    const requested = params.get('role');
-    if (
-      (signedIn || localPreview || token) &&
-      (requested === 'customer' || requested === 'professional' || token)
-    ) {
-      setRole(token ? 'customer' : (requested as 'customer' | 'professional'));
-      setRoleOpen(false);
-    }
-    if (signedIn || localPreview || token)
-      void refresh('', token).catch(() => {});
+    if (signedIn || localPreview || initialSharedToken)
+      void refresh('', initialSharedToken).catch(() => {});
   }, []);
 
   const activeFiles = versions.find((item) => item.id === version)?.files;
+  const modelKey = `${version}:${activeFiles || ''}:${loadAttempt}`;
   useEffect(() => {
-    if (!role) return;
+    if (!accessMode) return;
     const seq = ++loadSequence.current;
     setModelError('');
     setLoading(false);
+    setPreparedModel('');
+    setReadyModel('');
+    setObjectCatalog([]);
     setImported(null);
     if (activeModel.current) {
       disposeModel(activeModel.current);
@@ -1177,7 +1186,10 @@ export default function Studio({
     const selected = versions.find((item) => item.id === version);
     if (!selected) return;
     const files: StoredFile[] = JSON.parse(selected.files);
-    if (selected.modelKind === 'demo') return;
+    if (selected.modelKind === 'demo') {
+      setPreparedModel(modelKey);
+      return;
+    }
     if (!files.length) {
       setModelError(
         'Esta versión todavía no tiene un modelo. Importá un archivo para comenzar.',
@@ -1205,7 +1217,11 @@ export default function Studio({
         `/api/studio?asset=${encodeURIComponent(file.key)}${access}`,
       ]),
     );
-    loadModel(files[0].name, resources)
+    loadModel(
+      files[0].name,
+      resources,
+      parseVersionSettings(selected.settings).upAxis,
+    )
       .then((model) => {
         if (seq !== loadSequence.current) {
           disposeModel(model);
@@ -1213,6 +1229,7 @@ export default function Studio({
         }
         activeModel.current = model;
         setImported(model);
+        setPreparedModel(modelKey);
         command('reset');
       })
       .catch((error) => {
@@ -1224,10 +1241,17 @@ export default function Studio({
     return () => {
       loadSequence.current++;
     };
-  }, [version, activeFiles, role, sharedToken, activeProject]);
+  }, [
+    version,
+    activeFiles,
+    accessMode,
+    sharedToken,
+    activeProject,
+    loadAttempt,
+  ]);
 
   useEffect(() => {
-    if (!role || (!signedIn && !localPreview && !sharedToken)) return;
+    if (!accessMode || (!signedIn && !localPreview && !sharedToken)) return;
     const update = () => {
       if (document.visibilityState === 'visible')
         void refresh(activeProject).catch(() => {});
@@ -1238,7 +1262,7 @@ export default function Studio({
       window.clearInterval(timer);
       window.removeEventListener('focus', update);
     };
-  }, [role, sharedToken, activeProject]);
+  }, [accessMode, sharedToken, activeProject]);
 
   useEffect(
     () => () => {
@@ -1311,7 +1335,7 @@ export default function Studio({
     }
   };
   const shareUrl = (token: string) =>
-    `${location.origin}/estudio?role=customer&share=${encodeURIComponent(token)}`;
+    `${location.origin}/estudio?share=${encodeURIComponent(token)}`;
   const createShare = async (copy = false) => {
     if (saving) return;
     setSaving(true);
@@ -1415,13 +1439,14 @@ export default function Studio({
   const switchProject = async (id: string) => {
     setProjectMenuOpen(false);
     if (id === activeProject) return;
+    setDataLoading(true);
     try {
       const data = await refresh(id, '');
       const available = (data.versions as StoredVersion[]).filter(
-        (item) => item.published || role === 'professional',
+        (item) => item.published || accessMode === 'professional',
       );
       changeVersion(available.at(-1)?.id || '');
-      setView('Exterior');
+      setView('');
       showToast(
         data.project
           ? `Proyecto abierto: ${data.project.name}`
@@ -1698,15 +1723,19 @@ export default function Studio({
     }
   };
   const logout = async () => {
-    await fetch('/api/auth', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'logout' }),
-    });
-    window.location.assign('/estudio');
+    try {
+      await fetch('/api/auth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ action: 'logout' }),
+      });
+    } finally {
+      window.location.assign('/estudio');
+    }
   };
   const activeVersion = versions.find((item) => item.id === version);
-  const professional = role === 'professional' && canEdit;
+  const professional = accessMode === 'professional' && canEdit;
   const shownVersions = versions.filter(
     (item) => professional || item.published,
   );
@@ -1748,7 +1777,20 @@ export default function Studio({
           : comment.surface === selection.surface &&
             samePoint(comment.point, selection.point)),
   );
-  const savedViews = parseStoredViews(activeVersion?.views);
+  const savedViews = [
+    ...parseStoredViews(activeVersion?.views),
+    ...(((preparedModel === modelKey ? imported?.userData.views : []) ||
+      []) as StoredView[]),
+  ];
+  const modelBusy =
+    dataLoading ||
+    loading ||
+    Boolean(
+      activeVersion &&
+      !modelError &&
+      (preparedModel !== modelKey || readyModel !== modelKey),
+    );
+  const modelReady = Boolean(activeVersion && !modelBusy && !modelError);
   const roofKeys = objectCatalog
     .filter((item) => /cubierta|techo|roof|pérgola/i.test(item.label))
     .map((item) => item.key);
@@ -1801,7 +1843,7 @@ export default function Studio({
               onClick={() =>
                 canSwitchProject
                   ? setProjectMenuOpen((value) => !value)
-                  : setRoleOpen(true)
+                  : setAccountOpen(true)
               }
               aria-expanded={canSwitchProject ? projectMenuOpen : undefined}
             >
@@ -1930,9 +1972,7 @@ export default function Studio({
         </div>
         <div className="studio-header-actions">
           <span className="presence">
-            {role === 'professional'
-              ? 'Arquitectura e interiorismo'
-              : 'Cliente'}
+            {professional ? 'Arquitectura e interiorismo' : 'Cliente'}
           </span>
           {professional && (
             <>
@@ -1974,7 +2014,7 @@ export default function Studio({
               <Button
                 variant="outline"
                 className="studio-share guest-account"
-                onClick={() => setRoleOpen(true)}
+                onClick={() => setAccountOpen(true)}
               >
                 <UserPlus /> Crear cuenta
               </Button>
@@ -1983,9 +2023,9 @@ export default function Studio({
           <button
             className="profile-button"
             type="button"
-            aria-label="Ver cuenta y modo de acceso"
+            aria-label="Ver cuenta"
             title={user?.name || viewerName}
-            onClick={() => setRoleOpen(true)}
+            onClick={() => setAccountOpen(true)}
           >
             <UserRound size={17} />
           </button>
@@ -1993,341 +2033,387 @@ export default function Studio({
       </header>
 
       <section className="studio-workspace">
-        {role && activeVersion && !loading && !modelError && (
-          <HouseScene
-            key={version}
-            stage={stage}
-            palette={
-              parseVersionSettings(activeVersion.settings).palette || 'warm'
-            }
-            interactionMode={interactionMode}
-            view={view}
-            selection={selection}
-            onSelect={selectSurface}
-            onMeasure={selectMeasurePoint}
-            hiddenObjects={hiddenObjects}
-            referencePoints={referencePoints}
-            measurements={versionMeasurements}
-            measurementStart={measurementStart}
-            onReferenceSelect={(reference) => {
-              setSelection({
-                surface: reference.label,
-                point: reference.point,
-                anchor: reference.id,
-              });
-              setCommentScope('point');
-              setPanelOpen(true);
-              setInspector(null);
-              command('focus-point');
-            }}
-            onObjectCatalog={setObjectCatalog}
-            cameraCommand={cameraCommand}
-            imported={imported}
-            savedViews={savedViews}
-            onCameraChange={(viewpoint) => {
-              cameraSnapshot.current = viewpoint;
-            }}
-          />
-        )}
-        {role && !activeVersion && !loading && (
-          <div className="empty-project" role="status">
-            <FileBoxIcon />
-            <span>Proyecto nuevo</span>
-            <h2>Importá el primer modelo</h2>
-            <p>
-              La primera versión se crea al guardar el modelo y sus recursos.
-            </p>
-            {professional && (
-              <Button onClick={() => setImportOpen(true)}>
-                <Upload /> Importar modelo
-              </Button>
-            )}
+        <div className="workspace-topbar">
+          <div
+            className="roof-control"
+            hidden={!modelReady || !roofKeys.length}
+          >
+            <span>
+              {roofVisible ? <Eye size={15} /> : <EyeOff size={15} />}
+            </span>
+            <label htmlFor="roof-switch">
+              Cubierta <small>{roofVisible ? 'visible' : 'oculta'}</small>
+            </label>
+            <Switch
+              id="roof-switch"
+              checked={roofVisible}
+              disabled={!professional}
+              onCheckedChange={(visible) => {
+                const previous = hiddenObjects;
+                const next = visible
+                  ? previous.filter((item) => !roofKeys.includes(item))
+                  : Array.from(new Set([...previous, ...roofKeys]));
+                void saveVisibility(next, previous);
+              }}
+              aria-label="Mostrar cubierta"
+            />
           </div>
-        )}
-        {(loading || modelError) && (
-          <div className="model-status" role="status">
-            <FileBoxIcon />
-            <h2>{loading ? 'Preparando modelo…' : 'Archivo original'}</h2>
-            <p>
-              {loading
-                ? 'Cargando geometría y materiales de esta entrega.'
-                : modelError}
-            </p>
-            {!loading &&
-              activeVersion &&
-              (JSON.parse(activeVersion.files) as StoredFile[]).map((file) => (
-                <a
-                  key={file.key}
-                  download={file.name}
-                  href={`/api/studio?asset=${encodeURIComponent(file.key)}${sharedToken ? `&share=${encodeURIComponent(sharedToken)}` : `&project=${encodeURIComponent(activeProject)}`}`}
-                >
-                  <Download size={16} /> {file.name}
-                </a>
-              ))}
-          </div>
-        )}
 
-        <aside
-          hidden={!!activeVersion}
-          className="stage-rail"
-          aria-label="Recorrido del proyecto"
-        >
-          <div className="stage-heading">
-            <span>Recorrido</span>
-            <strong>{String(stage + 1).padStart(2, '0')} / 04</strong>
-          </div>
-          <div className="stage-list">
-            {stages.map((item, index) => (
+          <nav className="project-tool-tabs" aria-label="Datos de la versión">
+            {[
+              {
+                id: 'objects' as const,
+                label: 'Objetos',
+                icon: <Box />,
+                count: hiddenObjects.length,
+              },
+              {
+                id: 'measurements' as const,
+                label: 'Medidas',
+                icon: <Ruler />,
+                count: versionMeasurements.length,
+              },
+              {
+                id: 'plans' as const,
+                label: 'Planos',
+                icon: <Files />,
+                count: versionPlans.length,
+              },
+            ].map((item) => (
               <button
                 type="button"
-                key={item.number}
-                className={
-                  index === stage ? 'active' : index < stage ? 'done' : ''
+                key={item.id}
+                className={inspector === item.id ? 'active' : ''}
+                disabled={
+                  !activeVersion || (item.id === 'objects' && !modelReady)
                 }
-                onClick={() => setStage(index as Stage)}
-                aria-current={index === stage ? 'step' : undefined}
+                onClick={() => {
+                  setInspector((value) => (value === item.id ? null : item.id));
+                  setPanelOpen(false);
+                }}
+                aria-expanded={inspector === item.id}
+                aria-controls="version-inspector"
               >
-                <span className="stage-marker">
-                  {index < stage ? <Check size={13} /> : item.number}
-                </span>
-                <span className="stage-copy">
-                  <strong>{item.label}</strong>
-                  <small>{item.detail}</small>
-                </span>
+                {item.icon}
+                <span>{item.label}</span>
+                {!!item.count && <b>{item.count}</b>}
               </button>
             ))}
-          </div>
-        </aside>
+          </nav>
 
-        <div
-          className="viewer-toolbar"
-          aria-label="Herramientas del modelo"
-          hidden={!activeVersion}
-        >
-          <Button
-            variant={interactionMode === 'navigate' ? 'default' : 'ghost'}
-            size="icon"
-            aria-label="Orbitar modelo"
-            title="Orbitar"
+          <button
+            className="mobile-panel-toggle"
+            type="button"
             onClick={() => {
-              setInteractionMode('navigate');
-              command('orbit');
+              setInspector(null);
+              setPanelOpen((value) => !value);
             }}
-          >
-            <Rotate3D />
-          </Button>
-          <Button
-            variant={interactionMode === 'comment' ? 'default' : 'ghost'}
-            size="icon"
-            aria-label="Comentar una superficie"
-            title="Comentar superficie"
-            onClick={() =>
-              setInteractionMode((value) =>
-                value === 'comment' ? 'navigate' : 'comment',
-              )
+            aria-label={
+              panelOpen ? 'Ocultar comentarios' : 'Mostrar comentarios'
             }
+            aria-expanded={panelOpen}
+            aria-controls="project-comments"
           >
-            <MessageSquarePlus />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            aria-label="Medir entre dos puntos"
-            title="Medir"
-            onClick={() => {
-              const next =
-                interactionMode === 'measure' ? 'navigate' : 'measure';
-              setInteractionMode(next);
-              setMeasurementStart(null);
-              setMeasurementEnd(null);
-              if (next === 'measure') {
-                setInspector('measurements');
-                setPanelOpen(false);
-              }
-            }}
-          >
-            <Ruler />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            aria-label="Desplazar cámara"
-            title="Desplazar"
-            onClick={() => {
-              setInteractionMode('navigate');
-              command('pan');
-            }}
-          >
-            <Move />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            aria-label="Acercar cámara"
-            title="Acercar"
-            onClick={() => command('zoom-in')}
-          >
-            <Plus />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            aria-label="Alejar cámara"
-            title="Alejar"
-            onClick={() => command('zoom-out')}
-          >
-            <Minus />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            aria-label="Alternar rotación automática"
-            title="Rotación automática"
-            onClick={() => command('rotate')}
-          >
-            <Play />
-          </Button>
-          <span className="tool-divider" />
-          <Button
-            variant="ghost"
-            size="icon"
-            aria-label="Volver a vista inicial"
-            title="Vista inicial"
-            onClick={() => {
-              setView('Exterior');
-              command('reset');
-            }}
-          >
-            <Focus />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            aria-label="Pantalla completa"
-            title="Pantalla completa"
-            onClick={() => {
-              const operation = document.fullscreenElement
-                ? document.exitFullscreen()
-                : document.documentElement.requestFullscreen?.();
-              operation?.catch(() =>
-                showToast('Pantalla completa no disponible en este navegador'),
-              );
-            }}
-          >
-            <Maximize2 />
-          </Button>
+            {panelOpen ? <PanelRightClose /> : <PanelRightOpen />}
+            <span className="panel-toggle-label">Comentarios</span>
+            <b>{comments.length}</b>
+          </button>
         </div>
-
-        <div className="view-presets" aria-label="Vistas guardadas">
-          {Object.keys(views).map((name) => (
-            <button
-              type="button"
-              key={name}
-              className={view === name ? 'active' : ''}
-              onClick={() => {
-                setView(name);
-                command('reset');
-              }}
-            >
-              {name === 'Exterior' ? (
-                <House size={15} />
-              ) : name === 'Estar' ? (
-                <Layers3 size={15} />
-              ) : (
-                <Sun size={15} />
+        <div className="viewer-surface" aria-busy={modelBusy}>
+          {accessMode &&
+            activeVersion &&
+            preparedModel === modelKey &&
+            !loading &&
+            !modelError && (
+              <HouseScene
+                key={modelKey}
+                stage={stage}
+                palette={
+                  parseVersionSettings(activeVersion.settings).palette || 'warm'
+                }
+                interactionMode={interactionMode}
+                view={view}
+                selection={selection}
+                onSelect={selectSurface}
+                onMeasure={selectMeasurePoint}
+                hiddenObjects={hiddenObjects}
+                referencePoints={referencePoints}
+                measurements={versionMeasurements}
+                measurementStart={measurementStart}
+                onReferenceSelect={(reference) => {
+                  setSelection({
+                    surface: reference.label,
+                    point: reference.point,
+                    anchor: reference.id,
+                  });
+                  setCommentScope('point');
+                  setPanelOpen(true);
+                  setInspector(null);
+                  command('focus-point');
+                }}
+                onObjectCatalog={setObjectCatalog}
+                cameraCommand={cameraCommand}
+                imported={imported}
+                savedViews={savedViews}
+                onReady={() => setReadyModel(modelKey)}
+                onError={setModelError}
+                onCameraChange={(viewpoint) => {
+                  cameraSnapshot.current = viewpoint;
+                }}
+              />
+            )}
+          {accessMode && !activeVersion && !modelBusy && (
+            <div className="empty-project" role="status">
+              <FileBoxIcon />
+              <span>Proyecto nuevo</span>
+              <h2>Importá el primer modelo</h2>
+              <p>
+                La primera versión se crea al guardar el modelo y sus recursos.
+              </p>
+              {professional && (
+                <Button onClick={() => setImportOpen(true)}>
+                  <Upload /> Importar modelo
+                </Button>
               )}
-              {name}
-            </button>
-          ))}
-          {savedViews.map((saved) => (
-            <button
-              type="button"
-              key={saved.id}
-              className={view === saved.id ? 'active' : ''}
-              onClick={() => {
-                setView(saved.id);
-                command('reset');
-              }}
-            >
-              <Camera size={15} />
-              {saved.name}
-            </button>
-          ))}
-          {professional && activeVersion && (
-            <button
-              type="button"
-              className="save-view"
-              onClick={() => setViewDialogOpen(true)}
-              title="Guardar la cámara actual como vista"
-            >
-              <Plus size={15} /> Guardar vista
-            </button>
+            </div>
           )}
-        </div>
+          {(modelBusy || modelError) && (
+            <div className="model-status" role="status">
+              {modelBusy ? (
+                <LoaderCircle className="model-spinner" aria-hidden="true" />
+              ) : (
+                <FileBoxIcon />
+              )}
+              <h2>
+                {modelBusy
+                  ? 'Preparando modelo…'
+                  : 'No se pudo mostrar el modelo'}
+              </h2>
+              {activeVersion && <strong>{activeVersion.name}</strong>}
+              <p>
+                {modelBusy
+                  ? dataLoading
+                    ? 'Cargando las entregas del proyecto.'
+                    : preparedModel !== modelKey
+                      ? 'Cargando geometría y materiales de esta entrega.'
+                      : 'Preparando el visor 3D.'
+                  : modelError}
+              </p>
+              {!modelBusy && (
+                <Button
+                  variant="outline"
+                  onClick={() => setLoadAttempt((value) => value + 1)}
+                >
+                  Reintentar
+                </Button>
+              )}
+              {!modelBusy &&
+                activeVersion &&
+                (JSON.parse(activeVersion.files) as StoredFile[]).map(
+                  (file) => (
+                    <a
+                      key={file.key}
+                      download={file.name}
+                      href={`/api/studio?asset=${encodeURIComponent(file.key)}${sharedToken ? `&share=${encodeURIComponent(sharedToken)}` : `&project=${encodeURIComponent(activeProject)}`}`}
+                    >
+                      <Download size={16} /> {file.name}
+                    </a>
+                  ),
+                )}
+            </div>
+          )}
 
-        <div
-          className="roof-control"
-          hidden={!activeVersion || !objectCatalog.length}
-        >
-          <span>{roofVisible ? <Eye size={15} /> : <EyeOff size={15} />}</span>
-          <label htmlFor="roof-switch">
-            Cubierta <small>{roofVisible ? 'visible' : 'oculta'}</small>
-          </label>
-          <Switch
-            id="roof-switch"
-            checked={roofVisible}
-            disabled={!professional}
-            onCheckedChange={(visible) => {
-              const previous = hiddenObjects;
-              const next = visible
-                ? previous.filter((item) => !roofKeys.includes(item))
-                : Array.from(new Set([...previous, ...roofKeys]));
-              void saveVisibility(next, previous);
-            }}
-            aria-label="Mostrar cubierta"
-          />
-        </div>
+          <aside
+            hidden={!!accessMode || !!activeVersion}
+            className="stage-rail"
+            aria-label="Recorrido del proyecto"
+          >
+            <div className="stage-heading">
+              <span>Recorrido</span>
+              <strong>{String(stage + 1).padStart(2, '0')} / 04</strong>
+            </div>
+            <div className="stage-list">
+              {stages.map((item, index) => (
+                <button
+                  type="button"
+                  key={item.number}
+                  className={
+                    index === stage ? 'active' : index < stage ? 'done' : ''
+                  }
+                  onClick={() => setStage(index as Stage)}
+                  aria-current={index === stage ? 'step' : undefined}
+                >
+                  <span className="stage-marker">
+                    {index < stage ? <Check size={13} /> : item.number}
+                  </span>
+                  <span className="stage-copy">
+                    <strong>{item.label}</strong>
+                    <small>{item.detail}</small>
+                  </span>
+                </button>
+              ))}
+            </div>
+          </aside>
 
-        <nav className="project-tool-tabs" aria-label="Datos de la versión">
-          {[
-            {
-              id: 'objects' as const,
-              label: 'Objetos',
-              icon: <Box />,
-              count: hiddenObjects.length,
-            },
-            {
-              id: 'measurements' as const,
-              label: 'Medidas',
-              icon: <Ruler />,
-              count: versionMeasurements.length,
-            },
-            {
-              id: 'plans' as const,
-              label: 'Planos',
-              icon: <Files />,
-              count: versionPlans.length,
-            },
-          ].map((item) => (
-            <button
-              type="button"
-              key={item.id}
-              className={inspector === item.id ? 'active' : ''}
-              disabled={!activeVersion}
-              onClick={() => {
-                setInspector((value) => (value === item.id ? null : item.id));
-                setPanelOpen(false);
-              }}
-              aria-expanded={inspector === item.id}
-              aria-controls="version-inspector"
+          <div className="viewer-bottom-controls">
+            <div
+              className="viewer-toolbar"
+              aria-label="Herramientas del modelo"
+              hidden={!modelReady}
             >
-              {item.icon}
-              <span>{item.label}</span>
-              {!!item.count && <b>{item.count}</b>}
-            </button>
-          ))}
-        </nav>
+              <Button
+                variant={interactionMode === 'navigate' ? 'default' : 'ghost'}
+                size="icon"
+                aria-label="Orbitar modelo"
+                title="Orbitar"
+                onClick={() => {
+                  setInteractionMode('navigate');
+                  command('orbit');
+                }}
+              >
+                <Rotate3D />
+              </Button>
+              <Button
+                variant={interactionMode === 'comment' ? 'default' : 'ghost'}
+                size="icon"
+                aria-label="Comentar una superficie"
+                title="Comentar superficie"
+                onClick={() =>
+                  setInteractionMode((value) =>
+                    value === 'comment' ? 'navigate' : 'comment',
+                  )
+                }
+              >
+                <MessageSquarePlus />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label="Medir entre dos puntos"
+                title="Medir"
+                onClick={() => {
+                  const next =
+                    interactionMode === 'measure' ? 'navigate' : 'measure';
+                  setInteractionMode(next);
+                  setMeasurementStart(null);
+                  setMeasurementEnd(null);
+                  if (next === 'measure') {
+                    setInspector('measurements');
+                    setPanelOpen(false);
+                  }
+                }}
+              >
+                <Ruler />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label="Desplazar cámara"
+                title="Desplazar"
+                onClick={() => {
+                  setInteractionMode('navigate');
+                  command('pan');
+                }}
+              >
+                <Move />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label="Acercar cámara"
+                title="Acercar"
+                onClick={() => command('zoom-in')}
+              >
+                <Plus />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label="Alejar cámara"
+                title="Alejar"
+                onClick={() => command('zoom-out')}
+              >
+                <Minus />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label="Alternar rotación automática"
+                title="Rotación automática"
+                onClick={() => command('rotate')}
+              >
+                <Play />
+              </Button>
+              <span className="tool-divider" />
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label="Encuadrar modelo completo"
+                title="Encuadrar modelo"
+                onClick={() => {
+                  setView('');
+                  command('reset');
+                }}
+              >
+                <Focus />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label="Pantalla completa"
+                title="Pantalla completa"
+                onClick={() => {
+                  const operation = document.fullscreenElement
+                    ? document.exitFullscreen()
+                    : document.documentElement.requestFullscreen?.();
+                  operation?.catch(() =>
+                    showToast(
+                      'Pantalla completa no disponible en este navegador',
+                    ),
+                  );
+                }}
+              >
+                <Maximize2 />
+              </Button>
+            </div>
 
+            <div
+              className="view-presets"
+              aria-label="Vistas guardadas"
+              hidden={!modelReady || (!savedViews.length && !professional)}
+            >
+              {!savedViews.length && (
+                <span className="views-empty">Sin vistas guardadas</span>
+              )}
+              {savedViews.map((saved) => (
+                <button
+                  type="button"
+                  key={saved.id}
+                  className={view === saved.id ? 'active' : ''}
+                  aria-pressed={view === saved.id}
+                  title={saved.name}
+                  onClick={() => {
+                    setView(saved.id);
+                    command('reset');
+                  }}
+                >
+                  <Camera size={15} />
+                  <span className="view-label">{saved.name}</span>
+                </button>
+              ))}
+              {professional && activeVersion && (
+                <button
+                  type="button"
+                  className="save-view"
+                  onClick={() => setViewDialogOpen(true)}
+                  title="Guardar la cámara actual como vista"
+                >
+                  <Plus size={15} /> Guardar vista
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
         <aside
           id="version-inspector"
           className={`version-inspector ${inspector ? 'open' : ''}`}
@@ -2505,21 +2591,6 @@ export default function Studio({
             </div>
           )}
         </aside>
-
-        <button
-          className="mobile-panel-toggle"
-          type="button"
-          onClick={() => {
-            setInspector(null);
-            setPanelOpen((value) => !value);
-          }}
-          aria-label={panelOpen ? 'Ocultar comentarios' : 'Mostrar comentarios'}
-          aria-expanded={panelOpen}
-          aria-controls="project-comments"
-        >
-          {panelOpen ? <PanelRightClose /> : <PanelRightOpen />}
-          <span>{comments.length}</span>
-        </button>
 
         <aside
           id="project-comments"
@@ -2779,8 +2850,19 @@ export default function Studio({
                 type="button"
                 key={item.id}
                 className={version === item.id ? 'active' : ''}
+                aria-current={version === item.id ? 'step' : undefined}
+                aria-busy={version === item.id && modelBusy}
+                title={item.name}
                 onClick={() => changeVersion(item.id)}
               >
+                {version === item.id && modelBusy ? (
+                  <LoaderCircle
+                    className="version-indicator model-spinner"
+                    aria-hidden="true"
+                  />
+                ) : (
+                  <i className="version-indicator" aria-hidden="true" />
+                )}
                 <span>{versionLabel(item)}</span>
                 <small>{item.name}</small>
                 <time>
@@ -2850,28 +2932,30 @@ export default function Studio({
         }}
       />
       <Dialog
-        open={roleOpen}
+        open={accountOpen}
         onOpenChange={(value) => {
-          if (role) setRoleOpen(value);
+          if (accessMode) setAccountOpen(value);
         }}
       >
         <DialogContent
           className={`role-dialog ${!signedIn && !localPreview ? 'auth-dialog' : ''}`}
-          showCloseButton={!!role}
+          showCloseButton={!!accessMode}
         >
           <DialogTitle>
             {signedIn || localPreview
-              ? 'Elegí tu espacio'
+              ? 'Tu cuenta'
               : sharedToken
-                ? 'Tu acceso de invitado'
-                : 'Entrá a Fabrica'}
+                ? 'Guardá esta revisión'
+                : 'Bienvenido a Fabrica'}
           </DialogTitle>
           <DialogDescription>
             {signedIn || localPreview
-              ? 'Podés recorrer como cliente o gestionar tus proyectos como profesional.'
+              ? sharedToken
+                ? 'Acceso desde el enlace privado del proyecto.'
+                : 'Administrá tu cuenta.'
               : sharedToken
-                ? 'Ya podés revisar y comentar sin registrarte. Crear una cuenta es opcional.'
-                : 'La cuenta profesional reúne proyectos, entregas y conversaciones.'}
+                ? 'Ingresá para volver cuando quieras.'
+                : 'Ingresá o creá tu cuenta.'}
           </DialogDescription>
           {signedIn || localPreview ? (
             <>
@@ -2882,7 +2966,7 @@ export default function Studio({
                     <strong>{user.name}</strong>
                     <small>{user.email}</small>
                   </div>
-                  {user.provider === 'fabrica' ? (
+                  {user.provider !== 'chatgpt' ? (
                     <button type="button" onClick={() => void logout()}>
                       <LogOut /> Salir
                     </button>
@@ -2896,57 +2980,12 @@ export default function Studio({
                   )}
                 </div>
               )}
-              <div className="role-options">
-                {[
-                  {
-                    value: 'customer' as const,
-                    label: 'Soy cliente',
-                    icon: <UserRound />,
-                    description:
-                      'Recorré las entregas, compará versiones y dejá tus comentarios.',
-                  },
-                  {
-                    value: 'professional' as const,
-                    label: 'Soy profesional',
-                    icon: <BriefcaseBusiness />,
-                    description:
-                      'Creá proyectos, versiones y vistas; publicá para tus clientes.',
-                  },
-                ]
-                  .filter(
-                    (item) =>
-                      (!sharedToken || item.value === 'customer') &&
-                      (item.value === 'customer' || canEdit || localPreview),
-                  )
-                  .map((item) => (
-                    <button
-                      key={item.value}
-                      onClick={() => {
-                        setRole(item.value);
-                        setRoleOpen(false);
-                        if (
-                          item.value === 'customer' &&
-                          activeVersion &&
-                          !activeVersion.published
-                        )
-                          changeVersion(
-                            versions
-                              .filter((version) => version.published)
-                              .at(-1)?.id || '',
-                          );
-                      }}
-                    >
-                      {item.icon}
-                      <strong>{item.label}</strong>
-                      <span>{item.description}</span>
-                      <b>Entrar →</b>
-                    </button>
-                  ))}
-              </div>
               <p className="role-note">
                 {localPreview
                   ? 'Modo de prueba local. Los datos se guardan en este entorno.'
-                  : 'Tu identidad se usa para atribuir proyectos y comentarios.'}
+                  : sharedToken
+                    ? 'El modo cliente sólo se habilita desde un enlace privado de revisión.'
+                    : 'El acceso sin enlace privado corresponde siempre al espacio profesional.'}
               </p>
               <a className="role-back" href="/">
                 Volver a Fabrica
@@ -2954,8 +2993,8 @@ export default function Studio({
             </>
           ) : (
             <StudioAuthPanel
-              professionalSignIn={professionalSignIn}
               sharedToken={sharedToken}
+              initialError={initialAuthError}
             />
           )}
         </DialogContent>

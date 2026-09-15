@@ -5,15 +5,23 @@ import {
   integer,
   pgTable,
   text,
+  uniqueIndex,
 } from 'drizzle-orm/pg-core';
 
-export const studioUsers = pgTable('studio_users', {
-  id: text('id').primaryKey(),
-  email: text('email').notNull().unique(),
-  name: text('name').notNull(),
-  passwordHash: text('password_hash').notNull(),
-  created: bigint('created', { mode: 'number' }).notNull(),
-});
+export const studioUsers = pgTable(
+  'studio_users',
+  {
+    id: text('id').primaryKey(),
+    email: text('email').notNull().unique(),
+    name: text('name').notNull(),
+    passwordHash: text('password_hash'),
+    googleSubject: text('google_subject'),
+    created: bigint('created', { mode: 'number' }).notNull(),
+  },
+  (table) => [
+    uniqueIndex('studio_users_google_subject_unique').on(table.googleSubject),
+  ],
+);
 
 export const studioSessions = pgTable(
   'studio_sessions',

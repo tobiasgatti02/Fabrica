@@ -94,14 +94,7 @@ export async function createStarterProject(
       sourceVersion: proposal,
       modelKind: 'demo',
       files: '[]',
-      views: JSON.stringify([
-        {
-          id: 'patio-atardecer',
-          name: 'Patio al atardecer',
-          position: [-8.5, 4.4, 9.4],
-          target: [0.1, 1.1, 0.2],
-        },
-      ]),
+      views: '[]',
       settings: JSON.stringify({ hiddenObjects: [], palette: 'warm' }),
       unit: 'm',
       published: 1,

@@ -13,6 +13,48 @@ export const viewFormats = [
 export const extension = (name: string) =>
   name.split('.').pop()?.toLowerCase() || '';
 
+export type ModelUpAxis = 'auto' | 'x' | 'y' | 'z';
+
+function detectUpAxis(
+  name: string,
+  object: THREE.Object3D,
+  source = '',
+): Exclude<ModelUpAxis, 'auto'> {
+  const format = extension(name);
+  // glTF is always Y-up. The Collada and FBX loaders apply the axis metadata
+  // while parsing, so their result is Y-up as well.
+  if (['glb', 'gltf', 'dae', 'fbx'].includes(format)) return 'y';
+  if (format === 'obj' && /^# Created by FreeCAD\b/im.test(source)) return 'z';
+
+  // OBJ/STL/PLY do not carry a reliable up-axis. Architectural scenes tend to
+  // be much wider/deeper than tall, so use the clearly shortest dimension as
+  // vertical. Keep Y when the proportions are ambiguous.
+  const size = new THREE.Box3()
+    .setFromObject(object)
+    .getSize(new THREE.Vector3());
+  const dimensions = [
+    { axis: 'x' as const, value: size.x },
+    { axis: 'y' as const, value: size.y },
+    { axis: 'z' as const, value: size.z },
+  ].sort((a, b) => a.value - b.value);
+  if (
+    dimensions[0].axis !== 'y' &&
+    dimensions[0].value > 0 &&
+    dimensions[0].value * 1.35 < dimensions[1].value
+  )
+    return dimensions[0].axis;
+  return 'y';
+}
+
+function alignUpAxis(
+  object: THREE.Object3D,
+  axis: Exclude<ModelUpAxis, 'auto'>,
+) {
+  if (axis === 'z') object.rotateX(-Math.PI / 2);
+  if (axis === 'x') object.rotateZ(Math.PI / 2);
+  object.updateMatrixWorld(true);
+}
+
 export function repairSketchUpColladaMaterials(
   root: THREE.Object3D,
   source: string,
@@ -63,8 +105,14 @@ export function disposeModel(root: THREE.Object3D) {
 export async function loadModel(
   name: string,
   files: Record<string, string>,
+  requestedUpAxis: ModelUpAxis = 'auto',
 ): Promise<THREE.Group> {
   const manager = new THREE.LoadingManager();
+  // Some parsers return geometry before their texture requests have finished.
+  const resourcesReady = new Promise<void>((resolve) => {
+    manager.onLoad = resolve;
+  });
+  manager.itemStart('fabrica-model');
   const missing = new Set<string>();
   manager.setURLModifier((url) => {
     if (
@@ -88,18 +136,24 @@ export async function loadModel(
   });
   manager.onError = (url) => missing.add(url);
   let object: THREE.Object3D;
+  let source = '';
   const url = files[name];
   switch (extension(name)) {
     case 'glb':
     case 'gltf': {
-      const [{ GLTFLoader }, { DRACOLoader }] = await Promise.all([
+      const [{ GLTFLoader }, { DRACOLoader }, { MeshoptDecoder }] =
+        await Promise.all([
         import('three/examples/jsm/loaders/GLTFLoader.js'),
         import('three/examples/jsm/loaders/DRACOLoader.js'),
+        import('three/examples/jsm/libs/meshopt_decoder.module.js'),
       ]);
       const draco = new DRACOLoader().setDecoderPath('/draco/');
       try {
         object = (
-          await new GLTFLoader(manager).setDRACOLoader(draco).loadAsync(url)
+          await new GLTFLoader(manager)
+            .setDRACOLoader(draco)
+            .setMeshoptDecoder(MeshoptDecoder)
+            .loadAsync(url)
         ).scene;
       } finally {
         draco.dispose();
@@ -139,7 +193,11 @@ export async function loadModel(
         materials.preload();
         loader.setMaterials(materials);
       }
-      object = await loader.loadAsync(url);
+      const loaded = await new THREE.FileLoader(manager).loadAsync(url);
+      if (typeof loaded !== 'string')
+        throw new Error('No se pudo leer el archivo OBJ.');
+      source = loaded;
+      object = loader.parse(source);
       break;
     }
     case '3ds': {
@@ -174,12 +232,19 @@ export async function loadModel(
         'Este formato necesita una exportación GLB, DAE, FBX u OBJ para visualizarse.',
       );
   }
+  manager.itemEnd('fabrica-model');
+  await resourcesReady;
   if (missing.size) {
     disposeModel(object);
     throw new Error(
       'Faltan recursos del modelo. Incluí las texturas, archivos BIN y MTL junto al archivo principal.',
     );
   }
+  const upAxis =
+    requestedUpAxis === 'auto'
+      ? detectUpAxis(name, object, source)
+      : requestedUpAxis;
+  alignUpAxis(object, upAxis);
   const root = new THREE.Group();
   root.add(object);
   root.updateMatrixWorld(true);
@@ -208,6 +273,35 @@ export async function loadModel(
       child.receiveShadow = true;
     }
   });
+  root.updateMatrixWorld(true);
+  const modelCenter = new THREE.Box3()
+    .setFromObject(root)
+    .getCenter(new THREE.Vector3());
+  const cameras: Array<{
+    id: string;
+    name: string;
+    position: number[];
+    target: number[];
+  }> = [];
+  root.traverse((child) => {
+    if (!(child instanceof THREE.Camera)) return;
+    const position = child.getWorldPosition(new THREE.Vector3());
+    const direction = child.getWorldDirection(new THREE.Vector3());
+    const target = position
+      .clone()
+      .addScaledVector(
+        direction,
+        Math.max(position.distanceTo(modelCenter), 1),
+      );
+    cameras.push({
+      id: `imported-camera-${cameras.length}`,
+      name: child.name || `Cámara importada ${cameras.length + 1}`,
+      position: position.toArray(),
+      target: target.toArray(),
+    });
+  });
+  root.userData.views = cameras;
   root.userData.stats = { meshes, triangles: Math.round(triangles) };
+  root.userData.upAxis = upAxis;
   return root;
 }

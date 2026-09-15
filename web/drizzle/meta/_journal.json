@@ -43,6 +43,13 @@
       "when": 1789267159937,
       "tag": "0005_glossy_ultragirl",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1789338013584,
+      "tag": "0006_strong_venom",
+      "breakpoints": true
     }
   ]
 }

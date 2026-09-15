@@ -1,6 +1,7 @@
 import { env } from 'cloudflare:workers';
 import { and, asc, eq, gt, inArray, isNull, max, or } from 'drizzle-orm';
-import { getFabricaUser, randomToken } from '@/app/fabrica-auth';
+import { randomToken } from '@/features/auth/core';
+import { getFabricaUser } from '@/features/auth/server';
 import { getDb } from '@/db';
 import {
   studioClients,
@@ -45,6 +46,7 @@ type StudioBody = {
   client?: unknown;
   email?: unknown;
   days?: unknown;
+  upAxis?: unknown;
 };
 const json = (value: unknown, status = 200) =>
   Response.json(value, {
@@ -673,7 +675,8 @@ export async function POST(request: Request) {
         !body.files.every((key: unknown) => typeof key === 'string') ||
         typeof body.name !== 'string' ||
         !body.name.trim() ||
-        body.name.length > 150
+        body.name.length > 150 ||
+        !['auto', 'x', 'y', 'z'].includes(String(body.upAxis || 'auto'))
       ) {
         throw new Error('400');
       }
@@ -712,7 +715,11 @@ export async function POST(request: Request) {
         modelKind: 'files',
         files: JSON.stringify(files),
         views: '[]',
-        settings: JSON.stringify({ hiddenObjects: [], palette: 'warm' }),
+        settings: JSON.stringify({
+          hiddenObjects: [],
+          palette: 'warm',
+          upAxis: body.upAxis || 'auto',
+        }),
         unit: 'm',
         published: 0,
         created: Date.now(),

@@ -1,6 +1,6 @@
 # Studio: revisión, importación y entregas
 
-Actualizado el 12 de septiembre de 2026. Disponible en la vista local `/estudio`.
+Actualizado el 13 de septiembre de 2026. Disponible en la vista local `/estudio`.
 
 ## Flujos implementados
 
@@ -10,9 +10,12 @@ Actualizado el 12 de septiembre de 2026. Disponible en la vista local `/estudio`
 - El importador exige elegir el proyecto y nombrar la entrega. Las entregas nacen como borradores, se publican de forma explícita y siempre pertenecen al proyecto seleccionado. Una nueva iteración también puede derivarse de una versión existente: copia modelo, vistas y configuración de visibilidad, pero mantiene independientes comentarios y medidas.
 - La numeración, los títulos, las fechas y los estados del historial salen de Postgres. Ya no existen V02/V03 especiales escritas en la interfaz.
 - Comentarios separados en dos alcances: “Todo el proyecto”, visible en todas sus entregas, y puntos de referencia estables, guardados con versión, superficie, coordenadas y cámara. Todos los puntos de la versión aparecen sobre el modelo y en una lista con su cantidad y estado; las respuestas conservan el mismo identificador de ancla.
-- Cámara orbital libre, desplazamiento, zoom, rotación automática, cinco encuadres base y vistas guardadas por versión. Un profesional puede nombrar la posición actual de cámara y publicarla junto con esa entrega.
+- Cámara orbital libre, desplazamiento, zoom, rotación automática y encuadre del modelo completo. No hay vistas predeterminadas: aparecen únicamente las guardadas por el profesional o las cámaras que el cargador conserva dentro del archivo importado, ajustadas a la escala y posición del visor. Un profesional puede nombrar la posición actual de cámara y publicarla junto con esa entrega. Los formatos sin cámaras conservadas no generan vistas artificiales.
 - El profesional puede ocultar y recuperar objetos individuales, restablecer toda la escena y alternar la cubierta como conjunto. La configuración se persiste por versión.
 - La herramienta de medidas toma dos puntos reales del modelo, dibuja la referencia en el visor y guarda nombre, distancia y unidad en la entrega. El apartado de planos admite PDF, PNG, JPG y WebP, con bytes en R2 y metadatos relacionados en Postgres.
+- Barra superior común para cubierta, objetos, medidas, planos y comentarios, sin desplazamientos independientes. En escritorio el panel ocupa una columna propia y el modelo se reajusta al espacio disponible; en pantallas pequeñas el panel se superpone dentro del área de trabajo, conservando la barra y el historial accesibles.
+- Historial compacto con indicador centrado dentro de cada versión y desplazamiento horizontal.
+- Loader por entrega durante la descarga, carga de texturas y primer dibujo del visor, incluido el modelo de muestra. El historial identifica qué versión está cargando. Los errores ofrecen reintento y descarga del original.
 - Panel de comentarios recuperable en escritorio y móvil, con estado accesible y contenido oculto fuera de la navegación por teclado.
 
 ## Importación real y límites

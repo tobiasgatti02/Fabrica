@@ -2,160 +2,99 @@ import { env } from 'cloudflare:workers';
 import { eq, lte } from 'drizzle-orm';
 import {
   clearSessionCookie,
-  fromBase64Url,
+  cookieValue,
+  hashPassword,
   randomToken,
+  SESSION_COOKIE,
+  SESSION_DURATION_SECONDS,
   sessionCookie,
   sha256,
-  toBase64Url,
-} from '@/app/fabrica-auth';
+  validRequestOrigin,
+  validateAuthPayload,
+  verifyPassword,
+} from '@/features/auth/core';
 import { getDb } from '@/db';
 import { studioSessions, studioUsers } from '@/db/schema';
 
-const ITERATIONS = 210_000;
 const json = (value: unknown, status = 200, cookie?: string) =>
   Response.json(value, {
     status,
     headers: {
-      'Cache-Control': 'no-store',
+      'Cache-Control': 'no-store, max-age=0',
+      'X-Content-Type-Options': 'nosniff',
+      Vary: 'Cookie',
       ...(cookie ? { 'Set-Cookie': cookie } : {}),
     },
   });
 
-function validOrigin(request: Request) {
-  const origin = request.headers.get('origin');
-  return !origin || origin === new URL(request.url).origin;
-}
-
-async function passwordHash(password: string) {
-  const salt = crypto.getRandomValues(new Uint8Array(16));
-  const key = await crypto.subtle.importKey(
-    'raw',
-    new TextEncoder().encode(password),
-    'PBKDF2',
-    false,
-    ['deriveBits'],
-  );
-  const bits = await crypto.subtle.deriveBits(
-    { name: 'PBKDF2', hash: 'SHA-256', salt, iterations: ITERATIONS },
-    key,
-    256,
-  );
-  return `pbkdf2_sha256$${ITERATIONS}$${toBase64Url(salt)}$${toBase64Url(new Uint8Array(bits))}`;
-}
-
-async function verifyPassword(password: string, encoded: string) {
-  const [algorithm, rounds, saltValue, expectedValue] = encoded.split('$');
-  const iterations = Number(rounds);
-  if (
-    algorithm !== 'pbkdf2_sha256' ||
-    !Number.isSafeInteger(iterations) ||
-    iterations < 100_000 ||
-    !saltValue ||
-    !expectedValue
-  ) {
-    return false;
-  }
-  const key = await crypto.subtle.importKey(
-    'raw',
-    new TextEncoder().encode(password),
-    'PBKDF2',
-    false,
-    ['deriveBits'],
-  );
-  const bits = new Uint8Array(
-    await crypto.subtle.deriveBits(
-      {
-        name: 'PBKDF2',
-        hash: 'SHA-256',
-        salt: fromBase64Url(saltValue),
-        iterations,
-      },
-      key,
-      256,
-    ),
-  );
-  const expected = fromBase64Url(expectedValue);
-  if (bits.length !== expected.length) return false;
-  let difference = 0;
-  for (let index = 0; index < bits.length; index++) {
-    difference |= bits[index] ^ expected[index];
-  }
-  return difference === 0;
-}
-
-async function createSession(user: string, request: Request) {
+async function sessionRecord(user: string, request: Request) {
   const token = randomToken();
-  const database = getDb(env.DATABASE_URL);
-  await database.insert(studioSessions).values({
-    id: crypto.randomUUID(),
-    user,
-    tokenHash: await sha256(token),
-    expires: Date.now() + 30 * 86400_000,
-    created: Date.now(),
-  });
-  return sessionCookie(token, request);
+  const now = Date.now();
+  return {
+    cookie: sessionCookie(token, request),
+    values: {
+      id: crypto.randomUUID(),
+      user,
+      tokenHash: await sha256(token),
+      expires: now + SESSION_DURATION_SECONDS * 1000,
+      created: now,
+    },
+  };
+}
+
+async function logout(request: Request) {
+  const clearCookie = clearSessionCookie(request);
+  const token = cookieValue(request.headers.get('cookie'), SESSION_COOKIE);
+
+  // Clearing the browser cookie is the critical operation. Database cleanup is
+  // best effort so users can always sign out during a database outage.
+  if (token && env.DATABASE_URL) {
+    try {
+      await getDb(env.DATABASE_URL)
+        .delete(studioSessions)
+        .where(eq(studioSessions.tokenHash, await sha256(token)));
+    } catch (error) {
+      console.error('Session cleanup failed during logout', error);
+    }
+  }
+
+  return json({ ok: true }, 200, clearCookie);
+}
+
+function isUniqueViolation(error: unknown) {
+  const candidate = error as {
+    code?: string;
+    cause?: { code?: string };
+    message?: string;
+  };
+  return (
+    candidate.code === '23505' ||
+    candidate.cause?.code === '23505' ||
+    candidate.message?.includes('studio_users_email_unique')
+  );
 }
 
 export async function POST(request: Request) {
-  if (!validOrigin(request)) {
+  if (!validRequestOrigin(request)) {
     return json({ error: 'Solicitud no válida.' }, 403);
   }
+
+  let rawBody: unknown;
+  try {
+    rawBody = await request.json();
+  } catch {
+    return json({ error: 'El cuerpo de la solicitud no es JSON válido.' }, 400);
+  }
+
+  const parsed = validateAuthPayload(rawBody);
+  if (!parsed.ok) return json({ error: parsed.error }, 400);
+  if (parsed.value.action === 'logout') return logout(request);
+
   try {
     const database = getDb(env.DATABASE_URL);
-    const body = (await request.json()) as {
-      action?: string;
-      email?: string;
-      password?: string;
-      name?: string;
-    };
-    if (body.action === 'logout') {
-      const token = request.headers
-        .get('cookie')
-        ?.match(/(?:^|;\s*)fabrica_session=([^;]+)/)?.[1];
-      if (token) {
-        await database
-          .delete(studioSessions)
-          .where(eq(studioSessions.tokenHash, await sha256(token)));
-      }
-      return json({ ok: true }, 200, clearSessionCookie(request));
-    }
+    const { action, email, password, name } = parsed.value;
 
-    const email = body.email?.trim().toLowerCase() || '';
-    const password = body.password || '';
-    if (
-      email.length > 254 ||
-      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ||
-      password.length < 10 ||
-      password.length > 200
-    ) {
-      return json(
-        {
-          error:
-            'Revisá el email y usá una contraseña de al menos 10 caracteres.',
-        },
-        400,
-      );
-    }
-
-    if (body.action === 'register') {
-      const name = body.name?.trim() || '';
-      if (name.length < 2 || name.length > 100) {
-        return json({ error: 'Ingresá tu nombre.' }, 400);
-      }
-      const passwordSignals = [
-        /[a-z]/.test(password) && /[A-Z]/.test(password),
-        /\d/.test(password),
-        /[^A-Za-z0-9]/.test(password),
-      ].filter(Boolean).length;
-      if (passwordSignals < 2) {
-        return json(
-          {
-            error:
-              'Combiná mayúsculas y minúsculas con un número o un símbolo.',
-          },
-          400,
-        );
-      }
+    if (action === 'register') {
       const [existing] = await database
         .select({ id: studioUsers.id })
         .from(studioUsers)
@@ -167,45 +106,72 @@ export async function POST(request: Request) {
           409,
         );
       }
+
       const id = crypto.randomUUID();
-      await database.insert(studioUsers).values({
-        id,
-        email,
-        name,
-        passwordHash: await passwordHash(password),
-        created: Date.now(),
-      });
-      return json({ ok: true, name }, 201, await createSession(id, request));
+      const session = await sessionRecord(id, request);
+      try {
+        // Neon executes a batch in one transaction: an account can no longer be
+        // created without its initial session if the second write fails.
+        await database.batch([
+          database.insert(studioUsers).values({
+            id,
+            email,
+            name,
+            passwordHash: await hashPassword(password),
+            created: Date.now(),
+          }),
+          database.insert(studioSessions).values(session.values),
+        ]);
+      } catch (error) {
+        if (isUniqueViolation(error)) {
+          return json(
+            { error: 'Ya existe una cuenta con ese email. Iniciá sesión.' },
+            409,
+          );
+        }
+        throw error;
+      }
+
+      return json({ ok: true, name }, 201, session.cookie);
     }
 
-    if (body.action === 'login') {
-      const [user] = await database
-        .select({
-          id: studioUsers.id,
-          name: studioUsers.name,
-          passwordHash: studioUsers.passwordHash,
-        })
-        .from(studioUsers)
-        .where(eq(studioUsers.email, email))
-        .limit(1);
-      if (!user || !(await verifyPassword(password, user.passwordHash))) {
-        return json({ error: 'Email o contraseña incorrectos.' }, 401);
-      }
+    const [user] = await database
+      .select({
+        id: studioUsers.id,
+        name: studioUsers.name,
+        passwordHash: studioUsers.passwordHash,
+      })
+      .from(studioUsers)
+      .where(eq(studioUsers.email, email))
+      .limit(1);
+    if (
+      !user ||
+      !user.passwordHash ||
+      !(await verifyPassword(password, user.passwordHash))
+    ) {
+      return json({ error: 'Email o contraseña incorrectos.' }, 401);
+    }
+
+    const session = await sessionRecord(user.id, request);
+    await database.insert(studioSessions).values(session.values);
+    try {
       await database
         .delete(studioSessions)
         .where(lte(studioSessions.expires, Date.now()));
-      return json(
-        { ok: true, name: user.name },
-        200,
-        await createSession(user.id, request),
-      );
+    } catch (error) {
+      // Expired rows are maintenance; they must never invalidate a successful
+      // login after the new session has already been persisted.
+      console.error('Expired session cleanup failed', error);
     }
 
-    return json({ error: 'Acción no válida.' }, 400);
+    return json({ ok: true, name: user.name }, 200, session.cookie);
   } catch (error) {
     console.error('Auth request failed', error);
     return json(
-      { error: 'No pudimos completar el acceso. Intentá nuevamente.' },
+      {
+        error:
+          'El servicio de acceso no está disponible en este momento. Intentá nuevamente.',
+      },
       503,
     );
   }
