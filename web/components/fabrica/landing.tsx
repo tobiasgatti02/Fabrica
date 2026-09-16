@@ -74,6 +74,7 @@ export default function Landing() {
     <section ref={story} className="story-scroll" aria-label="De una idea a un lugar: recorrido de Casa Patio">
       <div className="story-stage">
         <div className={`scene-backdrop ${ready && !failed ? 'is-ready' : ''}`} aria-hidden="true">
+     
           {failed && <FallbackHouse progress={progress} />}
           {!failed && <HouseScene controller={controller} onReady={markReady} onProgress={setProgress} onError={markFailed} />}
         </div>
@@ -88,7 +89,6 @@ export default function Landing() {
             {chapter === 0 && <button className="round-link" onClick={() => goTo(.18)}><span className="round-icon"><ArrowDown size={20} /></span>Deslizá para darle forma</button>}
           </div>
         </div>
-        <div className="scene-label" style={{ opacity: 1 - Math.min(1, Math.max(0, (progress - .74) / .08)) }}><span className="label-cross">+</span><div>CASA PATIO<span>Un proyecto imaginado en Fabrica</span></div></div>
         {failed && <span className="loading-label" role="status">Recorrido en imágenes · Deslizá para avanzar</span>}
 
         <footer id="interior" className={`interior-footer ${inside ? 'is-visible' : ''}`} aria-hidden={!inside} inert={!inside}>

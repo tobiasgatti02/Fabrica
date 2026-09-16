@@ -952,6 +952,22 @@ export async function POST(request: Request) {
         created: Date.now(),
       });
       return json({ id }, 201);
+    } else if (body.action === 'delete-version') {
+      if (typeof body.id !== 'string' || !body.id) throw new Error('400');
+      const [version] = await database.select({ id: studioVersions.id })
+        .from(studioVersions)
+        .where(and(eq(studioVersions.id, body.id), eq(studioVersions.project, project.id)))
+        .limit(1);
+      if (!version) throw new Error('404');
+      // Atomic metadata deletion. Original uploads can be shared by derived
+      // versions, so they remain in storage rather than breaking those models.
+      await database.batch([
+        database.delete(studioComments).where(and(eq(studioComments.project, project.id), eq(studioComments.version, version.id))),
+        database.delete(studioMeasurements).where(and(eq(studioMeasurements.project, project.id), eq(studioMeasurements.version, version.id))),
+        database.delete(studioPlans).where(and(eq(studioPlans.project, project.id), eq(studioPlans.version, version.id))),
+        database.update(studioVersions).set({ sourceVersion: null }).where(and(eq(studioVersions.project, project.id), eq(studioVersions.sourceVersion, version.id))),
+        database.delete(studioVersions).where(and(eq(studioVersions.project, project.id), eq(studioVersions.id, version.id))),
+      ]);
     } else if (body.action === 'publish') {
       if (typeof body.id !== 'string' || !body.id) throw new Error('400');
       await database

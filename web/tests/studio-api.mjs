@@ -3,10 +3,14 @@
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
 const base = 'http://localhost:3000/api/studio';
-const identity = {
-  'oai-authenticated-user-id': `test-${randomUUID()}`,
-  'oai-authenticated-user-email': 'studio-test@example.invalid',
-};
+const ownerAuth = await fetch('http://localhost:3000/api/auth', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ action: 'register', name: 'Studio integration',
+    email: `studio-${randomUUID()}@example.com`, password: 'Integration-Secure-2026' }),
+});
+assert.equal(ownerAuth.status, 201, await ownerAuth.text());
+const identity = { cookie: ownerAuth.headers.get('set-cookie').split(';')[0] };
 const clientName = `Familia Test ${randomUUID().slice(0, 8)}`;
 const clientEmail = `familia-${randomUUID().slice(0, 8)}@example.com`;
 const sha = (data) => createHash('sha256').update(data).digest('hex');
@@ -325,6 +329,24 @@ const cancelled = await request(
 );
 await request({ action: 'abort', id: cancelled.id }, owner);
 await request({ action: 'finish', id: cancelled.id, parts: [] }, owner, 404);
+// Deleting a source must preserve derived models and project-wide comments.
+await request({ action: 'delete-version', id: v1.id }, `?share=${encodeURIComponent(renewed.share)}`, 403);
+await request({ action: 'delete-version', id: initial.versions[0].id }, owner, 404);
+await request({ action: 'delete-version', id: v1.id }, owner);
+let remaining = await request(undefined, owner);
+assert(!remaining.versions.some((v) => v.id === v1.id));
+assert(!remaining.comments.some((v) => v.version === v1.id));
+assert(!remaining.measurements.some((v) => v.version === v1.id));
+assert(!remaining.plans.some((v) => v.version === v1.id));
+assert(remaining.comments.some((v) => v.scope === 'project'));
+assert.equal(remaining.versions.find((v) => v.id === copy.id).sourceVersion, null);
+const keptFile = await fetch(`${base}${owner}&asset=${encodeURIComponent(file.key)}`, { headers: identity });
+assert.equal(keptFile.status, 200);
+assert.equal(sha(Buffer.from(await keptFile.arrayBuffer())), sha(bytes));
+await request({ action: 'delete-version', id: v1.id }, owner, 404);
+await request({ action: 'delete-version', id: copy.id }, owner);
+remaining = await request(undefined, owner);
+assert.equal(remaining.versions.length, 0, 'Last version can be removed');
 console.log(
   'PASS: clients, guest links, optional account recovery, revocation, project portfolio, multipart integrity, version copies, visibility, measures, plans, saved views, scoped comments and protected assets.',
 );

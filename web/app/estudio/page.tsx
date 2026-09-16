@@ -21,7 +21,7 @@ export default async function StudioPage({
   const user = await getFabricaUser();
   return (
     <Studio
-      localPreview={false}
+      localPreview={import.meta.env.DEV}
       initialSharedToken={sharedToken}
       initialAuthError={authError}
       user={

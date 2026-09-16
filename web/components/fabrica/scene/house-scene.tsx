@@ -1,7 +1,7 @@
 'use client';
 
 import { Component, Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
-import { Canvas, useFrame, useThree, type GLProps } from '@react-three/fiber';
+import { addAfterEffect, Canvas, useFrame, useThree, type GLProps } from '@react-three/fiber';
 import { Environment, useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
 import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLightUniformsLib.js';
@@ -44,7 +44,7 @@ export function prepareModel(source: THREE.Group, mobile: boolean) {
   return { scene, dispose: () => materials.forEach(material => material.dispose()) };
 }
 
-function Model({ controller, onReady }: Pick<Props, 'controller' | 'onReady'>) {
+function Model({ controller }: Pick<Props, 'controller'>) {
   const gltf = useGLTF(EXTERIOR, DRACO);
   const mobile = useThree(s => s.size.width < 760);
   const prepared = useMemo(() => prepareModel(gltf.scene, mobile), [gltf.scene, mobile]);
@@ -69,9 +69,8 @@ function Model({ controller, onReady }: Pick<Props, 'controller' | 'onReady'>) {
     return result;
   }, [prepared]);
   useEffect(() => {
-    onReady();
     return () => { assembly.forEach(part => part.materials.forEach(({ material }) => material.dispose())); prepared.dispose(); };
-  }, [onReady, prepared, assembly]);
+  }, [prepared, assembly]);
   useFrame(() => {
     for (const part of assembly) {
       const pose = assemblyPose(constructionProgress(controller.current.progress), part.start, part.end, part.lift, controller.current.reduced);
@@ -90,6 +89,21 @@ function Model({ controller, onReady }: Pick<Props, 'controller' | 'onReady'>) {
     }
   }, -1);
   return <primitive object={prepared.scene} dispose={null} />;
+}
+
+// Signal readiness after R3F has rendered the loaded scene, not when the model mounts.
+function FirstFrameReady({ onReady }: Pick<Props, 'onReady'>) {
+  const rendered = useRef(false);
+  useFrame(() => { rendered.current = true; });
+  useEffect(() => {
+    const unsubscribe = addAfterEffect(() => {
+      if (!rendered.current) return;
+      unsubscribe();
+      onReady();
+    });
+    return unsubscribe;
+  }, [onReady]);
+  return null;
 }
 
 function Scene({ controller, onReady, onProgress }: Omit<Props, 'onError'>) {
@@ -146,7 +160,8 @@ function Scene({ controller, onReady, onProgress }: Omit<Props, 'onError'>) {
     <Environment files="/environment/rosendal-plains-1k.hdr" environmentIntensity={.65} environmentRotation={[0, 1.8, 0]} />
     <hemisphereLight args={['#e8eef4', '#a49175', .28]} />
     <directionalLight position={[-7, 11, 8]} intensity={3.2} color="#fff0d9" castShadow shadow-mapSize={size.width < 760 ? [1024, 1024] : [2048, 2048]} shadow-camera-left={-11} shadow-camera-right={11} shadow-camera-top={10} shadow-camera-bottom={-9} shadow-camera-near={.5} shadow-camera-far={40} shadow-normalBias={.022} shadow-bias={-.00008} shadow-radius={3} />
-    <Model controller={actual} onReady={onReady} />
+    <Model controller={actual} />
+    <FirstFrameReady onReady={onReady} />
     {interiorReady && <Suspense fallback={null}><Interior controller={actual} onReady={markInteriorLoaded} /></Suspense>}
     {interiorReady && <>
       <pointLight position={[.2, 2.43, -1.12]} color="#ffd7a3" intensity={5} distance={5} decay={2} />

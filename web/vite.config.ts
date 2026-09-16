@@ -15,6 +15,11 @@ const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === 'seatbelt';
 const localBindingConfig = {
   main: 'vinext/server/fetch-handler',
   compatibility_flags: ['nodejs_compat'],
+  vars: {
+    GOOGLE_CLIENT_ID:
+      '706916461157-oc440067frrb27gs6fmtod2jqs9mh09s.apps.googleusercontent.com',
+    GOOGLE_REDIRECT_URI: 'https://f4brica.app/api/auth/google/callback',
+  },
   d1_databases: d1
     ? [
         {

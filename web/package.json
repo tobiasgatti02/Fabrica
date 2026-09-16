@@ -8,7 +8,10 @@
   "scripts": {
     "dev": "vinext dev",
     "build": "vinext build",
+    "deploy": "wrangler deploy --config dist/server/wrangler.json",
     "start": "wrangler dev --config dist/server/wrangler.json",
+    "video:studio": "remotion studio remotion/index.tsx",
+    "video:render": "remotion render remotion/index.tsx fabrica-demo out/fabrica-demo.mp4",
     "lint": "oxlint",
     "format": "oxfmt",
     "test:auth": "node --import tsx tests/auth-core.mts",
@@ -50,6 +53,7 @@
     "@cloudflare/vite-plugin": "1.37.1",
     "@cloudflare/workers-types": "4.20260515.1",
     "@openai/sites-vite-plugin": "0.2.0",
+    "@remotion/cli": "^4.0.525",
     "@tailwindcss/postcss": "4.2.1",
     "@types/node": "22.19.19",
     "@types/react": "19.2.14",
@@ -60,11 +64,13 @@
     "oxfmt": "0.61.0",
     "oxlint": "1.76.0",
     "oxlint-tsgolint": "7.0.2001",
+    "remotion": "^4.0.525",
     "tailwindcss": "4.2.1",
-    "typescript": "5.9.3",
     "tsx": "4.20.6",
+    "typescript": "5.9.3",
     "vite": "8.0.13",
-    "wrangler": "4.92.0"
+    "wrangler": "4.92.0",
+    "zod": "^4.5.4"
   },
   "type": "module"
 }

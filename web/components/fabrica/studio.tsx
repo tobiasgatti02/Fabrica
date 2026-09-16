@@ -45,6 +45,7 @@ import {
   FileText,
   Files,
   Ruler,
+  Trash2,
   X,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -79,6 +80,7 @@ import {
 } from './model-import';
 import { Wordmark } from './landing';
 import { StudioAuthPanel } from './studio-auth-panel';
+import { advanceOrbitTarget } from './scene/navigation';
 
 type Stage = 0 | 1 | 2 | 3;
 type Version = string;
@@ -87,6 +89,7 @@ type SurfaceSelection = {
   surface: string;
   point: [number, number, number];
   anchor?: string;
+  objectKey?: string;
 };
 
 type Viewpoint = {
@@ -176,6 +179,7 @@ function HouseScene({
   stage,
   palette,
   interactionMode,
+  navigationMode,
   view,
   selection,
   onSelect,
@@ -201,7 +205,8 @@ function HouseScene({
   onCameraChange: (viewpoint: Viewpoint) => void;
   stage: Stage;
   palette: 'original' | 'warm';
-  interactionMode: 'navigate' | 'comment' | 'measure';
+  navigationMode: 'orbit' | 'pan';
+  interactionMode: 'navigate' | 'comment' | 'measure' | 'hide';
   view: string;
   selection: SurfaceSelection | null;
   onSelect: (selection: SurfaceSelection) => void;
@@ -218,6 +223,7 @@ function HouseScene({
     stage,
     palette,
     interactionMode,
+    navigationMode,
     view,
     selection,
     onSelect,
@@ -242,6 +248,7 @@ function HouseScene({
       stage,
       palette,
       interactionMode,
+      navigationMode,
       view,
       selection,
       onSelect,
@@ -261,6 +268,7 @@ function HouseScene({
     stage,
     palette,
     interactionMode,
+    navigationMode,
     view,
     selection,
     onSelect,
@@ -285,7 +293,7 @@ function HouseScene({
     scene.background = new THREE.Color('#d8d7ce');
     scene.fog = new THREE.Fog('#d8d7ce', 22, 42);
 
-    const camera = new THREE.PerspectiveCamera(36, 1, 0.1, 100);
+    const camera = new THREE.PerspectiveCamera(50, 1, 0.01, 100);
     camera.position.set(...initialCamera.position);
     let renderer: THREE.WebGLRenderer;
     try {
@@ -307,7 +315,11 @@ function HouseScene({
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.06;
-    controls.minDistance = 0.1;
+    controls.minDistance = 0.01;
+    controls.zoomToCursor = true;
+    controls.mouseButtons.MIDDLE = THREE.MOUSE.ROTATE;
+    controls.mouseButtons.RIGHT = THREE.MOUSE.PAN;
+    controls.touches.TWO = THREE.TOUCH.DOLLY_PAN;
     controls.maxDistance = 100;
     controls.maxPolarAngle = Math.PI;
     controls.screenSpacePanning = true;
@@ -603,22 +615,22 @@ function HouseScene({
     state.current.onObjectCatalog(describeObjects(model));
     const raycaster = new THREE.Raycaster();
     const pointer = new THREE.Vector2();
-    let down = { x: 0, y: 0 };
+    let down: { x: number; y: number; id: number } | null = null;
+    const activePointers = new Set<number>();
     const onPointerDown = (event: PointerEvent) => {
-      down = { x: event.clientX, y: event.clientY };
+      activePointers.add(event.pointerId);
+      down =
+        activePointers.size === 1 && event.button === 0
+          ? { x: event.clientX, y: event.clientY, id: event.pointerId }
+          : null;
     };
-    const onPointerUp = (event: PointerEvent) => {
-      if (
-        state.current.interactionMode === 'navigate' ||
-        Math.hypot(event.clientX - down.x, event.clientY - down.y) > 5
-      )
-        return;
+    const pickSurface = (event: MouseEvent) => {
       const rect = renderer.domElement.getBoundingClientRect();
       pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
       pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
       raycaster.setFromCamera(pointer, camera);
       const root = state.current.imported || model;
-      const hit = raycaster
+      return raycaster
         .intersectObjects(state.current.imported ? [root] : selectable, true)
         .find((item) => {
           let node: THREE.Object3D | null = item.object;
@@ -628,21 +640,61 @@ function HouseScene({
           }
           return true;
         });
+    };
+    const onPointerCancel = (event: PointerEvent) => {
+      activePointers.delete(event.pointerId);
+      down = null;
+    };
+    const onPointerUp = (event: PointerEvent) => {
+      activePointers.delete(event.pointerId);
+      const start = down;
+      down = null;
+      if (
+        !start ||
+        start.id !== event.pointerId ||
+        event.button !== 0 ||
+        Math.hypot(event.clientX - start.x, event.clientY - start.y) > 5
+      )
+        return;
+      const hit = pickSurface(event);
       if (!hit) return;
+      const root = state.current.imported || model;
       const local = root.worldToLocal(hit.point.clone());
-      const next = {
+      const next: SurfaceSelection = {
         surface:
           hit.object.userData.surface ||
           hit.object.name ||
           'Superficie del modelo',
+        objectKey: hit.object.userData.fabricaObjectKey,
         point: [local.x, local.y, local.z],
-      } as SurfaceSelection;
+      };
       if (state.current.interactionMode === 'measure') {
         state.current.onMeasure(next);
       } else {
         state.current.onSelect(next);
       }
     };
+    const onDoubleClick = (event: MouseEvent) => {
+      if (event.button !== 0 || state.current.interactionMode !== 'navigate')
+        return;
+      const hit = pickSurface(event);
+      if (!hit) return;
+      controls.autoRotate = false;
+      const distance = Math.max(
+        camera.position.distanceTo(hit.point) * 0.35,
+        controls.minDistance * 10,
+      );
+      desiredPosition
+        .copy(camera.position)
+        .sub(hit.point)
+        .normalize()
+        .multiplyScalar(distance)
+        .add(hit.point);
+      desiredTarget.copy(hit.point);
+      transitioning = true;
+    };
+    renderer.domElement.addEventListener('dblclick', onDoubleClick);
+    renderer.domElement.addEventListener('pointercancel', onPointerCancel);
     renderer.domElement.addEventListener('pointerdown', onPointerDown);
     renderer.domElement.addEventListener('pointerup', onPointerUp);
 
@@ -656,6 +708,7 @@ function HouseScene({
     let measurementSignature = '';
     const stopTransition = () => {
       transitioning = false;
+      controls.autoRotate = false;
     };
     controls.addEventListener('start', stopTransition);
     const desiredPosition = new THREE.Vector3(...initialCamera.position);
@@ -664,7 +717,15 @@ function HouseScene({
     const projected = new THREE.Vector3();
     const importedBounds = new THREE.Box3();
     const importedSphere = new THREE.Sphere();
+    let navigationDistance = 0.3;
     const frameView = (viewName: string, imported: THREE.Group | null) => {
+      const root = imported || model;
+      root.updateMatrixWorld(true);
+      importedBounds.setFromObject(root).getBoundingSphere(importedSphere);
+      const radius = Math.max(importedSphere.radius, 0.1);
+      navigationDistance = Math.max(radius * 0.04, 0.02);
+      controls.minDistance = navigationDistance / 100;
+      controls.maxDistance = radius * 20;
       const saved = state.current.savedViews.find(
         (item) => item.id === viewName,
       );
@@ -687,7 +748,6 @@ function HouseScene({
 
       imported.updateMatrixWorld(true);
       importedBounds.setFromObject(imported).getBoundingSphere(importedSphere);
-      const radius = Math.max(importedSphere.radius, 0.1);
       const distance =
         (radius / Math.sin(THREE.MathUtils.degToRad(camera.fov / 2))) * 1.15;
       desiredTarget.copy(importedSphere.center);
@@ -696,11 +756,9 @@ function HouseScene({
         .normalize()
         .multiplyScalar(distance)
         .add(importedSphere.center);
-      camera.near = Math.max(radius / 100, 0.01);
+      camera.near = Math.max(radius / 10000, 0.001);
       camera.far = Math.max(radius * 100, 100);
       camera.updateProjectionMatrix();
-      controls.minDistance = radius * 0.05;
-      controls.maxDistance = radius * 20;
     };
 
     const resize = () => {
@@ -832,9 +890,6 @@ function HouseScene({
             .add(controls.target);
         } else if (action === 'rotate')
           controls.autoRotate = !controls.autoRotate;
-        else if (action === 'pan' || action === 'orbit')
-          controls.mouseButtons.LEFT =
-            action === 'pan' ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE;
       }
       if (transitioning) {
         camera.position.lerp(desiredPosition, 0.12);
@@ -845,10 +900,29 @@ function HouseScene({
         )
           transitioning = false;
       }
-      controls.enabled = current.interactionMode === 'navigate';
+      controls.enabled = true;
+      controls.mouseButtons.LEFT =
+        current.interactionMode !== 'navigate'
+          ? null
+          : current.navigationMode === 'pan'
+            ? THREE.MOUSE.PAN
+            : THREE.MOUSE.ROTATE;
+      controls.touches.ONE =
+        current.interactionMode !== 'navigate'
+          ? null
+          : current.navigationMode === 'pan'
+            ? THREE.TOUCH.PAN
+            : THREE.TOUCH.ROTATE;
       renderer.domElement.style.cursor =
         current.interactionMode !== 'navigate' ? 'crosshair' : 'grab';
       controls.update();
+      if (!transitioning) {
+        advanceOrbitTarget(
+          camera.position,
+          controls.target,
+          navigationDistance,
+        );
+      }
       if (tick % 6 === 0) {
         current.onCameraChange({
           position: camera.position.toArray() as [number, number, number],
@@ -915,6 +989,8 @@ function HouseScene({
     return () => {
       cancelAnimationFrame(frame);
       observer.disconnect();
+      renderer.domElement.removeEventListener('dblclick', onDoubleClick);
+      renderer.domElement.removeEventListener('pointercancel', onPointerCancel);
       renderer.domElement.removeEventListener('pointerdown', onPointerDown);
       renderer.domElement.removeEventListener('pointerup', onPointerUp);
       controls.dispose();
@@ -964,7 +1040,9 @@ function HouseScene({
             ? measurementStart
               ? 'Elegí el segundo punto de la medida'
               : 'Elegí el primer punto de la medida'
-            : 'Arrastrá: rotar · clic derecho: desplazar · rueda: zoom'}
+            : interactionMode === 'hide'
+              ? 'Tocá un objeto para ocultarlo · Objetos → Mostrar todos para recuperarlo'
+              : `Arrastrá: ${navigationMode === 'pan' ? 'desplazar' : 'orbitar'} · Central: orbitar · Shift + central / derecho: desplazar · Rueda: zoom · Doble clic: acercarse · Dos dedos: desplazar y zoom`}
       </div>
     </div>
   );
@@ -1005,6 +1083,7 @@ export default function Studio({
   const [clientDialogOpen, setClientDialogOpen] = useState(false);
   const [newClientName, setNewClientName] = useState('');
   const [newClientEmail, setNewClientEmail] = useState('');
+  const [deleteVersionOpen, setDeleteVersionOpen] = useState(false);
   const [versionDialogOpen, setVersionDialogOpen] = useState(false);
   const [versionName, setVersionName] = useState('');
   const [versionDescription, setVersionDescription] = useState('');
@@ -1035,7 +1114,11 @@ export default function Studio({
     'objects' | 'measurements' | 'plans' | null
   >(null);
   const [objectCatalog, setObjectCatalog] = useState<SceneObject[]>([]);
-  const [hiddenObjects, setHiddenObjects] = useState<string[]>([]);
+  const [storedHiddenObjects, setHiddenObjects] = useState<string[]>([]);
+  const [clientVisibility, setClientVisibility] = useState<{
+    version: string;
+    hidden: string[];
+  } | null>(null);
   const [measurements, setMeasurements] = useState<Measurement[]>([]);
   const [plans, setPlans] = useState<StoredPlan[]>([]);
   const [measurementStart, setMeasurementStart] =
@@ -1135,6 +1218,7 @@ export default function Studio({
   };
   const changeVersion = (id: string) => {
     setView('');
+    setClientVisibility(null);
     selectedVersion.current = id;
     setVersion(id);
     setHiddenObjects(
@@ -1152,8 +1236,15 @@ export default function Studio({
   const [stage, setStage] = useState<Stage>(3);
   const [version, setVersion] = useState<Version>('');
   const [interactionMode, setInteractionMode] = useState<
-    'navigate' | 'comment' | 'measure'
+    'navigate' | 'comment' | 'measure' | 'hide'
   >('navigate');
+  const [navigationMode, setNavigationMode] = useState<'orbit' | 'pan'>(
+    'orbit',
+  );
+  const hiddenObjects =
+    clientVisibility?.version === version
+      ? clientVisibility.hidden
+      : storedHiddenObjects;
   const [selection, setSelection] = useState<SurfaceSelection | null>(null);
   const [view, setView] = useState('');
   // On a phone the canvas is the primary surface. Keep the conversation one tap
@@ -1278,7 +1369,12 @@ export default function Studio({
   };
 
   const selectSurface = (next: SurfaceSelection) => {
+    if (interactionMode === 'hide' && next.objectKey) {
+      toggleObject(next.objectKey);
+      return;
+    }
     setSelection(next);
+    if (interactionMode === 'navigate') return;
     setCommentScope('point');
     setInteractionMode('navigate');
     setInspector(null);
@@ -1560,6 +1656,10 @@ export default function Studio({
     }
   };
   const saveVisibility = async (next: string[], previous: string[]) => {
+    if (!professional) {
+      setClientVisibility({ version, hidden: next });
+      return;
+    }
     setHiddenObjects(next);
     try {
       await studioRequest(
@@ -1586,7 +1686,7 @@ export default function Studio({
     }
   };
   const toggleObject = (key: string) => {
-    if (!professional || !activeVersion) return;
+    if (!activeVersion) return;
     const previous = hiddenObjects;
     const next = previous.includes(key)
       ? previous.filter((item) => item !== key)
@@ -1791,12 +1891,12 @@ export default function Studio({
       (preparedModel !== modelKey || readyModel !== modelKey),
     );
   const modelReady = Boolean(activeVersion && !modelBusy && !modelError);
-  const roofKeys = objectCatalog
-    .filter((item) => /cubierta|techo|roof|pérgola/i.test(item.label))
-    .map((item) => item.key);
-  const roofVisible = roofKeys.length
-    ? roofKeys.some((key) => !hiddenObjects.includes(key))
-    : true;
+  const selectedObject = objectCatalog.find(
+    (item) => item.key === selection?.objectKey,
+  );
+  const selectedVisible = Boolean(
+    selectedObject && !hiddenObjects.includes(selectedObject.key),
+  );
   const activeProjectRecord = projects.find(
     (item) => item.id === activeProject,
   );
@@ -2034,28 +2134,24 @@ export default function Studio({
 
       <section className="studio-workspace">
         <div className="workspace-topbar">
-          <div
-            className="roof-control"
-            hidden={!modelReady || !roofKeys.length}
-          >
+          <div className="roof-control" hidden={!modelReady}>
             <span>
-              {roofVisible ? <Eye size={15} /> : <EyeOff size={15} />}
+              {selectedVisible ? <Eye size={15} /> : <EyeOff size={15} />}
             </span>
-            <label htmlFor="roof-switch">
-              Cubierta <small>{roofVisible ? 'visible' : 'oculta'}</small>
+            <label htmlFor="asset-switch" title={selectedObject?.label}>
+              {selectedObject?.label || 'Seleccioná un asset'}
             </label>
             <Switch
-              id="roof-switch"
-              checked={roofVisible}
-              disabled={!professional}
-              onCheckedChange={(visible) => {
-                const previous = hiddenObjects;
-                const next = visible
-                  ? previous.filter((item) => !roofKeys.includes(item))
-                  : Array.from(new Set([...previous, ...roofKeys]));
-                void saveVisibility(next, previous);
+              id="asset-switch"
+              checked={selectedVisible}
+              disabled={!selectedObject}
+              onCheckedChange={() => {
+                if (selectedObject) toggleObject(selectedObject.key);
               }}
-              aria-label="Mostrar cubierta"
+              aria-label={selectedObject
+                ? `${selectedVisible ? 'Ocultar' : 'Mostrar'} ${selectedObject.label}`
+                : 'Seleccioná un asset para ocultarlo'}
+              title={selectedVisible ? 'Ocultar asset' : 'Mostrar asset'}
             />
           </div>
 
@@ -2132,6 +2228,7 @@ export default function Studio({
                   parseVersionSettings(activeVersion.settings).palette || 'warm'
                 }
                 interactionMode={interactionMode}
+                navigationMode={navigationMode}
                 view={view}
                 selection={selection}
                 onSelect={selectSurface}
@@ -2262,13 +2359,17 @@ export default function Studio({
               hidden={!modelReady}
             >
               <Button
-                variant={interactionMode === 'navigate' ? 'default' : 'ghost'}
+                variant={
+                  interactionMode === 'navigate' && navigationMode === 'orbit'
+                    ? 'default'
+                    : 'ghost'
+                }
                 size="icon"
                 aria-label="Orbitar modelo"
                 title="Orbitar"
                 onClick={() => {
                   setInteractionMode('navigate');
-                  command('orbit');
+                  setNavigationMode('orbit');
                 }}
               >
                 <Rotate3D />
@@ -2306,13 +2407,20 @@ export default function Studio({
                 <Ruler />
               </Button>
               <Button
-                variant="ghost"
+                variant={
+                  interactionMode === 'navigate' && navigationMode === 'pan'
+                    ? 'default'
+                    : 'ghost'
+                }
                 size="icon"
+                aria-pressed={
+                  interactionMode === 'navigate' && navigationMode === 'pan'
+                }
                 aria-label="Desplazar cámara"
                 title="Desplazar"
                 onClick={() => {
                   setInteractionMode('navigate');
-                  command('pan');
+                  setNavigationMode('pan');
                 }}
               >
                 <Move />
@@ -2343,6 +2451,20 @@ export default function Studio({
                 onClick={() => command('rotate')}
               >
                 <Play />
+              </Button>
+              <Button
+                variant={interactionMode === 'hide' ? 'default' : 'ghost'}
+                size="icon"
+                aria-label="Ocultar objetos al seleccionarlos"
+                aria-pressed={interactionMode === 'hide'}
+                title="Ocultar objeto seleccionado"
+                onClick={() =>
+                  setInteractionMode(
+                    interactionMode === 'hide' ? 'navigate' : 'hide',
+                  )
+                }
+              >
+                <EyeOff />
               </Button>
               <span className="tool-divider" />
               <Button
@@ -2443,11 +2565,17 @@ export default function Studio({
           </header>
           {inspector === 'objects' && (
             <div className="object-list">
+              {!professional && (
+                <p className="object-visibility-note">
+                  La visibilidad cambia solo en tu vista actual. La entrega
+                  original se conserva.
+                </p>
+              )}
               <div className="object-summary">
                 <span>{objectCatalog.length} objetos</span>
                 <button
                   type="button"
-                  disabled={!professional || !hiddenObjects.length}
+                  disabled={!hiddenObjects.length}
                   onClick={() => void saveVisibility([], hiddenObjects)}
                 >
                   Mostrar todos
@@ -2462,7 +2590,6 @@ export default function Studio({
                     </span>
                     <button
                       type="button"
-                      disabled={!professional}
                       onClick={() => toggleObject(object.key)}
                       aria-label={`${visible ? 'Ocultar' : 'Mostrar'} ${object.label}`}
                       title={`${visible ? 'Ocultar' : 'Mostrar'} ${object.label}`}
@@ -2882,6 +3009,13 @@ export default function Studio({
             )}
           </div>
           <div className="version-status">
+            {activeVersion && professional && (
+              <Button variant="ghost" disabled={saving}
+                onClick={() => setDeleteVersionOpen(true)}
+                aria-label={`Eliminar versión ${activeVersion.name}`}>
+                <Trash2 size={16} /> Eliminar
+              </Button>
+            )}
             {activeVersion && !activeVersion.published && professional ? (
               <Button
                 onClick={async () => {
@@ -2911,15 +3045,41 @@ export default function Studio({
           </div>
         </footer>
       </section>
-      {professional && (
-        <button
-          className="sketchup-example"
-          disabled={loading}
-          onClick={example}
-        >
-          Probar ejemplo de SketchUp <span>DAE · Silla</span>
-        </button>
-      )}
+
+      <Dialog open={deleteVersionOpen} onOpenChange={(open) => {
+        if (!saving) setDeleteVersionOpen(open);
+      }}>
+        <DialogContent>
+          <DialogTitle>Eliminar versión</DialogTitle>
+          <DialogDescription>
+            ¿Eliminar “{activeVersion?.name}”? Se borrarán sus comentarios,
+            medidas y planos. Las demás versiones y los comentarios generales
+            del proyecto se conservarán. Esta acción no se puede deshacer.
+          </DialogDescription>
+          <Button variant="outline" disabled={saving}
+            onClick={() => setDeleteVersionOpen(false)}>Cancelar</Button>
+          <Button variant="destructive" disabled={saving || !activeVersion}
+            onClick={async () => {
+              if (!activeVersion || saving) return;
+              setSaving(true);
+              try {
+                await studioRequest({ action: 'delete-version', id: version }, '', activeProject);
+                changeVersion(versions.filter((item) => item.id !== version).at(-1)?.id || '');
+                setVersions((items) => items.filter((item) => item.id !== version));
+                setDeleteVersionOpen(false);
+                await refresh(activeProject);
+                showToast('Versión eliminada');
+              } catch (error) {
+                showToast((error as Error).message);
+              } finally {
+                setSaving(false);
+              }
+            }}>
+            {saving ? 'Eliminando…' : 'Eliminar versión'}
+          </Button>
+        </DialogContent>
+      </Dialog>
+
       <ImportDialog
         key={activeProject}
         open={importOpen}

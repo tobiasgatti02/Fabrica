@@ -3220,3 +3220,11 @@
     animation-duration: 2.5s;
   }
 }
+
+.workspace-topbar .roof-control label {
+  max-width: clamp(100px, 20vw, 280px);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.studio-shell .workspace-topbar .roof-control[hidden] { display: none; }
