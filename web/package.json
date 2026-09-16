@@ -9,6 +9,8 @@
     "dev": "vinext dev",
     "build": "vinext build",
     "deploy": "wrangler deploy --config dist/server/wrangler.json",
+    "build:test": "FABRICA_DEPLOY_TARGET=test vinext build",
+    "deploy:test": "npm run build:test && wrangler deploy --config dist/server/wrangler.json --name fabrica-test",
     "start": "wrangler dev --config dist/server/wrangler.json",
     "video:studio": "remotion studio remotion/index.tsx",
     "video:render": "remotion render remotion/index.tsx fabrica-demo out/fabrica-demo.mp4",
