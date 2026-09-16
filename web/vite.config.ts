@@ -20,6 +20,19 @@ const localBindingConfig = {
       '706916461157-oc440067frrb27gs6fmtod2jqs9mh09s.apps.googleusercontent.com',
     GOOGLE_REDIRECT_URI: 'https://f4brica.app/api/auth/google/callback',
   },
+  observability: {
+    logs: {
+      enabled: true,
+      head_sampling_rate: 1,
+      invocation_logs: true,
+      persist: true,
+    },
+    traces: {
+      enabled: false,
+      head_sampling_rate: 1,
+      persist: true,
+    },
+  },
   d1_databases: d1
     ? [
         {
