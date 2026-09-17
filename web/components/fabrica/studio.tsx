@@ -2071,9 +2071,7 @@ export default function Studio({
           </div>
         </div>
         <div className="studio-header-actions">
-          <span className="presence">
-            {professional ? 'Arquitectura e interiorismo' : 'Cliente'}
-          </span>
+          
           {professional && (
             <>
               <Button
