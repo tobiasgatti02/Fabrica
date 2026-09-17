@@ -222,7 +222,10 @@ async function context(request: Request) {
     .from(studioClients)
     .where(eq(studioClients.owner, projects[0].owner))
     .orderBy(asc(studioClients.name), asc(studioClients.created));
-  return { project, projects, clients, identity, owner: true, accountOwner: ownsProjects };
+  const visibleClients = ownsProjects
+    ? clients
+    : clients.filter((client) => projects.some((item) => item.client === client.id));
+  return { project, projects, clients: visibleClients, identity, owner: true, accountOwner: ownsProjects };
 }
 
 function failure(error: unknown) {

@@ -304,6 +304,9 @@ export async function GET(request: Request) {
       });
     }
     const projectIds = ctx.projects.map((item) => item.id);
+    const clientIds = ctx.projects
+      .map((item) => item.client)
+      .filter((id): id is string => Boolean(id));
     const view = params.get('view') || 'panel';
     if (!['panel', 'inspiracion', 'propuestas', 'equipo'].includes(view))
       throw new Error('400');
@@ -375,11 +378,18 @@ export async function GET(request: Request) {
             .where(eq(studioTeamMembers.owner, ctx.project.owner))
             .orderBy(asc(studioTeamMembers.created))
         : Promise.resolve([]),
-      !ctx.guest && panel
+      !ctx.guest && panel && (ctx.accountOwner || clientIds.length > 0)
         ? db
             .select()
             .from(studioClients)
-            .where(eq(studioClients.owner, ctx.project.owner))
+            .where(
+              ctx.accountOwner
+                ? eq(studioClients.owner, ctx.project.owner)
+                : and(
+                    eq(studioClients.owner, ctx.project.owner),
+                    inArray(studioClients.id, clientIds),
+                  ),
+            )
         : Promise.resolve([]),
     ]);
     const visibleProposals = ctx.guest
@@ -421,7 +431,14 @@ export async function GET(request: Request) {
       assets: assets
         .filter((item) => !ctx.guest || visibleAssetIds.has(item.id))
         .map(({ key: _key, ...item }) => item),
-      members: members.map(({ inviteHash: _hash, ...item }) => item),
+      members: members
+        .filter(
+          (item) =>
+            ctx.accountOwner ||
+            !item.project ||
+            projectIds.includes(item.project),
+        )
+        .map(({ inviteHash: _hash, ...item }) => item),
       clients: clients.map((item) => ({
         id: item.id,
         name: item.name,
