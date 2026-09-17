@@ -1,0 +1,2 @@
+ALTER TABLE "studio_proposal_options" ADD COLUMN "preview_asset" text;--> statement-breakpoint
+ALTER TABLE "studio_proposal_options" ADD CONSTRAINT "studio_proposal_options_preview_asset_studio_assets_id_fk" FOREIGN KEY ("preview_asset") REFERENCES "public"."studio_assets"("id") ON DELETE no action ON UPDATE no action;

@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import Link from 'next/link';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import {
@@ -1052,6 +1053,7 @@ export default function Studio({
   user,
   localPreview,
   initialSharedToken,
+  initialProject,
   initialAuthError,
 }: {
   user: {
@@ -1061,6 +1063,7 @@ export default function Studio({
   } | null;
   localPreview: boolean;
   initialSharedToken: string;
+  initialProject: string;
   initialAuthError?: string;
 }) {
   const signedIn = Boolean(user);
@@ -1074,7 +1077,7 @@ export default function Studio({
   const [versions, setVersions] = useState<StoredVersion[]>([]);
   const [clients, setClients] = useState<StoredClient[]>([]);
   const [projects, setProjects] = useState<StoredProject[]>([]);
-  const [activeProject, setActiveProject] = useState('');
+  const [activeProject, setActiveProject] = useState(initialProject);
   const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const [projectDialogOpen, setProjectDialogOpen] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
@@ -1109,6 +1112,7 @@ export default function Studio({
   const [sharedToken, setSharedToken] = useState(initialSharedToken);
   const [viewerName, setViewerName] = useState('Cliente invitado');
   const [canEdit, setCanEdit] = useState(false);
+  const [accountOwner, setAccountOwner] = useState(false);
   const [saving, setSaving] = useState(false);
   const [inspector, setInspector] = useState<
     'objects' | 'measurements' | 'plans' | null
@@ -1170,6 +1174,7 @@ export default function Studio({
       setShareExpires(data.shareExpires || 0);
       setViewerName(data.viewer?.name || 'Cliente invitado');
       setCanEdit(data.owner);
+      setAccountOwner(Boolean(data.accountOwner));
       setStorageError('');
       setComments(
         data.comments.map(
@@ -1256,7 +1261,7 @@ export default function Studio({
 
   useEffect(() => {
     if (signedIn || localPreview || initialSharedToken)
-      void refresh('', initialSharedToken).catch(() => {});
+      void refresh(initialProject, initialSharedToken).catch(() => {});
   }, []);
 
   const activeFiles = versions.find((item) => item.id === version)?.files;
@@ -2043,7 +2048,7 @@ export default function Studio({
                     </div>
                   )}
                 </div>
-                {professional && (
+                {professional && accountOwner && (
                   <div className="project-menu-actions">
                     <button
                       type="button"
@@ -2072,7 +2077,7 @@ export default function Studio({
         </div>
         <div className="studio-header-actions">
           
-          {professional && (
+          {professional && canEdit && (
             <>
               <Button
                 variant="outline"
@@ -2129,6 +2134,24 @@ export default function Studio({
           </button>
         </div>
       </header>
+
+      <nav className="studio-area-nav" aria-label="Áreas del estudio">
+        {[
+          ['panel', 'Panel'],
+          ['inspiracion', 'Inspiración'],
+          ['propuestas', 'Propuestas'],
+          ['modelo', 'Modelo 3D'],
+          ['equipo', 'Equipo'],
+        ].filter(([id]) => id !== 'equipo' || professional).map(([id, label]) => (
+          <Link
+            key={id}
+            href={id === 'modelo'
+              ? `/estudio${sharedToken ? `?share=${encodeURIComponent(sharedToken)}` : activeProject ? `?project=${encodeURIComponent(activeProject)}` : ''}`
+              : `/estudio/${id}${sharedToken ? `?share=${encodeURIComponent(sharedToken)}` : activeProject ? `?project=${encodeURIComponent(activeProject)}` : ''}`}
+            aria-current={id === 'modelo' ? 'page' : undefined}
+          >{label}</Link>
+        ))}
+      </nav>
 
       <section className="studio-workspace">
         <div className="workspace-topbar">

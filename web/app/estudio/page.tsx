@@ -6,7 +6,7 @@ export const dynamic = 'force-dynamic';
 export default async function StudioPage({
   searchParams,
 }: {
-  searchParams?: Promise<{ share?: string; auth_error?: string }>;
+  searchParams?: Promise<{ share?: string; project?: string; auth_error?: string }>;
 }) {
   const params = await searchParams;
   const sharedToken = params?.share || '';
@@ -23,6 +23,7 @@ export default async function StudioPage({
     <Studio
       localPreview={import.meta.env.DEV}
       initialSharedToken={sharedToken}
+      initialProject={params?.project || ''}
       initialAuthError={authError}
       user={
         user

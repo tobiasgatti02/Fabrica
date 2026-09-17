@@ -9,6 +9,7 @@ import {
   studioMeasurements,
   studioPlans,
   studioProjects,
+  studioTeamMembers,
   studioUploads,
   studioVersions,
 } from '@/db/schema';
@@ -120,7 +121,7 @@ async function context(request: Request) {
         fullName: client?.name || null,
         provider: 'guest' as const,
       } as const);
-    return { project, projects: [], clients: [], identity, owner: false };
+    return { project, projects: [], clients: [], identity, owner: false, accountOwner: false };
   }
 
   const user = await getFabricaUser(request);
@@ -137,12 +138,42 @@ async function context(request: Request) {
         }
       : null);
   if (!identity) throw new Error('401');
+  const requestedProject = new URL(request.url).searchParams.get('project');
 
   let projects = await database
     .select()
     .from(studioProjects)
     .where(eq(studioProjects.owner, identity.userId))
     .orderBy(asc(studioProjects.created));
+  let teamRole = '';
+  let teamMemberships: { project: string | null; role: string }[] = [];
+  if (!projects.length || (requestedProject && !projects.some((item) => item.id === requestedProject))) {
+    const memberships = await database
+      .select()
+      .from(studioTeamMembers)
+      .where(eq(studioTeamMembers.user, identity.userId));
+    const [requested] = requestedProject
+      ? await database.select({ owner: studioProjects.owner }).from(studioProjects).where(eq(studioProjects.id, requestedProject)).limit(1)
+      : [];
+    const memberOwner = requested?.owner || memberships[0]?.owner;
+    const accepted = memberships.filter((item) => item.accepted && item.owner === memberOwner);
+    if (accepted.length) {
+      teamMemberships = accepted;
+      const studioOwner = accepted[0].owner;
+      const sameStudio = accepted;
+      const allProjects = await database
+        .select()
+        .from(studioProjects)
+        .where(eq(studioProjects.owner, studioOwner))
+        .orderBy(asc(studioProjects.created));
+      projects = sameStudio.some((item) => !item.project)
+        ? allProjects
+        : allProjects.filter((item) =>
+            sameStudio.some((membership) => membership.project === item.id),
+          );
+      teamRole = 'viewer';
+    }
+  }
   if (!projects.length) {
     const linkedClients = await database
       .select({ id: studioClients.id })
@@ -169,28 +200,29 @@ async function context(request: Request) {
       .where(eq(studioProjects.owner, identity.userId))
       .orderBy(asc(studioProjects.created));
   }
-  const ownsProjects = projects.some(
-    (project) => project.owner === identity.userId,
-  );
-  if (!ownsProjects) {
-    const requestedProject = new URL(request.url).searchParams.get('project');
-    const project = requestedProject
-      ? projects.find((item) => item.id === requestedProject)
-      : projects[0];
-    if (!project) throw new Error('404');
-    return { project, projects, clients: [], identity, owner: false };
-  }
-  const clients = await database
-    .select()
-    .from(studioClients)
-    .where(eq(studioClients.owner, identity.userId))
-    .orderBy(asc(studioClients.name), asc(studioClients.created));
-  const requestedProject = new URL(request.url).searchParams.get('project');
   const project = requestedProject
     ? projects.find((item) => item.id === requestedProject)
     : projects[0];
   if (!project) throw new Error(requestedProject ? '404' : '503');
-  return { project, projects, clients, identity, owner: true };
+  if (teamRole) {
+    const applicable = teamMemberships.filter((item) => !item.project || item.project === project.id);
+    teamRole = applicable.some((item) => item.role === 'architect')
+      ? 'architect'
+      : applicable.some((item) => item.role === 'collaborator')
+        ? 'collaborator'
+        : 'viewer';
+  }
+  const ownsProjects = project.owner === identity.userId;
+  const canEdit = ownsProjects || Boolean(teamRole && teamRole !== 'viewer');
+  if (!canEdit) {
+    return { project, projects, clients: [], identity, owner: false, accountOwner: false };
+  }
+  const clients = await database
+    .select()
+    .from(studioClients)
+    .where(eq(studioClients.owner, projects[0].owner))
+    .orderBy(asc(studioClients.name), asc(studioClients.created));
+  return { project, projects, clients, identity, owner: true, accountOwner: ownsProjects };
 }
 
 function failure(error: unknown) {
@@ -220,7 +252,7 @@ function failure(error: unknown) {
 
 export async function GET(request: Request) {
   try {
-    const { project, projects, clients, identity, owner } =
+    const { project, projects, clients, identity, owner, accountOwner } =
       await context(request);
     const database = db();
     const params = new URL(request.url).searchParams;
@@ -341,6 +373,7 @@ export async function GET(request: Request) {
       shareEnabled: owner ? Boolean(project.shareEnabled) : true,
       shareExpires: owner ? project.shareExpires : 0,
       owner,
+      accountOwner,
       viewer: {
         name: identity.displayName,
         guest: identity.provider === 'guest',
@@ -376,7 +409,7 @@ export async function POST(request: Request) {
     ) {
       throw new Error('403');
     }
-    const { project, owner, identity } = await context(request);
+    const { project, owner, identity, accountOwner } = await context(request);
     const database = db();
     if (Number(request.headers.get('content-length') || 0) > 1024 * 1024) {
       throw new Error('400');
@@ -483,6 +516,7 @@ export async function POST(request: Request) {
 
     if (!owner) throw new Error('403');
     if (body.action === 'create-client') {
+      if (!accountOwner) throw new Error('403');
       if (
         typeof body.name !== 'string' ||
         !body.name.trim() ||
@@ -516,6 +550,7 @@ export async function POST(request: Request) {
         201,
       );
     } else if (body.action === 'create-project') {
+      if (!accountOwner) throw new Error('403');
       if (
         typeof body.name !== 'string' ||
         !body.name.trim() ||
