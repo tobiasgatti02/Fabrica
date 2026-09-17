@@ -2136,7 +2136,6 @@ export default function Studio({
         {[
           ['panel', 'Panel'],
           ['inspiracion', 'Inspiración'],
-          ['propuestas', 'Propuestas'],
           ['modelo', 'Modelo 3D'],
           ['equipo', 'Equipo'],
         ].filter(([id]) => id !== 'equipo' || professional).map(([id, label]) => (

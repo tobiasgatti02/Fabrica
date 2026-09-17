@@ -95,33 +95,7 @@ export default function Inspiration({
 
   return (
     <div className="workspace-content inspiration-page">
-      <section className="workspace-hero inspiration-hero">
-        <div>
-          <p className="workspace-eyebrow">
-            TABLERO DE REFERENCIAS <span>·</span> {data.project.name}
-          </p>
-          <h1>
-            De una imagen
-            <br />
-            <em>a una decisión.</em>
-          </h1>
-          <p className="workspace-lead">
-            Juntá fotos, enlaces y materiales en un mismo lugar. El equipo y el
-            cliente pueden sumar ideas; el estudio decide qué sigue.
-          </p>
-          <button
-            className="workspace-primary hero-action"
-            onClick={() => setShowForm(true)}
-          >
-            <Plus size={17} /> Agregar referencia
-          </button>
-        </div>
-        <div className="inspiration-hero-art" aria-hidden="true">
-          <span className="art-one" />
-          <span className="art-two" />
-          <span className="art-three" />
-        </div>
-      </section>
+
       <section className="workspace-section">
         <div className="workspace-section-head">
           <div>

@@ -9,7 +9,6 @@ import {
   ChevronDown,
   LayoutDashboard,
   Lightbulb,
-  MessageSquareMore,
   UsersRound,
 } from 'lucide-react';
 import {
@@ -25,9 +24,6 @@ const StudioAuthPanel = dynamic(() =>
   import('./studio-auth-panel').then((module) => module.StudioAuthPanel),
 );
 const Inspiration = dynamic(() => import('./workspace-inspiration'), {
-  loading: () => <ViewSkeleton />,
-});
-const Proposals = dynamic(() => import('./workspace-proposals'), {
   loading: () => <ViewSkeleton />,
 });
 const Team = dynamic(() => import('./workspace-team'), {
@@ -49,7 +45,6 @@ export type WorkspaceViewProps = {
 const navigation = [
   { id: 'panel', label: 'Panel', icon: LayoutDashboard },
   { id: 'inspiracion', label: 'Inspiración', icon: Lightbulb },
-  { id: 'propuestas', label: 'Propuestas', icon: MessageSquareMore },
   { id: 'modelo', label: 'Modelo 3D', icon: Box },
   { id: 'equipo', label: 'Equipo', icon: UsersRound },
 ] as const;
@@ -300,8 +295,6 @@ export default function Workspace({
           <Panel key={props.data.project.id} {...props} />
         ) : section === 'inspiracion' ? (
           <Inspiration key={props.data.project.id} {...props} />
-        ) : section === 'propuestas' ? (
-          <Proposals key={props.data.project.id} {...props} />
         ) : (
           <Team key={props.data.project.id} {...props} />
         )

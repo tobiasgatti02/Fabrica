@@ -169,30 +169,7 @@ export default function Panel({
 
   return (
     <div className="workspace-content panel-page">
-      <section className="workspace-hero panel-hero">
-        <div>
-          <p className="workspace-eyebrow">
-            {data.viewer.guest ? 'TU PROYECTO' : 'PANEL DEL ESTUDIO'} <span>·</span> {data.viewer.guest ? data.project.name : `${data.projects.length} ${data.projects.length === 1 ? 'proyecto' : 'proyectos'}`}
-          </p>
-          <h1>
-            {data.viewer.guest ? 'Tu proyecto,' : 'Todo el trabajo,'}
-            <br />
-            <em>{data.viewer.guest ? 'siempre a la vista.' : 'en perspectiva.'}</em>
-          </h1>
-          <p className="workspace-lead">
-            {data.viewer.guest ? 'Seguí el avance, compartí tus ideas y elegí entre propuestas cuando llegue el momento. Todo desde este enlace.' : 'Fechas, responsables y decisiones a la vista. Lo que requiere atención aparece primero.'}
-          </p>
-          {data.viewer.guest && <div className="panel-client-actions"><Link className="workspace-primary" href={`/estudio/inspiracion?share=${encodeURIComponent(share)}`}>Compartir inspiración</Link><Link className="workspace-secondary" href={`/estudio/propuestas?share=${encodeURIComponent(share)}`}>Ver propuestas</Link></div>}
-        </div>
-        <div className="panel-hero-illustration" aria-hidden="true">
-          <div className="panel-blueprint">
-            <span />
-            <span />
-            <span />
-            <i />
-          </div>
-        </div>
-      </section>
+
       {data.viewer.guest ? <section className="panel-metrics client-metrics" aria-label="Resumen del proyecto"><div><span>ETAPA ACTUAL</span><strong>{stageLabels[data.project.stage] || 'Idea'}</strong><small>Estado del proyecto</small></div><div><span>AVANCE ESTIMADO</span><strong>{progress(data.project.id) === null ? '—' : `${progress(data.project.id)}%`}</strong><small>{progress(data.project.id) === null ? 'Próximamente' : 'Del trabajo total'}</small></div><div><span>ENTREGA PREVISTA</span><strong>{data.project.dueDate ? shortDate(data.project.dueDate) : 'A definir'}</strong><small>Fecha estimada</small></div></section> : <section className="panel-metrics" aria-label="Resumen del estudio">
         <div>
           <span>01 / PROYECTOS</span>

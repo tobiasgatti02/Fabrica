@@ -15,7 +15,7 @@ export default async function WorkspacePage({
   searchParams: Promise<{ project?: string; share?: string; invite?: string }>;
 }) {
   const { section } = await params;
-  if (!['panel', 'inspiracion', 'propuestas', 'equipo'].includes(section))
+  if (!['panel', 'inspiracion', 'equipo'].includes(section))
     notFound();
   const query = await searchParams;
   const user = await getFabricaUser();
