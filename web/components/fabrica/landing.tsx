@@ -63,7 +63,7 @@ export default function Landing() {
     <a className="skip-link" href="#interior" onClick={e => { e.preventDefault(); goTo(1); }}>Saltar recorrido e ir al interior</a>
     <header className="site-header">
       <a href="#vision" aria-label="Fabrica, volver al inicio" onClick={e => { e.preventDefault(); goTo(0); }}><Wordmark /></a>
-      <span className="header-caption">Un espacio para imaginar juntosssadadds.</span>
+      <span className="header-caption">Un espacio para imaginar juntos.</span>
       <nav aria-label="Navegación principal">
         <a className="desktop-nav" href="/estudio">El estudio</a>
         <a className="desktop-nav" href="#cimientos" onClick={e => { e.preventDefault(); goTo(.18); }}>El proceso</a>
