@@ -219,7 +219,7 @@ export default function Workspace({
               type="button"
               onClick={() => setProjectMenu((value) => !value)}
               aria-expanded={projectMenu}
-              disabled={!data || data.projects.length < 2}
+              disabled={!data || data.projects.length === 0}
             >
               <span>
                 <strong>{data?.project.name || 'Cargando proyecto'}</strong>

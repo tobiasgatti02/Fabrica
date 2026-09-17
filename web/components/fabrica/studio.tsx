@@ -1543,6 +1543,7 @@ export default function Studio({
     setDataLoading(true);
     try {
       const data = await refresh(id, '');
+      window.history.replaceState({}, '', `/estudio?project=${encodeURIComponent(id)}`);
       const available = (data.versions as StoredVersion[]).filter(
         (item) => item.published || accessMode === 'professional',
       );
@@ -1905,7 +1906,7 @@ export default function Studio({
   const activeProjectRecord = projects.find(
     (item) => item.id === activeProject,
   );
-  const activeProjectName = activeProjectRecord?.name || 'Casa Patio';
+  const activeProjectName = activeProjectRecord?.name || 'Cargando proyecto';
   const activeClient = clients.find(
     (client) => client.id === activeProjectRecord?.client,
   );
@@ -1925,8 +1926,7 @@ export default function Studio({
     projects: projects.filter((project) => project.client === client.id),
   }));
   const unassignedProjects = projects.filter((project) => !project.client);
-  const canSwitchProject =
-    professional || (!sharedToken && projects.length > 1);
+  const canSwitchProject = projects.length > 0;
 
   return (
     <main
@@ -1945,12 +1945,9 @@ export default function Studio({
             <button
               className="project-switcher"
               type="button"
-              onClick={() =>
-                canSwitchProject
-                  ? setProjectMenuOpen((value) => !value)
-                  : setAccountOpen(true)
-              }
-              aria-expanded={canSwitchProject ? projectMenuOpen : undefined}
+              onClick={() => setProjectMenuOpen((value) => !value)}
+              disabled={!canSwitchProject}
+              aria-expanded={projectMenuOpen}
             >
               <span>
                 <strong>{activeProjectName}</strong>
