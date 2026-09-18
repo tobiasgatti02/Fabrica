@@ -1,6 +1,5 @@
 'use client';
 
-import Link from 'next/link';
 import { Box, LayoutDashboard, Lightbulb, UsersRound } from 'lucide-react';
 import type { WorkspaceArea, WorkspacePermissions } from '@/features/workspace/client';
 
@@ -51,16 +50,15 @@ export function StudioAreaNav({
           const path =
             item.id === 'modelo' ? '/estudio' : `/estudio/${item.id}`;
           return (
-            <Link
+            <a
               key={item.id}
               data-tour={item.id}
               href={`${path}${query ? `?${query}` : ''}`}
               aria-current={item.id === area ? 'page' : undefined}
-              prefetch={item.id === 'modelo' ? false : undefined}
             >
               <Icon size={16} aria-hidden="true" />
               <span>{item.label}</span>
-            </Link>
+            </a>
           );
         })}
     </nav>

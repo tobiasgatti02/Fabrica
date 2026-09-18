@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
-import Link from 'next/link';
 import { Check, ChevronDown, UserRound } from 'lucide-react';
 
 export type HeaderProject = { id: string; name: string };
@@ -149,7 +148,7 @@ export function StudioHeader({
   return (
     <header className="studio-shared-header">
       <div className="studio-shared-header-leading">
-        <Link
+        <a
           href="/"
           className="studio-shared-brand"
           aria-label="Fabrica, volver al inicio"
@@ -157,7 +156,7 @@ export function StudioHeader({
           <span className="wordmark">
             fabrica<span aria-hidden="true">®</span>
           </span>
-        </Link>
+        </a>
         <span className="studio-shared-divider" aria-hidden="true" />
         {project}
       </div>
@@ -188,9 +187,9 @@ export function StudioAccount({
   );
   const label = 'Abrir perfil y configuración';
   return href ? (
-    <Link href={href} className="studio-account-control" aria-label={label}>
+    <a href={href} className="studio-account-control" aria-label={label}>
       {content}
-    </Link>
+    </a>
   ) : (
     <button
       type="button"
