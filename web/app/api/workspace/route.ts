@@ -39,7 +39,57 @@ const categories = [
 const taskStates = ['todo', 'doing', 'done'];
 const inspirationStates = ['idea', 'revisar', 'aprobada', 'descartada'];
 const proposalStates = ['draft', 'review', 'approved', 'changes'];
-const roles = ['architect', 'collaborator', 'viewer'];
+const roles = ['architect', 'collaborator', 'viewer', 'external'];
+const areaKeys = ['panel', 'inspiracion', 'modelo'] as const;
+type AreaKey = (typeof areaKeys)[number];
+type AreaPermission = 'none' | 'view' | 'edit';
+type AreaPermissions = Record<AreaKey, AreaPermission>;
+const allAreaPermissions: AreaPermissions = {
+  panel: 'edit',
+  inspiracion: 'edit',
+  modelo: 'edit',
+};
+const defaultPermissionsForRole = (role: string): AreaPermissions => ({
+  panel: role === 'viewer' || role === 'external' ? 'view' : 'edit',
+  inspiracion: role === 'viewer' || role === 'external' ? 'view' : 'edit',
+  modelo: role === 'architect' ? 'edit' : 'view',
+});
+const parsePermissions = (value: unknown, role = 'viewer'): AreaPermissions => {
+  const fallback = defaultPermissionsForRole(role);
+  if (typeof value !== 'string') return fallback;
+  try {
+    const parsed = JSON.parse(value) as Record<string, unknown>;
+    return Object.fromEntries(
+      areaKeys.map((key) => [
+        key,
+        parsed[key] === 'edit' ||
+        parsed[key] === 'view' ||
+        parsed[key] === 'none'
+          ? parsed[key]
+          : fallback[key],
+      ]),
+    ) as AreaPermissions;
+  } catch {
+    return fallback;
+  }
+};
+const permissionRank = (value: AreaPermission) =>
+  value === 'edit' ? 2 : value === 'view' ? 1 : 0;
+const combinePermissions = (
+  memberships: { permissions: unknown; role: string }[],
+) =>
+  Object.fromEntries(
+    areaKeys.map((key) => [
+      key,
+      memberships.reduce<AreaPermission>((best, membership) => {
+        const current = parsePermissions(
+          membership.permissions,
+          membership.role,
+        )[key];
+        return permissionRank(current) > permissionRank(best) ? current : best;
+      }, 'none'),
+    ]),
+  ) as AreaPermissions;
 
 const database = () => getDb(env.DATABASE_URL);
 const json = (value: unknown, status = 200) =>
@@ -141,10 +191,59 @@ async function context(request: Request) {
       projects: [project],
       accountOwner: false,
       canEdit: false,
+      permissions: { panel: 'view', inspiracion: 'view', modelo: 'view' },
       guest: true,
       userId: '',
       name: client?.name || 'Cliente invitado',
       role: 'client',
+      external: false,
+    };
+  }
+  const inviteToken = params.get('invite');
+  if (inviteToken) {
+    const [member] = await db
+      .select()
+      .from(studioTeamMembers)
+      .where(eq(studioTeamMembers.inviteHash, await sha256(inviteToken)))
+      .limit(1);
+    if (!member || member.role !== 'external' || member.inviteExpires < Date.now())
+      throw new Error('401');
+    const allProjects = await db
+      .select()
+      .from(studioProjects)
+      .where(eq(studioProjects.owner, member.owner))
+      .orderBy(asc(studioProjects.created));
+    const projects = member.project
+      ? allProjects.filter((item) => item.id === member.project)
+      : allProjects;
+    const requestedProject = params.get('project');
+    const project = projects.find((item) => item.id === requestedProject) ||
+      (requestedProject ? null : projects[0]);
+    if (!project) throw new Error('404');
+    if (!member.accepted) {
+      await db
+        .update(studioTeamMembers)
+        .set({ accepted: Date.now() })
+        .where(
+          and(
+            eq(studioTeamMembers.id, member.id),
+            isNull(studioTeamMembers.accepted),
+          ),
+        );
+    }
+    return {
+      project,
+      projects,
+      accountOwner: false,
+      canEdit: Object.values(parsePermissions(member.permissions, member.role)).some(
+        (permission) => permission === 'edit',
+      ),
+      permissions: parsePermissions(member.permissions, member.role),
+      guest: false,
+      external: true,
+      userId: '',
+      name: member.email,
+      role: 'external',
     };
   }
   const authenticated = await getFabricaUser(request);
@@ -165,7 +264,12 @@ async function context(request: Request) {
     .where(eq(studioProjects.owner, user.userId))
     .orderBy(asc(studioProjects.created));
   let role = 'owner';
-  let teamMemberships: { project: string | null; role: string }[] = [];
+  let teamMemberships: {
+    project: string | null;
+    role: string;
+    permissions: string;
+  }[] = [];
+  let permissions: AreaPermissions = allAreaPermissions;
   if (
     !projects.length ||
     (requestedProject && !projects.some((item) => item.id === requestedProject))
@@ -188,6 +292,7 @@ async function context(request: Request) {
       );
       if (accepted.length) {
         teamMemberships = accepted;
+        permissions = combinePermissions(accepted);
         const all = accepted.some((item) => !item.project);
         projects = await db
           .select()
@@ -231,13 +336,16 @@ async function context(request: Request) {
       : applicable.some((item) => item.role === 'collaborator')
         ? 'collaborator'
         : 'viewer';
+    permissions = combinePermissions(applicable);
   }
   return {
     project,
     projects,
     accountOwner: project.owner === user.userId,
-    canEdit: role !== 'viewer',
+    canEdit: Object.values(permissions).some((value) => value === 'edit'),
+    permissions,
     guest: false,
+    external: false,
     userId: user.userId,
     name: user.displayName,
     role,
@@ -250,6 +358,7 @@ export async function GET(request: Request) {
     const db = database();
     const params = new URL(request.url).searchParams;
     if (params.has('asset')) {
+      if (ctx.permissions.inspiracion === 'none') throw new Error('403');
       const [asset] = await db
         .select()
         .from(studioAssets)
@@ -308,8 +417,15 @@ export async function GET(request: Request) {
       .map((item) => item.client)
       .filter((id): id is string => Boolean(id));
     const view = params.get('view') || 'panel';
-    if (!['panel', 'inspiracion', 'propuestas', 'equipo'].includes(view))
+    if (!['panel', 'inspiracion', 'equipo'].includes(view))
       throw new Error('400');
+    if (
+      !ctx.guest &&
+      view !== 'equipo' &&
+      ctx.permissions[view as AreaKey] === 'none'
+    )
+      throw new Error('403');
+    if (ctx.external && view === 'equipo') throw new Error('403');
     const panel = view === 'panel';
     const inspirationView = view === 'inspiracion';
     const proposalsView = view === 'propuestas';
@@ -371,14 +487,16 @@ export async function GET(request: Request) {
             .from(studioAssets)
             .where(eq(studioAssets.project, ctx.project.id))
         : Promise.resolve([]),
-      !ctx.guest && (panel || teamView)
+      !ctx.guest && !ctx.external && (panel || teamView)
         ? db
             .select()
             .from(studioTeamMembers)
             .where(eq(studioTeamMembers.owner, ctx.project.owner))
             .orderBy(asc(studioTeamMembers.created))
         : Promise.resolve([]),
-      !ctx.guest && panel && (ctx.accountOwner || clientIds.length > 0)
+      // El selector global del encabezado agrupa proyectos por cliente. Debe
+      // recibir la misma cartera sin importar en qué área del estudio estemos.
+      !ctx.guest && !ctx.external && (ctx.accountOwner || clientIds.length > 0)
         ? db
             .select()
             .from(studioClients)
@@ -417,8 +535,10 @@ export async function GET(request: Request) {
         guest: ctx.guest,
         canEdit: ctx.canEdit,
         accountOwner: ctx.accountOwner,
+        permissions: ctx.permissions,
+        external: ctx.external,
       },
-      project: ctx.canEdit ? ctx.project : { ...ctx.project, share: undefined },
+      project: ctx.accountOwner ? ctx.project : { ...ctx.project, share: undefined },
       projects: ctx.projects.map((item) => ({ ...item, share: undefined })),
       tasks: ctx.guest ? [] : tasks,
       projectStats,
@@ -438,7 +558,10 @@ export async function GET(request: Request) {
             !item.project ||
             projectIds.includes(item.project),
         )
-        .map(({ inviteHash: _hash, ...item }) => item),
+        .map(({ inviteHash: _hash, permissions: rawPermissions, ...item }) => ({
+          ...item,
+          permissions: parsePermissions(rawPermissions, item.role),
+        })),
       clients: clients.map((item) => ({
         id: item.id,
         name: item.name,
@@ -458,16 +581,26 @@ export async function POST(request: Request) {
     const body = (await request.json()) as Record<string, unknown>;
     const db = database();
     if (body.action === 'accept-invite') {
-      const user = await getFabricaUser(request);
-      if (!user) throw new Error('401');
       const token = required(body.token, 200);
       const [invite] = await db
         .select()
         .from(studioTeamMembers)
         .where(eq(studioTeamMembers.inviteHash, await sha256(token)))
         .limit(1);
-      if (!invite || invite.accepted || invite.inviteExpires < Date.now())
+      if (!invite || invite.inviteExpires < Date.now())
         throw new Error('409');
+      if (invite.role === 'external') {
+        const [firstProject] = await db
+          .select({ id: studioProjects.id })
+          .from(studioProjects)
+          .where(eq(studioProjects.owner, invite.owner))
+          .orderBy(asc(studioProjects.created))
+          .limit(1);
+        return json({ ok: true, external: true, project: invite.project || firstProject?.id });
+      }
+      const user = await getFabricaUser(request);
+      if (!user) throw new Error('401');
+      if (invite.accepted) throw new Error('409');
       if (invite.email.toLowerCase() !== user.email.toLowerCase())
         throw new Error('403');
       await db
@@ -493,15 +626,42 @@ export async function POST(request: Request) {
     }
     const ctx = await context(request);
     const project = ctx.project;
-    const action = body.action;
+    const action = string(body.action);
+    const actionArea: Record<string, AreaKey> = {
+      'update-project': 'panel',
+      'save-task': 'panel',
+      'delete-task': 'panel',
+      'add-inspiration': 'inspiracion',
+      'update-inspiration': 'inspiracion',
+      'delete-inspiration': 'inspiracion',
+      'delete-asset': 'inspiracion',
+      'begin-asset': 'inspiracion',
+      'finish-asset': 'inspiracion',
+      'abort-asset': 'inspiracion',
+    };
+    const requestedArea = actionArea[action];
+    if (requestedArea && ctx.permissions[requestedArea] !== 'edit')
+      throw new Error('403');
+    if (
+      ctx.external &&
+      [
+        'proposal-feedback',
+        'create-proposal',
+        'add-option',
+        'set-proposal-status',
+        'delete-proposal',
+      ].includes(action)
+    )
+      throw new Error('403');
     if (action === 'add-inspiration') {
       const asset = string(body.asset);
       if (asset) await assetInProject(db, asset, project.id);
       const title = required(body.title, 160);
       const link = url(body.url);
       if (!asset && !link && !string(body.note)) throw new Error('400');
+      const id = crypto.randomUUID();
       await db.insert(studioInspiration).values({
-        id: crypto.randomUUID(),
+        id,
         project: project.id,
         title,
         note: string(body.note, 2000),
@@ -512,7 +672,7 @@ export async function POST(request: Request) {
         author: ctx.name,
         created: Date.now(),
       });
-      return json({ ok: true }, 201);
+      return json({ ok: true, id }, 201);
     }
     if (action === 'proposal-feedback') {
       const proposal = await proposalInProject(
@@ -861,13 +1021,15 @@ export async function POST(request: Request) {
         !ctx.projects.some((item) => item.id === scopedProject)
       )
         throw new Error('400');
+      const role = choice(body.role, roles);
       const token = randomToken();
       await db.insert(studioTeamMembers).values({
         id: crypto.randomUUID(),
         owner: ctx.userId,
         project: scopedProject || null,
         email,
-        role: choice(body.role, roles),
+        role,
+        permissions: JSON.stringify(defaultPermissionsForRole(role)),
         inviteHash: await sha256(token),
         inviteExpires: Date.now() + 30 * 86400_000,
         created: Date.now(),
@@ -892,7 +1054,10 @@ export async function POST(request: Request) {
           and(
             eq(studioTeamMembers.id, required(body.id)),
             eq(studioTeamMembers.owner, ctx.userId),
-            isNull(studioTeamMembers.accepted),
+            or(
+              isNull(studioTeamMembers.accepted),
+              eq(studioTeamMembers.role, 'external'),
+            ),
           ),
         )
         .limit(1);
@@ -906,6 +1071,37 @@ export async function POST(request: Request) {
         })
         .where(eq(studioTeamMembers.id, member.id));
       return json({ invite: token });
+    } else if (action === 'update-member-permissions') {
+      if (!ctx.accountOwner) throw new Error('403');
+      const id = required(body.id);
+      const raw = body.permissions;
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw))
+        throw new Error('400');
+      const permissions = Object.fromEntries(
+        areaKeys.map((key) => [
+          key,
+          choice((raw as Record<string, unknown>)[key], [
+            'none',
+            'view',
+            'edit',
+          ]),
+        ]),
+      );
+      const [member] = await db
+        .select({ id: studioTeamMembers.id })
+        .from(studioTeamMembers)
+        .where(
+          and(
+            eq(studioTeamMembers.id, id),
+            eq(studioTeamMembers.owner, ctx.userId),
+          ),
+        )
+        .limit(1);
+      if (!member) throw new Error('404');
+      await db
+        .update(studioTeamMembers)
+        .set({ permissions: JSON.stringify(permissions) })
+        .where(eq(studioTeamMembers.id, id));
     } else throw new Error('400');
     return json({ ok: true });
   } catch (error) {
@@ -917,7 +1113,8 @@ export async function PUT(request: Request) {
   try {
     if (!validRequestOrigin(request)) throw new Error('403');
     const ctx = await context(request);
-    if (!ctx.canEdit && !ctx.guest) throw new Error('403');
+    if (ctx.permissions.inspiracion !== 'edit' && !ctx.guest)
+      throw new Error('403');
     const db = database();
     const params = new URL(request.url).searchParams;
     const [upload] = await db

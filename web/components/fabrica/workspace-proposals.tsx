@@ -161,7 +161,7 @@ export default function Proposals({
             Renders, archivos y argumentos de cada opción quedan juntos. Cada
             respuesta conserva quién decidió y cuándo.
           </p>
-          {data.viewer.canEdit && (
+          {data.viewer.permissions.propuestas === 'edit' && (
             <button
               className="workspace-primary hero-action"
               onClick={() => setShowProposal(true)}
@@ -222,7 +222,7 @@ export default function Proposals({
                     <h3>{proposal.title}</h3>
                     {proposal.description && <p>{proposal.description}</p>}
                   </div>
-                  {data.viewer.canEdit && (
+                  {data.viewer.permissions.propuestas === 'edit' && (
                     <div className="proposal-actions">
                       <button
                         className="workspace-secondary"
@@ -359,7 +359,7 @@ export default function Proposals({
                       Sumá renders, PDFs o archivos del colaborador para
                       comparar opciones en un mismo lugar.
                     </p>
-                    {data.viewer.canEdit && (
+                    {data.viewer.permissions.propuestas === 'edit' && (
                       <button
                         className="workspace-primary"
                         onClick={() => setShowOption(true)}
@@ -458,7 +458,7 @@ export default function Proposals({
               Creá un tema, sumá dos o más alternativas y compartilo para
               recibir una respuesta clara.
             </p>
-            {data.viewer.canEdit && (
+            {data.viewer.permissions.propuestas === 'edit' && (
               <button
                 className="workspace-primary"
                 onClick={() => setShowProposal(true)}

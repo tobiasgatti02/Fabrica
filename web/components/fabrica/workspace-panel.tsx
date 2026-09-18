@@ -254,7 +254,7 @@ export default function Panel({
               {data.viewer.guest ? 'Seguimiento del proyecto' : clientNameFor(data.project.client)}
             </p>
           </div>
-          {data.viewer.canEdit && (
+          {data.viewer.permissions.panel === 'edit' && (
             <div className="panel-detail-actions">
               <button type="button" className="workspace-secondary" onClick={() => void copySummary()}><Copy size={15} /> Copiar resumen</button>
               <button
@@ -391,7 +391,7 @@ export default function Panel({
               <p className="workspace-eyebrow">TRABAJO EN CURSO</p>
               <h2>Próximos pasos</h2>
             </div>
-            {data.viewer.canEdit && (
+            {data.viewer.permissions.panel === 'edit' && (
               <button
                 className="workspace-primary"
                 onClick={() => { setTaskDraft(emptyTask); setShowTaskForm((value) => !value); }}
@@ -498,7 +498,7 @@ export default function Panel({
                     <button
                       className="panel-task-check"
                       type="button"
-                      disabled={!data.viewer.canEdit || busy}
+                      disabled={data.viewer.permissions.panel !== 'edit' || busy}
                       onClick={() =>
                         void setTaskStatus(
                           task,
@@ -539,10 +539,10 @@ export default function Panel({
                     >
                       <Clock3 size={14} /> {shortDate(task.dueDate)}
                     </span>
-                    {data.viewer.canEdit && (
+                    {data.viewer.permissions.panel === 'edit' && (
                       <button type="button" className="panel-task-delete" title="Editar tarea" aria-label={`Editar ${task.title}`} onClick={() => { setTaskDraft({ id: task.id, title: task.title, dueDate: task.dueDate || '', assignee: task.assignee || '', status: task.status }); setShowTaskForm(true); }}><Pencil size={15} /></button>
                     )}
-                    {data.viewer.canEdit && (
+                    {data.viewer.permissions.panel === 'edit' && (
                       <button
                         className="panel-task-delete"
                         type="button"

@@ -1,13 +1,10 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import Link from 'next/link';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import {
-  ArrowLeft,
   Check,
-  ChevronDown,
   CircleDot,
   Eye,
   EyeOff,
@@ -52,6 +49,17 @@ import {
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
+import { Input } from '@/components/ui/input';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription as AlertDialogDescriptionUi,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle as AlertDialogTitleUi,
+} from '@/components/ui/alert-dialog';
 import {
   Dialog,
   DialogContent,
@@ -79,8 +87,10 @@ import {
   extension,
   viewFormats,
 } from './model-import';
-import { Wordmark } from './landing';
 import { StudioAuthPanel } from './studio-auth-panel';
+import { StudioTourTrigger } from './studio-tour';
+import { StudioAreaNav } from './studio-area-nav';
+import { StudioAccount, StudioHeader, StudioProjectSwitcher } from './studio-header';
 import { advanceOrbitTarget } from './scene/navigation';
 
 type Stage = 0 | 1 | 2 | 3;
@@ -127,6 +137,195 @@ type Measurement = Omit<StoredMeasurement, 'startPoint' | 'endPoint'> & {
   startPoint: [number, number, number];
   endPoint: [number, number, number];
 };
+
+type Account = {
+  name: string;
+  email: string;
+  provider: 'chatgpt' | 'google' | 'fabrica';
+};
+
+function AccountSettings({
+  account,
+  onUpdated,
+}: {
+  account: Account;
+  onUpdated: (account: Account) => void;
+}) {
+  const [name, setName] = useState(account.name);
+  const [email, setEmail] = useState(account.email);
+  const [password, setPassword] = useState('');
+  const [confirmation, setConfirmation] = useState('');
+  const [message, setMessage] = useState('');
+  const [savingProfile, setSavingProfile] = useState(false);
+  const [savingPassword, setSavingPassword] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+
+  const request = async (body: Record<string, string>) => {
+    const response = await fetch('/api/account', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = (await response.json()) as {
+      error?: string;
+      name?: string;
+      email?: string;
+    };
+    if (!response.ok)
+      throw new Error(data.error || 'No pudimos completar la acción.');
+    return data;
+  };
+
+  return (
+    <section className="account-settings" aria-label="Configuración de cuenta">
+      <div className="account-settings-heading">
+        <h3>Configuración</h3>
+        <p>Actualizá los datos con los que accedés a Fabrica.</p>
+      </div>
+      <form
+        className="account-settings-card"
+        onSubmit={(event) => {
+          event.preventDefault();
+          setSavingProfile(true);
+          setMessage('');
+          void request({ action: 'update-profile', name, email })
+            .then((data) => {
+              onUpdated({
+                ...account,
+                name: data.name || name,
+                email: data.email || email,
+              });
+              setMessage('Datos actualizados.');
+            })
+            .catch((error: Error) => setMessage(error.message))
+            .finally(() => setSavingProfile(false));
+        }}
+      >
+        <strong>Datos personales</strong>
+        <label>
+          Nombre
+          <Input
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            autoComplete="name"
+            required
+          />
+        </label>
+        <label>
+          Email
+          <Input
+            type="email"
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+            autoComplete="email"
+            required
+          />
+        </label>
+        <Button type="submit" variant="outline" disabled={savingProfile}>
+          {savingProfile ? 'Guardando…' : 'Guardar cambios'}
+        </Button>
+      </form>
+      {account.provider === 'fabrica' ? (
+        <form
+          className="account-settings-card"
+          onSubmit={(event) => {
+            event.preventDefault();
+            setSavingPassword(true);
+            setMessage('');
+            void request({ action: 'update-password', password })
+              .then(() => {
+                setPassword('');
+                setMessage('Contraseña actualizada.');
+              })
+              .catch((error: Error) => setMessage(error.message))
+              .finally(() => setSavingPassword(false));
+          }}
+        >
+          <strong>Contraseña</strong>
+          <p>
+            Usá 10 o más caracteres, mayúsculas, minúsculas y un número o
+            símbolo.
+          </p>
+          <label>
+            Nueva contraseña
+            <Input
+              type="password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              autoComplete="new-password"
+              required
+            />
+          </label>
+          <Button type="submit" variant="outline" disabled={savingPassword}>
+            {savingPassword ? 'Actualizando…' : 'Cambiar contraseña'}
+          </Button>
+        </form>
+      ) : account.provider === 'google' ? (
+        <div className="account-settings-card account-provider-note">
+          <strong>Contraseña</strong>
+          <p>Tu cuenta usa Google. La contraseña se administra desde allí.</p>
+        </div>
+      ) : null}
+      <div className="account-settings-card account-danger">
+        <strong>Eliminar cuenta</strong>
+        <p>
+          Se eliminarán definitivamente tus proyectos, archivos y datos
+          asociados. Esta acción no se puede deshacer.
+        </p>
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => setDeleteOpen(true)}
+        >
+          Eliminar cuenta
+        </Button>
+      </div>
+      {message && (
+        <p className="account-settings-message" role="status">
+          {message}
+        </p>
+      )}
+      <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitleUi>¿Eliminar tu cuenta?</AlertDialogTitleUi>
+            <AlertDialogDescriptionUi>
+              Esta acción elimina todo el contenido de tu cuenta de forma
+              permanente. Escribí <strong>ELIMINAR</strong> para confirmarla.
+            </AlertDialogDescriptionUi>
+          </AlertDialogHeader>
+          <Input
+            value={confirmation}
+            onChange={(event) => setConfirmation(event.target.value)}
+            placeholder="ELIMINAR"
+            aria-label="Confirmación para eliminar cuenta"
+          />
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              type="button"
+              variant="destructive"
+              disabled={confirmation !== 'ELIMINAR' || deleting}
+              onClick={() => {
+                setDeleting(true);
+                void request({ action: 'delete-account', confirmation })
+                  .then(() => window.location.assign('/'))
+                  .catch((error: Error) => {
+                    setMessage(error.message);
+                    setDeleteOpen(false);
+                  })
+                  .finally(() => setDeleting(false));
+              }}
+            >
+              {deleting ? 'Eliminando…' : 'Eliminar definitivamente'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </section>
+  );
+}
 
 const stages = [
   { number: '01', label: 'Idea', detail: 'Volumen y orientación' },
@@ -1055,30 +1254,30 @@ export default function Studio({
   initialSharedToken,
   initialProject,
   initialAuthError,
+  initialAccountOpen = false,
 }: {
-  user: {
-    name: string;
-    email: string;
-    provider: 'chatgpt' | 'google' | 'fabrica';
-  } | null;
+  user: Account | null;
   localPreview: boolean;
   initialSharedToken: string;
   initialProject: string;
   initialAuthError?: string;
+  initialAccountOpen?: boolean;
 }) {
-  const signedIn = Boolean(user);
+  const [account, setAccount] = useState(user);
+  const signedIn = Boolean(account);
   const accessMode = initialSharedToken
     ? 'customer'
     : signedIn || localPreview
       ? 'professional'
       : null;
-  const [accountOpen, setAccountOpen] = useState(!accessMode);
+  const [accountOpen, setAccountOpen] = useState(
+    !accessMode || initialAccountOpen,
+  );
   const [importOpen, setImportOpen] = useState(false);
   const [versions, setVersions] = useState<StoredVersion[]>([]);
   const [clients, setClients] = useState<StoredClient[]>([]);
   const [projects, setProjects] = useState<StoredProject[]>([]);
   const [activeProject, setActiveProject] = useState(initialProject);
-  const [projectMenuOpen, setProjectMenuOpen] = useState(false);
   const [projectDialogOpen, setProjectDialogOpen] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
   const [newProjectClient, setNewProjectClient] = useState('');
@@ -1538,12 +1737,15 @@ export default function Studio({
     }
   };
   const switchProject = async (id: string) => {
-    setProjectMenuOpen(false);
     if (id === activeProject) return;
     setDataLoading(true);
     try {
       const data = await refresh(id, '');
-      window.history.replaceState({}, '', `/estudio?project=${encodeURIComponent(id)}`);
+      window.history.replaceState(
+        {},
+        '',
+        `/estudio?project=${encodeURIComponent(id)}`,
+      );
       const available = (data.versions as StoredVersion[]).filter(
         (item) => item.published || accessMode === 'professional',
       );
@@ -1926,7 +2128,6 @@ export default function Studio({
     projects: projects.filter((project) => project.client === client.id),
   }));
   const unassignedProjects = projects.filter((project) => !project.client);
-  const canSwitchProject = projects.length > 0;
 
   return (
     <main
@@ -1934,220 +2135,123 @@ export default function Studio({
         inspector ? 'inspector-is-open' : ''
       }`}
     >
-      <header className="studio-header">
-        <div className="studio-brand">
-          <a href="/" className="studio-back" aria-label="Volver a la landing">
-            <ArrowLeft size={17} />
-            <Wordmark />
-          </a>
-          <span className="header-divider" />
-          <div className="project-switcher-wrap">
-            <button
-              className="project-switcher"
-              type="button"
-              onClick={() => setProjectMenuOpen((value) => !value)}
-              disabled={!canSwitchProject}
-              aria-expanded={projectMenuOpen}
-            >
-              <span>
-                <strong>{activeProjectName}</strong>
-                <small>
-                  {professional
-                    ? `${activeClient?.name || 'Sin cliente asignado'} · ${
-                        activeVersion?.name || 'Sin entregas'
-                      }`
-                    : `${activeVersion?.name || 'Proyecto de muestra'} · Revisión del cliente`}
-                </small>
-              </span>
-              <ChevronDown size={16} />
-            </button>
-            {canSwitchProject && projectMenuOpen && (
-              <div className="project-menu" role="menu">
-                <p className="project-menu-title">
-                  {professional ? 'Clientes y proyectos' : 'Mis revisiones'}{' '}
-                  <span>{professional ? clients.length : projects.length}</span>
-                </p>
-                <div className="project-menu-scroll">
-                  {professional ? (
-                    <>
-                      {clientGroups.map((client) => (
-                        <div className="client-project-group" key={client.id}>
-                          <div className="client-project-heading">
-                            <span>{client.name.slice(0, 2).toUpperCase()}</span>
-                            <strong>{client.name}</strong>
-                            <small>{client.projects.length}</small>
-                          </div>
-                          {client.projects.length ? (
-                            client.projects.map((item) => (
-                              <button
-                                type="button"
-                                role="menuitem"
-                                key={item.id}
-                                className={
-                                  item.id === activeProject ? 'active' : ''
-                                }
-                                onClick={() => void switchProject(item.id)}
-                              >
-                                <span>{item.name}</span>
-                                {item.id === activeProject && <Check />}
-                              </button>
-                            ))
-                          ) : (
-                            <span className="client-without-projects">
-                              Sin proyectos todavía
-                            </span>
-                          )}
-                        </div>
-                      ))}
-                      {!!unassignedProjects.length && (
-                        <div className="client-project-group unassigned">
-                          <div className="client-project-heading">
-                            <span>—</span>
-                            <strong>Sin cliente asignado</strong>
-                            <small>{unassignedProjects.length}</small>
-                          </div>
-                          {unassignedProjects.map((item) => (
-                            <button
-                              type="button"
-                              role="menuitem"
-                              key={item.id}
-                              className={
-                                item.id === activeProject ? 'active' : ''
-                              }
-                              onClick={() => void switchProject(item.id)}
-                            >
-                              <span>{item.name}</span>
-                              {item.id === activeProject && <Check />}
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                      {!clients.length && !unassignedProjects.length && (
-                        <p className="project-menu-empty">
-                          Agregá un cliente para empezar a organizar tu cartera.
-                        </p>
-                      )}
-                    </>
-                  ) : (
-                    <div className="client-project-group customer-projects">
-                      {projects.map((item) => (
-                        <button
-                          type="button"
-                          role="menuitem"
-                          key={item.id}
-                          className={item.id === activeProject ? 'active' : ''}
-                          onClick={() => void switchProject(item.id)}
-                        >
-                          <span>{item.name}</span>
-                          {item.id === activeProject && <Check />}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-                {professional && accountOwner && (
-                  <div className="project-menu-actions">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setProjectMenuOpen(false);
-                        setClientsDialogOpen(true);
-                      }}
-                    >
-                      <UsersRound /> Ver clientes
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setProjectMenuOpen(false);
-                        setNewProjectClient(activeClient?.id || '');
-                        setProjectDialogOpen(true);
-                      }}
-                    >
-                      <FolderPlus /> Nuevo proyecto
-                    </button>
-                  </div>
-                )}
-              </div>
+      <StudioHeader
+        project={
+          <StudioProjectSwitcher
+            name={activeProjectName}
+            description={
+              professional
+                ? `${activeClient?.name || 'Sin cliente asignado'} · ${activeVersion?.name || 'Sin entregas'}`
+                : `${activeVersion?.name || 'Proyecto de muestra'} · Revisión del cliente`
+            }
+            selectedId={activeProject}
+            projects={projects}
+            groups={
+              professional
+                ? [
+                    ...clientGroups,
+                    ...(unassignedProjects.length
+                      ? [{
+                          id: 'unassigned',
+                          name: 'Sin cliente asignado',
+                          projects: unassignedProjects,
+                          unassigned: true,
+                        }]
+                      : []),
+                  ]
+                : []
+            }
+            menuTitle={professional ? 'Contactos y proyectos' : 'Mis revisiones'}
+            menuCount={professional ? clients.length : projects.length}
+            emptyMessage="Agregá un cliente para empezar a organizar tu cartera."
+            onSelect={(id) => void switchProject(id)}
+            actions={professional && accountOwner ? (close) => (
+              <>
+                <button type="button" onClick={() => {
+                  close();
+                  setClientsDialogOpen(true);
+                }}>
+                  <UsersRound /> Ver clientes
+                </button>
+                <button type="button" onClick={() => {
+                  close();
+                  setNewProjectClient(activeClient?.id || '');
+                  setProjectDialogOpen(true);
+                }}>
+                  <FolderPlus /> Nuevo proyecto
+                </button>
+              </>
+            ) : undefined}
+          />
+        }
+        actions={
+          <>
+            {professional && accountOwner && !dataLoading && !storageError && activeProject && (
+              <StudioTourTrigger />
             )}
-          </div>
-        </div>
-        <div className="studio-header-actions">
-          
-          {professional && canEdit && (
-            <>
+            {professional && canEdit && (
+              <>
+                <Button
+                  variant="outline"
+                  className="studio-new-version"
+                  data-tour="versions"
+                  disabled={!activeVersion}
+                  onClick={() => {
+                    setVersionName(
+                      activeVersion
+                        ? `Iteración ${String(activeVersion.sequence + 1).padStart(2, '0')}`
+                        : '',
+                    );
+                    setVersionDialogOpen(true);
+                  }}
+                >
+                  <CopyPlus /> Nueva versión
+                </Button>
+                <Button
+                  className="studio-import"
+                  data-tour="import"
+                  onClick={() => setImportOpen(true)}
+                >
+                  <Upload /> Importar modelo
+                </Button>
+              </>
+            )}
+            {professional ? (
               <Button
                 variant="outline"
-                className="studio-new-version"
-                disabled={!activeVersion}
-                onClick={() => {
-                  setVersionName(
-                    activeVersion
-                      ? `Iteración ${String(activeVersion.sequence + 1).padStart(2, '0')}`
-                      : '',
-                  );
-                  setVersionDialogOpen(true);
-                }}
+                className="studio-share"
+                onClick={() => setShareDialogOpen(true)}
+                disabled={!activeProject}
               >
-                <CopyPlus /> Nueva versión
+                <Share2 /> Compartir
               </Button>
-              <Button
-                className="studio-import"
-                onClick={() => setImportOpen(true)}
-              >
-                <Upload /> Importar modelo
-              </Button>
-            </>
-          )}
-          {professional ? (
-            <Button
-              variant="outline"
-              className="studio-share"
-              onClick={() => setShareDialogOpen(true)}
-              disabled={!activeProject}
-            >
-              <Share2 /> Compartir
-            </Button>
-          ) : (
-            !signedIn &&
-            sharedToken && (
-              <Button
-                variant="outline"
-                className="studio-share guest-account"
-                onClick={() => setAccountOpen(true)}
-              >
-                <UserPlus /> Crear cuenta
-              </Button>
-            )
-          )}
-          <button
-            className="profile-button"
-            type="button"
-            aria-label="Ver cuenta"
-            title={user?.name || viewerName}
+            ) : (
+              !signedIn && sharedToken && (
+                <Button
+                  variant="outline"
+                  className="studio-share guest-account"
+                  onClick={() => setAccountOpen(true)}
+                >
+                  <UserPlus /> Crear cuenta
+                </Button>
+              )
+            )}
+          </>
+        }
+        account={
+          <StudioAccount
+            name={account?.name || viewerName}
             onClick={() => setAccountOpen(true)}
-          >
-            <UserRound size={17} />
-          </button>
-        </div>
-      </header>
+          />
+        }
+      />
 
-      <nav className="studio-area-nav" aria-label="Áreas del estudio">
-        {[
-          ['panel', 'Panel'],
-          ['inspiracion', 'Inspiración'],
-          ['modelo', 'Modelo 3D'],
-          ['equipo', 'Equipo'],
-        ].filter(([id]) => id !== 'equipo' || professional).map(([id, label]) => (
-          <Link
-            key={id}
-            href={id === 'modelo'
-              ? `/estudio${sharedToken ? `?share=${encodeURIComponent(sharedToken)}` : activeProject ? `?project=${encodeURIComponent(activeProject)}` : ''}`
-              : `/estudio/${id}${sharedToken ? `?share=${encodeURIComponent(sharedToken)}` : activeProject ? `?project=${encodeURIComponent(activeProject)}` : ''}`}
-            aria-current={id === 'modelo' ? 'page' : undefined}
-          >{label}</Link>
-        ))}
-      </nav>
+      <StudioAreaNav
+        area="modelo"
+        project={activeProject}
+        share={sharedToken}
+        showTeam={accessMode === 'professional'}
+      />
 
       <section className="studio-workspace">
         <div className="workspace-topbar">
@@ -2165,9 +2269,11 @@ export default function Studio({
               onCheckedChange={() => {
                 if (selectedObject) toggleObject(selectedObject.key);
               }}
-              aria-label={selectedObject
-                ? `${selectedVisible ? 'Ocultar' : 'Mostrar'} ${selectedObject.label}`
-                : 'Seleccioná un asset para ocultarlo'}
+              aria-label={
+                selectedObject
+                  ? `${selectedVisible ? 'Ocultar' : 'Mostrar'} ${selectedObject.label}`
+                  : 'Seleccioná un asset para ocultarlo'
+              }
               title={selectedVisible ? 'Ocultar asset' : 'Mostrar asset'}
             />
           </div>
@@ -2216,6 +2322,7 @@ export default function Studio({
 
           <button
             className="mobile-panel-toggle"
+            data-tour="comments"
             type="button"
             onClick={() => {
               setInspector(null);
@@ -3027,9 +3134,12 @@ export default function Studio({
           </div>
           <div className="version-status">
             {activeVersion && professional && (
-              <Button variant="ghost" disabled={saving}
+              <Button
+                variant="ghost"
+                disabled={saving}
                 onClick={() => setDeleteVersionOpen(true)}
-                aria-label={`Eliminar versión ${activeVersion.name}`}>
+                aria-label={`Eliminar versión ${activeVersion.name}`}
+              >
                 <Trash2 size={16} /> Eliminar
               </Button>
             )}
@@ -3063,9 +3173,12 @@ export default function Studio({
         </footer>
       </section>
 
-      <Dialog open={deleteVersionOpen} onOpenChange={(open) => {
-        if (!saving) setDeleteVersionOpen(open);
-      }}>
+      <Dialog
+        open={deleteVersionOpen}
+        onOpenChange={(open) => {
+          if (!saving) setDeleteVersionOpen(open);
+        }}
+      >
         <DialogContent>
           <DialogTitle>Eliminar versión</DialogTitle>
           <DialogDescription>
@@ -3073,16 +3186,32 @@ export default function Studio({
             medidas y planos. Las demás versiones y los comentarios generales
             del proyecto se conservarán. Esta acción no se puede deshacer.
           </DialogDescription>
-          <Button variant="outline" disabled={saving}
-            onClick={() => setDeleteVersionOpen(false)}>Cancelar</Button>
-          <Button variant="destructive" disabled={saving || !activeVersion}
+          <Button
+            variant="outline"
+            disabled={saving}
+            onClick={() => setDeleteVersionOpen(false)}
+          >
+            Cancelar
+          </Button>
+          <Button
+            variant="destructive"
+            disabled={saving || !activeVersion}
             onClick={async () => {
               if (!activeVersion || saving) return;
               setSaving(true);
               try {
-                await studioRequest({ action: 'delete-version', id: version }, '', activeProject);
-                changeVersion(versions.filter((item) => item.id !== version).at(-1)?.id || '');
-                setVersions((items) => items.filter((item) => item.id !== version));
+                await studioRequest(
+                  { action: 'delete-version', id: version },
+                  '',
+                  activeProject,
+                );
+                changeVersion(
+                  versions.filter((item) => item.id !== version).at(-1)?.id ||
+                    '',
+                );
+                setVersions((items) =>
+                  items.filter((item) => item.id !== version),
+                );
                 setDeleteVersionOpen(false);
                 await refresh(activeProject);
                 showToast('Versión eliminada');
@@ -3091,7 +3220,8 @@ export default function Studio({
               } finally {
                 setSaving(false);
               }
-            }}>
+            }}
+          >
             {saving ? 'Eliminando…' : 'Eliminar versión'}
           </Button>
         </DialogContent>
@@ -3136,14 +3266,14 @@ export default function Studio({
           </DialogDescription>
           {signedIn || localPreview ? (
             <>
-              {user && (
+              {account && (
                 <div className="account-summary">
-                  <span>{user.name.slice(0, 2).toUpperCase()}</span>
+                  <span>{account.name.slice(0, 2).toUpperCase()}</span>
                   <div>
-                    <strong>{user.name}</strong>
-                    <small>{user.email}</small>
+                    <strong>{account.name}</strong>
+                    <small>{account.email}</small>
                   </div>
-                  {user.provider !== 'chatgpt' ? (
+                  {account.provider !== 'chatgpt' ? (
                     <button type="button" onClick={() => void logout()}>
                       <LogOut /> Salir
                     </button>
@@ -3156,6 +3286,9 @@ export default function Studio({
                     </a>
                   )}
                 </div>
+              )}
+              {account && account.provider !== 'chatgpt' && !localPreview && (
+                <AccountSettings account={account} onUpdated={setAccount} />
               )}
               <p className="role-note">
                 {localPreview

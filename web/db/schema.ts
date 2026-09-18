@@ -91,6 +91,9 @@ export const studioTeamMembers = pgTable(
     user: text('user'),
     name: text('name').notNull().default(''),
     role: text('role').notNull().default('architect'),
+    permissions: text('permissions')
+      .notNull()
+      .default('{"panel":"edit","inspiracion":"edit","modelo":"edit"}'),
     inviteHash: text('invite_hash').notNull().unique(),
     inviteExpires: bigint('invite_expires', { mode: 'number' }).notNull(),
     created: bigint('created', { mode: 'number' }).notNull(),

@@ -85,10 +85,14 @@ export type WorkspaceMember = {
   user: string | null;
   name: string;
   role: string;
+  permissions: WorkspacePermissions;
   inviteExpires: number;
   created: number;
   accepted: number | null;
 };
+export type WorkspaceArea = 'panel' | 'inspiracion' | 'modelo';
+export type WorkspacePermission = 'none' | 'view' | 'edit';
+export type WorkspacePermissions = Record<WorkspaceArea, WorkspacePermission>;
 export type WorkspaceData = {
   viewer: {
     name: string;
@@ -96,6 +100,8 @@ export type WorkspaceData = {
     guest: boolean;
     canEdit: boolean;
     accountOwner: boolean;
+    external: boolean;
+    permissions: WorkspacePermissions;
   };
   project: WorkspaceProject;
   projects: WorkspaceProject[];
@@ -110,10 +116,11 @@ export type WorkspaceData = {
   clients: { id: string; name: string; email: string }[];
 };
 
-export const workspaceQuery = (project = '', share = '') => {
+export const workspaceQuery = (project = '', share = '', invite = '') => {
   const params = new URLSearchParams();
   if (project && !share) params.set('project', project);
   if (share) params.set('share', share);
+  if (invite) params.set('invite', invite);
   return params.toString();
 };
 
@@ -125,8 +132,9 @@ export async function workspaceRequest<
   share: string,
   signal?: AbortSignal,
   section?: WorkspaceSection,
+  invite = '',
 ): Promise<T> {
-  const params = new URLSearchParams(workspaceQuery(project, share));
+  const params = new URLSearchParams(workspaceQuery(project, share, invite));
   if (!body && section) params.set('view', section);
   const query = params.toString();
   const response = await fetch(`/api/workspace${query ? `?${query}` : ''}`, {
@@ -141,8 +149,13 @@ export async function workspaceRequest<
   return result;
 }
 
-export const assetUrl = (id: string, project: string, share: string) => {
-  const query = workspaceQuery(project, share);
+export const assetUrl = (
+  id: string,
+  project: string,
+  share: string,
+  invite = '',
+) => {
+  const query = workspaceQuery(project, share, invite);
   return `/api/workspace?asset=${encodeURIComponent(id)}${query ? `&${query}` : ''}`;
 };
 
@@ -186,6 +199,7 @@ export async function uploadWorkspaceAsset(
   file: File,
   project: string,
   share: string,
+  invite = '',
 ) {
   const { id, partSize } = await workspaceRequest<{
     id: string;
@@ -199,8 +213,11 @@ export async function uploadWorkspaceAsset(
     },
     project,
     share,
+    undefined,
+    undefined,
+    invite,
   );
-  const query = workspaceQuery(project, share);
+  const query = workspaceQuery(project, share, invite);
   const parts: { partNumber: number; etag: string }[] = [];
   let nextPart = 1;
   const total = Math.ceil(file.size / partSize);
@@ -234,12 +251,20 @@ export async function uploadWorkspaceAsset(
       { action: 'finish-asset', id, parts },
       project,
       share,
+      undefined,
+      undefined,
+      invite,
     );
     return complete.asset;
   } catch (error) {
-    await workspaceRequest({ action: 'abort-asset', id }, project, share).catch(
-      () => {},
-    );
+    await workspaceRequest(
+      { action: 'abort-asset', id },
+      project,
+      share,
+      undefined,
+      undefined,
+      invite,
+    ).catch(() => {});
     throw error;
   }
 }

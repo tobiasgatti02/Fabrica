@@ -1,0 +1,1 @@
+ALTER TABLE "studio_team_members" ADD COLUMN "permissions" text DEFAULT '{"panel":"edit","inspiracion":"edit","modelo":"edit"}' NOT NULL;

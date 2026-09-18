@@ -2,14 +2,12 @@
 
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
+import { StudioTourTrigger } from './studio-tour';
+import { StudioAreaNav } from './studio-area-nav';
+import { StudioAccount, StudioHeader, StudioProjectSwitcher } from './studio-header';
 import { useCallback, useEffect, useState } from 'react';
 import {
   ArrowLeft,
-  Box,
-  ChevronDown,
-  LayoutDashboard,
-  Lightbulb,
-  UsersRound,
 } from 'lucide-react';
 import {
   workspaceRequest,
@@ -34,6 +32,7 @@ export type WorkspaceViewProps = {
   data: WorkspaceData;
   project: string;
   share: string;
+  invite: string;
   busy: boolean;
   run: <T = { ok: boolean; invite?: string }>(
     body: Record<string, unknown>,
@@ -41,13 +40,6 @@ export type WorkspaceViewProps = {
   notify: (message: string) => void;
   openProject: (id: string) => void;
 };
-
-const navigation = [
-  { id: 'panel', label: 'Panel', icon: LayoutDashboard },
-  { id: 'inspiracion', label: 'Inspiración', icon: Lightbulb },
-  { id: 'modelo', label: 'Modelo 3D', icon: Box },
-  { id: 'equipo', label: 'Equipo', icon: UsersRound },
-] as const;
 
 function ViewSkeleton() {
   return (
@@ -78,8 +70,8 @@ export default function Workspace({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [toast, setToast] = useState('');
-  const [projectMenu, setProjectMenu] = useState(false);
-  const [invitePending, setInvitePending] = useState(Boolean(invite));
+  const [invitePending, setInvitePending] = useState(Boolean(invite && authenticated));
+  const [requiresAuth, setRequiresAuth] = useState(false);
   const notify = (message: string) => {
     setToast(message);
     window.setTimeout(() => setToast(''), 4200);
@@ -92,39 +84,59 @@ export default function Workspace({
         share,
         signal,
         section,
+        invite,
       );
       setData(next);
       setError('');
       return next;
     },
-    [share, section],
+    [share, section, invite],
   );
 
   useEffect(() => {
-    if (invitePending && authenticated) return;
-    if (!authenticated && !share) return;
+    if (invitePending) return;
+    if (!authenticated && !share && !invite) return;
     const controller = new AbortController();
-    void workspaceRequest<WorkspaceData>(undefined, project, share, controller.signal, section)
+    void workspaceRequest<WorkspaceData>(
+      undefined,
+      project,
+      share,
+      controller.signal,
+      section,
+      invite,
+    )
       .then((next) => {
-        if (!controller.signal.aborted) { setData(next); setError(''); }
+        if (!controller.signal.aborted) {
+          setData(next);
+          setError('');
+        }
       })
       .catch((requestError) => {
-        if (!controller.signal.aborted)
+        if (!controller.signal.aborted) {
           setError((requestError as Error).message);
+          if (!authenticated && invite) setRequiresAuth(true);
+        }
       })
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [project, share, authenticated, invitePending, section]);
+  }, [project, share, invite, authenticated, invitePending, section]);
 
   useEffect(() => {
     if (!invitePending || !authenticated) return;
-    void workspaceRequest({ action: 'accept-invite', token: invite }, '', '')
-      .then((result) => {
-        const accepted = result as { project?: string | null };
+    void workspaceRequest<{ project?: string | null; external?: boolean }>(
+      { action: 'accept-invite', token: invite },
+      '',
+      '',
+    )
+      .then((accepted) => {
         setInvitePending(false);
         if (accepted.project) setProject(accepted.project);
+        if (accepted.external) {
+          notify('Accediste con el enlace externo.');
+          return;
+        }
         notify('Te sumaste al equipo. Ya podés trabajar en el proyecto.');
         window.history.replaceState(
           {},
@@ -139,14 +151,13 @@ export default function Workspace({
   }, [invitePending, authenticated, invite]);
 
   const openProject = (id: string) => {
-    setProjectMenu(false);
     if (id === data?.project.id) return;
     setLoading(true);
     setProject(id);
     window.history.replaceState(
       {},
       '',
-      `/estudio/${section}?project=${encodeURIComponent(id)}`,
+      `/estudio/${section}?${new URLSearchParams(invite ? { invite } : { project: id }).toString()}`,
     );
   };
   const run: WorkspaceViewProps['run'] = async <T,>(
@@ -155,7 +166,7 @@ export default function Workspace({
     setBusy(true);
     try {
       const selected = data?.project.id || project;
-      const result = await workspaceRequest<T>(body, selected, share);
+      const result = await workspaceRequest<T>(body, selected, share, undefined, undefined, invite);
       await refresh(selected);
       return result;
     } catch (requestError) {
@@ -166,7 +177,7 @@ export default function Workspace({
     }
   };
 
-  if (!authenticated && !share) {
+  if (!authenticated && !share && (!invite || requiresAuth)) {
     return (
       <main className="workspace-auth-page">
         <div className="workspace-auth-card">
@@ -190,88 +201,83 @@ export default function Workspace({
     );
   }
 
-  const query = share
-    ? `share=${encodeURIComponent(share)}`
-    : `project=${encodeURIComponent(data?.project.id || project)}`;
   const props = data
-    ? { data, project: data.project.id, share, busy, run, notify, openProject }
+    ? { data, project: data.project.id, share, invite, busy, run, notify, openProject }
     : null;
+  const clientGroups =
+    data?.clients.map((client) => ({
+      ...client,
+      projects: data.projects.filter((item) => item.client === client.id),
+    })) || [];
+  const unassignedProjects =
+    data?.projects.filter((item) => !item.client) || [];
   return (
-    <main className="workspace-app">
-      <header className="workspace-header">
-        <div className="workspace-header-left">
-          <Link
-            href="/"
-            className="workspace-logo"
-            aria-label="F4brica, volver al inicio"
-          >
-            f4brica<span>estudio</span>
-          </Link>
-          <span className="workspace-header-rule" />
-          <div className="workspace-project-wrap">
-            <button
-              className="workspace-project-button"
-              type="button"
-              onClick={() => setProjectMenu((value) => !value)}
-              aria-expanded={projectMenu}
-              disabled={!data || data.projects.length === 0}
-            >
-              <span>
-                <strong>{data?.project.name || 'Cargando proyecto'}</strong>
-                <small>
-                  {data?.viewer.guest
-                    ? 'Vista del cliente'
-                    : `${data?.projects.length || 0} ${(data?.projects.length || 0) === 1 ? 'proyecto' : 'proyectos'} en el estudio`}
-                </small>
-              </span>
-              <ChevronDown size={15} />
-            </button>
-            {projectMenu && data && (
-              <div className="workspace-project-menu">
-                {data.projects.map((item) => (
-                  <button
-                    key={item.id}
-                    type="button"
-                    className={item.id === data.project.id ? 'active' : ''}
-                    onClick={() => openProject(item.id)}
-                  >
-                    {item.name}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-        <div className="workspace-account">
-          <span className="workspace-avatar">
-            {data?.viewer.name?.slice(0, 1).toUpperCase() || 'F'}
-          </span>
-          <span>{data?.viewer.name || 'Estudio'}</span>
-        </div>
-      </header>
-      <nav className="workspace-nav" aria-label="Áreas del estudio">
-        {navigation
-          .filter((item) => !share || item.id !== 'equipo')
-          .map((item) => {
-            const Icon = item.icon;
-            const href =
-              item.id === 'modelo'
-                ? `/estudio?${query}`
-                : `/estudio/${item.id}?${query}`;
-            return (
-              <Link
-                key={item.id}
-                href={href}
-                prefetch={item.id === 'modelo' ? false : undefined}
-                aria-current={item.id === section ? 'page' : undefined}
-                className={item.id === section ? 'active' : ''}
-              >
-                <Icon size={16} />
-                <span>{item.label}</span>
-              </Link>
-            );
-          })}
-      </nav>
+    <main
+      className={
+        'workspace-app' +
+        (section === 'inspiracion' ? ' inspiration-workspace' : '')
+      }
+    >
+      <StudioHeader
+        project={
+          <StudioProjectSwitcher
+            name={data?.project.name || 'Cargando…'}
+            description={
+              data
+                ? data.viewer.guest
+                  ? 'Vista del cliente'
+                  : `${data.projects.length} ${data.projects.length === 1 ? 'proyecto' : 'proyectos'} en el estudio`
+                : ''
+            }
+            selectedId={data?.project.id || project}
+            projects={data?.projects || []}
+            groups={
+              data && !data.viewer.guest
+                ? [
+                    ...clientGroups,
+                    ...(unassignedProjects.length
+                      ? [{
+                          id: 'unassigned',
+                          name: 'Sin contacto asignado',
+                          projects: unassignedProjects,
+                          unassigned: true,
+                        }]
+                      : []),
+                  ]
+                : []
+            }
+            menuTitle={data?.viewer.guest ? 'Proyecto' : 'Contactos y proyectos'}
+            menuCount={
+              data?.viewer.guest ? data.projects.length : data?.clients.length || 0
+            }
+            onSelect={openProject}
+          />
+        }
+        actions={
+          data && !loading && !error && !share && data.viewer.accountOwner
+            ? <StudioTourTrigger />
+            : null
+        }
+        account={
+          <StudioAccount
+            name={data?.viewer.name || 'Estudio'}
+            href={
+              data?.viewer.external
+                ? undefined
+                : `/estudio?${new URLSearchParams({ ...(data?.project.id ? { project: data.project.id } : {}), account: '1' }).toString()}`
+            }
+          />
+        }
+      />
+      <StudioAreaNav
+        area={section}
+        project={project || data?.project.id || ''}
+        share={share}
+        invite={invite}
+        showTeam={!share && !data?.viewer.external}
+        showModel={!data?.viewer.external}
+        permissions={data?.viewer.permissions}
+      />
       {error && (
         <div className="workspace-error" role="alert">
           <span>{error}</span>
@@ -305,11 +311,7 @@ export default function Workspace({
           <Link href="/estudio">Ir al estudio</Link>
         </div>
       )}
-      {toast && (
-        <output className="workspace-toast">
-          {toast}
-        </output>
-      )}
+      {toast && <output className="workspace-toast">{toast}</output>}
       <footer className="workspace-footer">
         <Link href="/">
           <ArrowLeft size={14} /> Volver a F4brica

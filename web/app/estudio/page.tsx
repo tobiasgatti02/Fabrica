@@ -6,7 +6,12 @@ export const dynamic = 'force-dynamic';
 export default async function StudioPage({
   searchParams,
 }: {
-  searchParams?: Promise<{ share?: string; project?: string; auth_error?: string }>;
+  searchParams?: Promise<{
+    share?: string;
+    project?: string;
+    auth_error?: string;
+    account?: string;
+  }>;
 }) {
   const params = await searchParams;
   const sharedToken = params?.share || '';
@@ -25,6 +30,7 @@ export default async function StudioPage({
       initialSharedToken={sharedToken}
       initialProject={params?.project || ''}
       initialAuthError={authError}
+      initialAccountOpen={params?.account === '1'}
       user={
         user
           ? {

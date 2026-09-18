@@ -66,7 +66,6 @@ export default function Landing() {
       <span className="header-caption">Un espacio para imaginar juntos.</span>
       <nav aria-label="Navegación principal">
         <a className="desktop-nav" href="/estudio">El estudio</a>
-        <a className="desktop-nav" href="#cimientos" onClick={e => { e.preventDefault(); goTo(.18); }}>El proceso</a>
         <a className="header-cta" href="/estudio">Entrar al estudio <ArrowUpRight size={17} /></a>
       </nav>
     </header>
@@ -96,9 +95,7 @@ export default function Landing() {
           <div className="interior-content"><p className="eyebrow">De imaginarlo a habitarlo</p><h2>Las ideas merecen<br /><em>ser habitadas.</em></h2><p>Presentá un espacio. Compartí cada mirada.<br />Dale lugar a la próxima versión.</p>
             <div className="interior-actions"><a className="solid-link" href="/estudio">Abrir Casa Patio <ArrowUpRight size={18} /></a><a href="#para-estudios">Conocer Fabrica <ArrowDown size={17} /></a></div>
           </div>
-          <div className="interior-hotspots" aria-label="Detalles del estar"><button aria-expanded={detail === 'luz'} onClick={() => setDetail(detail === 'luz' ? null : 'luz')}><Plus size={16} /> La luz</button><button aria-expanded={detail === 'materiales'} onClick={() => setDetail(detail === 'materiales' ? null : 'materiales')}><Plus size={16} /> Los materiales</button>
-            {detail && <div className="detail-card"><button aria-label="Cerrar detalle" onClick={() => setDetail(null)}><X size={16} /></button><strong>{detail === 'luz' ? 'Que el exterior entre.' : 'Materiales que acercan.'}</strong><p>{detail === 'luz' ? 'Una abertura de piso a techo conecta el estar con el patio y deja que la luz recorra el ambiente.' : 'La madera aporta calidez. La piedra, textura. Los tonos minerales mantienen el espacio sereno.'}</p></div>}
-          </div>
+
         </footer>
 
         <div className={`journey-bottom ${inside ? 'at-end' : ''}`}>
@@ -106,13 +103,11 @@ export default function Landing() {
           <nav className="chapter-nav" aria-label="Etapas de construcción">
             {chapters.map((c, i) => <button key={c.id} aria-current={chapter === i ? 'step' : undefined} aria-label={`${c.number}: ${c.label}`} onClick={() => goTo(i === 6 ? 1 : c.at + .025)}><span className="chapter-line"><i style={{ transform: `scaleX(${clamp((progress - c.at) / ((chapters[i + 1]?.at ?? 1) - c.at))})` }} /></span><span className="chapter-number">{c.number}</span><span className="chapter-name">{c.label}</span></button>)}
           </nav>
-          <div className="journey-foot"><span>Arquitectura · Interiores · Nuevas perspectivas</span><button onClick={() => goTo(inside ? 0 : 1)}>{inside ? <><ArrowLeft size={13} /> Volver al comienzo</> : <>Saltar al interior <ArrowUpRight size={13} /></>}</button></div>
         </div>
       </div>
     </section>
     <section id="para-estudios" className="studio-section">
       <div className="studio-heading"><p className="eyebrow">Fabrica / Para tu estudio</p><h2>El proyecto cambia.<br /><em>La conversación sigue.</em></h2></div>
-      <div className="studio-description"><p>Un estudio virtual para presentar arquitectura, recorrer versiones y conversar sobre el espacio. Del primer volumen al último detalle.</p><div className="studio-benefits"><div><span>01</span><h3>Ver el espacio</h3><p>Una perspectiva compartida para entender el proyecto.</p></div><div><span>02</span><h3>Sumar miradas</h3><p>Las conversaciones, en el lugar al que pertenecen.</p></div><div><span>03</span><h3>Seguir la idea</h3><p>Cada versión, con su contexto y sus decisiones.</p></div></div><a className="studio-open" href="/estudio">Abrir el estudio <ArrowUpRight size={18} /></a><p className="demo-note">Casa Patio es una experiencia de demostración con datos guardados en este dispositivo.</p></div>
       <div className="studio-footer"><Wordmark /><span>Diseñar es imaginar. Construirlo, conversar.</span><a href="/estudio">Entrar al proyecto <ArrowUpRight size={16} /></a></div>
     </section>
   </main>;

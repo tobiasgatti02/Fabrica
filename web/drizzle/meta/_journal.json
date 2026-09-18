@@ -71,6 +71,13 @@
       "when": 1789613499974,
       "tag": "0009_square_bug",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1789738946586,
+      "tag": "0010_area_permissions",
+      "breakpoints": true
     }
   ]
 }
