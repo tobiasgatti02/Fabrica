@@ -110,7 +110,9 @@ export const studioTasks = pgTable(
   'studio_tasks',
   {
     id: text('id').primaryKey(),
-    project: text('project').notNull().references(() => studioProjects.id),
+    project: text('project')
+      .notNull()
+      .references(() => studioProjects.id),
     title: text('title').notNull(),
     status: text('status').notNull().default('todo'),
     dueDate: text('due_date'),
@@ -120,11 +122,35 @@ export const studioTasks = pgTable(
   (table) => [index('studio_tasks_project').on(table.project)],
 );
 
+/**
+ * Deliberately small cost plan: Fabrica tracks design decisions and their
+ * project impact, rather than attempting to be the accounting system.
+ */
+export const studioBudgetItems = pgTable(
+  'studio_budget_items',
+  {
+    id: text('id').primaryKey(),
+    project: text('project')
+      .notNull()
+      .references(() => studioProjects.id),
+    title: text('title').notNull(),
+    category: text('category').notNull().default('General'),
+    planned: bigint('planned', { mode: 'number' }).notNull().default(0),
+    committed: bigint('committed', { mode: 'number' }).notNull().default(0),
+    status: text('status').notNull().default('estimated'),
+    clientVisible: integer('client_visible').notNull().default(1),
+    created: bigint('created', { mode: 'number' }).notNull(),
+  },
+  (table) => [index('studio_budget_items_project').on(table.project)],
+);
+
 export const studioAssets = pgTable(
   'studio_assets',
   {
     id: text('id').primaryKey(),
-    project: text('project').notNull().references(() => studioProjects.id),
+    project: text('project')
+      .notNull()
+      .references(() => studioProjects.id),
     key: text('key').notNull().unique(),
     name: text('name').notNull(),
     mime: text('mime').notNull(),
@@ -136,7 +162,9 @@ export const studioAssets = pgTable(
 
 export const studioAssetUploads = pgTable('studio_asset_uploads', {
   id: text('id').primaryKey(),
-  project: text('project').notNull().references(() => studioProjects.id),
+  project: text('project')
+    .notNull()
+    .references(() => studioProjects.id),
   key: text('key').notNull(),
   uploadId: text('upload_id').notNull(),
   name: text('name').notNull(),
@@ -149,7 +177,9 @@ export const studioInspiration = pgTable(
   'studio_inspiration',
   {
     id: text('id').primaryKey(),
-    project: text('project').notNull().references(() => studioProjects.id),
+    project: text('project')
+      .notNull()
+      .references(() => studioProjects.id),
     title: text('title').notNull(),
     note: text('note').notNull().default(''),
     url: text('url').notNull().default(''),
@@ -166,7 +196,9 @@ export const studioProposals = pgTable(
   'studio_proposals',
   {
     id: text('id').primaryKey(),
-    project: text('project').notNull().references(() => studioProjects.id),
+    project: text('project')
+      .notNull()
+      .references(() => studioProjects.id),
     title: text('title').notNull(),
     description: text('description').notNull().default(''),
     status: text('status').notNull().default('draft'),
@@ -180,7 +212,9 @@ export const studioProposalOptions = pgTable(
   'studio_proposal_options',
   {
     id: text('id').primaryKey(),
-    proposal: text('proposal').notNull().references(() => studioProposals.id),
+    proposal: text('proposal')
+      .notNull()
+      .references(() => studioProposals.id),
     title: text('title').notNull(),
     description: text('description').notNull().default(''),
     asset: text('asset').references(() => studioAssets.id),
@@ -197,7 +231,9 @@ export const studioProposalFeedback = pgTable(
   'studio_proposal_feedback',
   {
     id: text('id').primaryKey(),
-    proposal: text('proposal').notNull().references(() => studioProposals.id),
+    proposal: text('proposal')
+      .notNull()
+      .references(() => studioProposals.id),
     option: text('option').references(() => studioProposalOptions.id),
     author: text('author').notNull(),
     kind: text('kind').notNull().default('comment'),

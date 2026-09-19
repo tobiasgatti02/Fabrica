@@ -78,6 +78,13 @@
       "when": 1789738946586,
       "tag": "0010_area_permissions",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1789856550161,
+      "tag": "0011_naive_rocket_racer",
+      "breakpoints": true
     }
   ]
 }

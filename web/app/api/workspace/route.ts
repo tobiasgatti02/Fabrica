@@ -7,6 +7,7 @@ import { createStarterProject } from '@/features/studio/server/seed';
 import {
   studioAssets,
   studioAssetUploads,
+  studioBudgetItems,
   studioClients,
   studioInspiration,
   studioProjects,
@@ -37,6 +38,7 @@ const categories = [
   'colores',
 ];
 const taskStates = ['todo', 'doing', 'done'];
+const budgetStates = ['estimated', 'quoted', 'approved', 'contracted', 'paid'];
 const inspirationStates = ['idea', 'revisar', 'aprobada', 'descartada'];
 const proposalStates = ['draft', 'review', 'approved', 'changes'];
 const roles = ['architect', 'collaborator', 'viewer', 'external'];
@@ -122,6 +124,12 @@ const date = (value: unknown) => {
     throw new Error('400');
   return value;
 };
+const money = (value: unknown) => {
+  const result = Number(value);
+  if (!Number.isSafeInteger(result) || result < 0 || result > 9_000_000_000_000)
+    throw new Error('400');
+  return result;
+};
 const url = (value: unknown) => {
   const raw = string(value, 2000);
   if (!raw) return '';
@@ -206,7 +214,11 @@ async function context(request: Request) {
       .from(studioTeamMembers)
       .where(eq(studioTeamMembers.inviteHash, await sha256(inviteToken)))
       .limit(1);
-    if (!member || member.role !== 'external' || member.inviteExpires < Date.now())
+    if (
+      !member ||
+      member.role !== 'external' ||
+      member.inviteExpires < Date.now()
+    )
       throw new Error('401');
     const allProjects = await db
       .select()
@@ -217,7 +229,8 @@ async function context(request: Request) {
       ? allProjects.filter((item) => item.id === member.project)
       : allProjects;
     const requestedProject = params.get('project');
-    const project = projects.find((item) => item.id === requestedProject) ||
+    const project =
+      projects.find((item) => item.id === requestedProject) ||
       (requestedProject ? null : projects[0]);
     if (!project) throw new Error('404');
     if (!member.accepted) {
@@ -235,9 +248,9 @@ async function context(request: Request) {
       project,
       projects,
       accountOwner: false,
-      canEdit: Object.values(parsePermissions(member.permissions, member.role)).some(
-        (permission) => permission === 'edit',
-      ),
+      canEdit: Object.values(
+        parsePermissions(member.permissions, member.role),
+      ).some((permission) => permission === 'edit'),
       permissions: parsePermissions(member.permissions, member.role),
       guest: false,
       external: true,
@@ -439,6 +452,7 @@ export async function GET(request: Request) {
       assets,
       members,
       clients,
+      budgetItems,
     ] = await Promise.all([
       panel
         ? db
@@ -509,6 +523,20 @@ export async function GET(request: Request) {
                   ),
             )
         : Promise.resolve([]),
+      panel
+        ? db
+            .select()
+            .from(studioBudgetItems)
+            .where(
+              ctx.guest
+                ? and(
+                    eq(studioBudgetItems.project, ctx.project.id),
+                    eq(studioBudgetItems.clientVisible, 1),
+                  )
+                : eq(studioBudgetItems.project, ctx.project.id),
+            )
+            .orderBy(asc(studioBudgetItems.created))
+        : Promise.resolve([]),
     ]);
     const visibleProposals = ctx.guest
       ? allProposals.filter((item) => item.status !== 'draft')
@@ -538,9 +566,12 @@ export async function GET(request: Request) {
         permissions: ctx.permissions,
         external: ctx.external,
       },
-      project: ctx.accountOwner ? ctx.project : { ...ctx.project, share: undefined },
+      project: ctx.accountOwner
+        ? ctx.project
+        : { ...ctx.project, share: undefined },
       projects: ctx.projects.map((item) => ({ ...item, share: undefined })),
       tasks: ctx.guest ? [] : tasks,
+      budgetItems,
       projectStats,
       inspiration,
       proposals: visibleProposals,
@@ -587,8 +618,7 @@ export async function POST(request: Request) {
         .from(studioTeamMembers)
         .where(eq(studioTeamMembers.inviteHash, await sha256(token)))
         .limit(1);
-      if (!invite || invite.inviteExpires < Date.now())
-        throw new Error('409');
+      if (!invite || invite.inviteExpires < Date.now()) throw new Error('409');
       if (invite.role === 'external') {
         const [firstProject] = await db
           .select({ id: studioProjects.id })
@@ -596,7 +626,11 @@ export async function POST(request: Request) {
           .where(eq(studioProjects.owner, invite.owner))
           .orderBy(asc(studioProjects.created))
           .limit(1);
-        return json({ ok: true, external: true, project: invite.project || firstProject?.id });
+        return json({
+          ok: true,
+          external: true,
+          project: invite.project || firstProject?.id,
+        });
       }
       const user = await getFabricaUser(request);
       if (!user) throw new Error('401');
@@ -631,6 +665,8 @@ export async function POST(request: Request) {
       'update-project': 'panel',
       'save-task': 'panel',
       'delete-task': 'panel',
+      'save-budget-item': 'panel',
+      'delete-budget-item': 'panel',
       'add-inspiration': 'inspiracion',
       'update-inspiration': 'inspiracion',
       'delete-inspiration': 'inspiracion',
@@ -815,6 +851,49 @@ export async function POST(request: Request) {
           and(
             eq(studioTasks.id, required(body.id)),
             eq(studioTasks.project, project.id),
+          ),
+        );
+    } else if (action === 'save-budget-item') {
+      const id = string(body.id);
+      const values = {
+        title: required(body.title, 160),
+        category: string(body.category, 80) || 'General',
+        planned: money(body.planned),
+        committed: money(body.committed),
+        status: choice(body.status || 'estimated', budgetStates),
+        clientVisible: body.clientVisible === false ? 0 : 1,
+      };
+      if (id) {
+        const [existing] = await db
+          .select({ id: studioBudgetItems.id })
+          .from(studioBudgetItems)
+          .where(
+            and(
+              eq(studioBudgetItems.id, id),
+              eq(studioBudgetItems.project, project.id),
+            ),
+          )
+          .limit(1);
+        if (!existing) throw new Error('404');
+        await db
+          .update(studioBudgetItems)
+          .set(values)
+          .where(eq(studioBudgetItems.id, id));
+      } else {
+        await db.insert(studioBudgetItems).values({
+          id: crypto.randomUUID(),
+          project: project.id,
+          ...values,
+          created: Date.now(),
+        });
+      }
+    } else if (action === 'delete-budget-item') {
+      await db
+        .delete(studioBudgetItems)
+        .where(
+          and(
+            eq(studioBudgetItems.id, required(body.id)),
+            eq(studioBudgetItems.project, project.id),
           ),
         );
     } else if (action === 'update-inspiration') {

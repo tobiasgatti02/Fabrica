@@ -27,6 +27,17 @@ export type WorkspaceTask = {
   assignee: string | null;
   created: number;
 };
+export type WorkspaceBudgetItem = {
+  id: string;
+  project: string;
+  title: string;
+  category: string;
+  planned: number;
+  committed: number;
+  status: string;
+  clientVisible: number;
+  created: number;
+};
 export type WorkspaceInspiration = {
   id: string;
   project: string;
@@ -107,6 +118,7 @@ export type WorkspaceData = {
   projects: WorkspaceProject[];
   projectStats: Record<string, { total: number; done: number }>;
   tasks: WorkspaceTask[];
+  budgetItems: WorkspaceBudgetItem[];
   inspiration: WorkspaceInspiration[];
   proposals: WorkspaceProposal[];
   options: WorkspaceOption[];
