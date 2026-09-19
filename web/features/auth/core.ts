@@ -1,6 +1,6 @@
 export const SESSION_COOKIE = 'fabrica_session';
 export const SESSION_DURATION_SECONDS = 30 * 24 * 60 * 60;
-export const PASSWORD_HASH_ITERATIONS = 210_000;
+export const PASSWORD_HASH_ITERATIONS = 100_000;
 
 export type AuthAction = 'login' | 'register' | 'logout';
 

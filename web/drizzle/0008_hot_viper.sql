@@ -1,0 +1,1 @@
+ALTER TABLE "studio_projects" ADD COLUMN "progress" integer;

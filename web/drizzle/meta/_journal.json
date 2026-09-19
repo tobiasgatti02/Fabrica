@@ -50,6 +50,41 @@
       "when": 1789338013584,
       "tag": "0006_strong_venom",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1789611606578,
+      "tag": "0007_smooth_blonde_phantom",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1789612821761,
+      "tag": "0008_hot_viper",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1789613499974,
+      "tag": "0009_square_bug",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1789738946586,
+      "tag": "0010_area_permissions",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1789856550161,
+      "tag": "0011_naive_rocket_racer",
+      "breakpoints": true
     }
   ]
 }

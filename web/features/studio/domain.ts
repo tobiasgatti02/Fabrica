@@ -99,6 +99,7 @@ export type StudioResponse = {
   shareEnabled: boolean;
   shareExpires: number;
   owner: boolean;
+  accountOwner?: boolean;
   viewer: {
     name: string;
     guest: boolean;

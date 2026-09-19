@@ -10,9 +10,11 @@ type AuthMode = 'login' | 'register';
 export function StudioAuthPanel({
   sharedToken,
   initialError,
+  returnTo: returnToOverride,
 }: {
   sharedToken: string;
   initialError?: string;
+  returnTo?: string;
 }) {
   const [mode, setMode] = useState<AuthMode>(
     sharedToken ? 'register' : 'login',
@@ -29,9 +31,9 @@ export function StudioAuthPanel({
     checks.length &&
     [checks.letters, checks.number, checks.symbol].filter(Boolean).length >= 2;
   const passwordsMatch = confirmation.length > 0 && password === confirmation;
-  const returnTo = sharedToken
+  const returnTo = returnToOverride || (sharedToken
     ? `/estudio?share=${encodeURIComponent(sharedToken)}`
-    : '/estudio';
+    : '/estudio');
   const googleHref = `/api/auth/google?return_to=${encodeURIComponent(returnTo)}`;
 
   const changeMode = (next: AuthMode) => {

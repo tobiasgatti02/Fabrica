@@ -39,7 +39,8 @@ export function ImportDialog({
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState('');
-  const [project, setProject] = useState(activeProject);
+  const [selectedProject, setSelectedProject] = useState('');
+  const project = selectedProject || activeProject;
   const cancelled = useRef(false);
   const currentUpload = useRef<string | null>(null);
   const pick = (list: File[]) => {
@@ -198,7 +199,7 @@ export function ImportDialog({
               <select
                 value={project}
                 disabled={busy}
-                onChange={(event) => setProject(event.target.value)}
+                onChange={(event) => setSelectedProject(event.target.value)}
               >
                 {projects.map((item) => (
                   <option key={item.id} value={item.id}>
