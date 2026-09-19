@@ -724,7 +724,6 @@ export default function Inspiration({
       <section className="workspace-section inspiration-board-section">
         <div className="workspace-section-head inspiration-board-head">
           <div>
-            <p className="workspace-eyebrow">INSPIRACIÓN COMPARTIDA</p>
             <h2>El lienzo del proyecto</h2>
             <p className="workspace-muted">
               Copiá una imagen, hacé clic en el lienzo y pegala con Ctrl / ⌘ V.

@@ -383,6 +383,7 @@ function HouseScene({
   view,
   selection,
   onSelect,
+  onClearSelection,
   onMeasure,
   hiddenObjects,
   referencePoints,
@@ -410,6 +411,7 @@ function HouseScene({
   view: string;
   selection: SurfaceSelection | null;
   onSelect: (selection: SurfaceSelection) => void;
+  onClearSelection: () => void;
   onMeasure: (selection: SurfaceSelection) => void;
   hiddenObjects: string[];
   referencePoints: ReferencePoint[];
@@ -427,6 +429,7 @@ function HouseScene({
     view,
     selection,
     onSelect,
+    onClearSelection,
     onMeasure,
     hiddenObjects,
     referencePoints,
@@ -452,6 +455,7 @@ function HouseScene({
       view,
       selection,
       onSelect,
+      onClearSelection,
       onMeasure,
       hiddenObjects,
       referencePoints,
@@ -472,6 +476,7 @@ function HouseScene({
     view,
     selection,
     onSelect,
+    onClearSelection,
     onMeasure,
     hiddenObjects,
     referencePoints,
@@ -857,7 +862,10 @@ function HouseScene({
       )
         return;
       const hit = pickSurface(event);
-      if (!hit) return;
+      if (!hit) {
+        if (state.current.selection) state.current.onClearSelection();
+        return;
+      }
       const root = state.current.imported || model;
       const local = root.worldToLocal(hit.point.clone());
       const next: SurfaceSelection = {
@@ -2356,6 +2364,7 @@ export default function Studio({
                 view={view}
                 selection={selection}
                 onSelect={selectSurface}
+                onClearSelection={() => setSelection(null)}
                 onMeasure={selectMeasurePoint}
                 hiddenObjects={hiddenObjects}
                 referencePoints={referencePoints}

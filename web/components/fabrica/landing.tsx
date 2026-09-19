@@ -65,7 +65,6 @@ export default function Landing() {
       <a href="#vision" aria-label="Fabrica, volver al inicio" onClick={e => { e.preventDefault(); goTo(0); }}><Wordmark /></a>
       <span className="header-caption">Un espacio para imaginar juntos.</span>
       <nav aria-label="Navegación principal">
-        <a className="desktop-nav" href="/estudio">El estudio</a>
         <a className="header-cta" href="/estudio">Entrar al estudio <ArrowUpRight size={17} /></a>
       </nav>
     </header>
