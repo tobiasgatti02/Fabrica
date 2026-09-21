@@ -4,16 +4,19 @@ import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { StudioTourTrigger } from './studio-tour';
 import { StudioAreaNav } from './studio-area-nav';
-import { StudioAccount, StudioHeader, StudioProjectSwitcher } from './studio-header';
-import { useCallback, useEffect, useState } from 'react';
 import {
-  ArrowLeft,
-} from 'lucide-react';
+  StudioAccount,
+  StudioHeader,
+  StudioProjectSwitcher,
+} from './studio-header';
+import { useCallback, useEffect, useState } from 'react';
+import { ArrowLeft } from 'lucide-react';
 import {
   workspaceRequest,
   type WorkspaceData,
   type WorkspaceSection,
 } from '@/features/workspace/client';
+import { showErrorToast, showToast } from '@/lib/notifications';
 
 const Panel = dynamic(() => import('./workspace-panel'), {
   loading: () => <ViewSkeleton />,
@@ -69,13 +72,11 @@ export default function Workspace({
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [toast, setToast] = useState('');
-  const [invitePending, setInvitePending] = useState(Boolean(invite && authenticated));
+  const [invitePending, setInvitePending] = useState(
+    Boolean(invite && authenticated),
+  );
   const [requiresAuth, setRequiresAuth] = useState(false);
-  const notify = (message: string) => {
-    setToast(message);
-    window.setTimeout(() => setToast(''), 4200);
-  };
+  const notify = (message: string) => showToast(message);
   const refresh = useCallback(
     async (selected: string, signal?: AbortSignal) => {
       const next = await workspaceRequest<WorkspaceData>(
@@ -166,11 +167,18 @@ export default function Workspace({
     setBusy(true);
     try {
       const selected = data?.project.id || project;
-      const result = await workspaceRequest<T>(body, selected, share, undefined, undefined, invite);
+      const result = await workspaceRequest<T>(
+        body,
+        selected,
+        share,
+        undefined,
+        undefined,
+        invite,
+      );
       await refresh(selected);
       return result;
     } catch (requestError) {
-      notify((requestError as Error).message);
+      showErrorToast((requestError as Error).message);
       throw requestError;
     } finally {
       setBusy(false);
@@ -202,7 +210,16 @@ export default function Workspace({
   }
 
   const props = data
-    ? { data, project: data.project.id, share, invite, busy, run, notify, openProject }
+    ? {
+        data,
+        project: data.project.id,
+        share,
+        invite,
+        busy,
+        run,
+        notify,
+        openProject,
+      }
     : null;
   const clientGroups =
     data?.clients.map((client) => ({
@@ -236,27 +253,33 @@ export default function Workspace({
                 ? [
                     ...clientGroups,
                     ...(unassignedProjects.length
-                      ? [{
-                          id: 'unassigned',
-                          name: 'Sin contacto asignado',
-                          projects: unassignedProjects,
-                          unassigned: true,
-                        }]
+                      ? [
+                          {
+                            id: 'unassigned',
+                            name: 'Sin contacto asignado',
+                            projects: unassignedProjects,
+                            unassigned: true,
+                          },
+                        ]
                       : []),
                   ]
                 : []
             }
-            menuTitle={data?.viewer.guest ? 'Proyecto' : 'Contactos y proyectos'}
+            menuTitle={
+              data?.viewer.guest ? 'Proyecto' : 'Contactos y proyectos'
+            }
             menuCount={
-              data?.viewer.guest ? data.projects.length : data?.clients.length || 0
+              data?.viewer.guest
+                ? data.projects.length
+                : data?.clients.length || 0
             }
             onSelect={openProject}
           />
         }
         actions={
-          data && !loading && !error && !share && data.viewer.accountOwner
-            ? <StudioTourTrigger />
-            : null
+          data && !loading && !error && !share && data.viewer.accountOwner ? (
+            <StudioTourTrigger />
+          ) : null
         }
         account={
           <StudioAccount
@@ -311,7 +334,6 @@ export default function Workspace({
           <Link href="/estudio">Ir al estudio</Link>
         </div>
       )}
-      {toast && <output className="workspace-toast">{toast}</output>}
       <footer className="workspace-footer">
         <Link href="/">
           <ArrowLeft size={14} /> Volver a F4brica

@@ -223,18 +223,6 @@
 .workspace-empty a {
   text-decoration: underline;
 }
-.workspace-toast {
-  position: fixed;
-  right: 24px;
-  bottom: 24px;
-  z-index: 100;
-  background: #304331;
-  color: #fff;
-  padding: 15px 19px;
-  box-shadow: 0 12px 35px #26302936;
-  font-size: 13px;
-  max-width: 360px;
-}
 .workspace-footer {
   max-width: 1510px;
   margin: auto;
@@ -1019,10 +1007,11 @@
 }
 .inspiration-workspace .inspiration-page {
   width: 100%;
+  max-width: none;
+  margin: 0;
   flex: 1;
   min-height: 0;
-  padding-top: 20px;
-  padding-bottom: 12px;
+  padding: 12px clamp(12px, 1.6vw, 28px) 8px;
   display: flex;
   flex-direction: column;
 }
@@ -1108,8 +1097,64 @@
 .free-canvas.hand-tool {
   cursor: grab;
 }
+.free-canvas.shape-tool {
+  cursor: crosshair;
+}
+.free-canvas.draw-tool {
+  cursor:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 28 28'%3E%3Cpath d='M5 23l3-7L19 5l4 4L12 20l-7 3z' fill='%23566b55' stroke='%23fffdf7' stroke-width='2' stroke-linejoin='round'/%3E%3Cpath d='M18 6l4 4' stroke='%23fffdf7' stroke-width='1.5'/%3E%3C/svg%3E")
+      3 25,
+    crosshair;
+}
+.free-canvas.draw-tool.is-dragging,
+.free-canvas.draw-tool .inspiration-board-card,
+.free-canvas.draw-tool .inspiration-board-card * {
+  cursor:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 28 28'%3E%3Cpath d='M5 23l3-7L19 5l4 4L12 20l-7 3z' fill='%23566b55' stroke='%23fffdf7' stroke-width='2' stroke-linejoin='round'/%3E%3Cpath d='M18 6l4 4' stroke='%23fffdf7' stroke-width='1.5'/%3E%3C/svg%3E")
+      3 25,
+    crosshair !important;
+  user-select: none !important;
+}
+.free-canvas.erase-tool {
+  cursor:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 28 28'%3E%3Cpath d='M7 18L16 7l7 7-9 9H7a4 4 0 0 1 0-5z' fill='%23e9eee4' stroke='%23566b55' stroke-width='2' stroke-linejoin='round'/%3E%3Cpath d='M5 23h18' stroke='%23c65f57' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E")
+      5 23,
+    cell;
+}
+.free-canvas.erase-tool .inspiration-board-card,
+.free-canvas.erase-tool .inspiration-board-card * {
+  cursor:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='28' viewBox='0 0 28 28'%3E%3Cpath d='M7 18L16 7l7 7-9 9H7a4 4 0 0 1 0-5z' fill='%23e9eee4' stroke='%23566b55' stroke-width='2' stroke-linejoin='round'/%3E%3Cpath d='M5 23h18' stroke='%23c65f57' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E")
+      5 23,
+    cell !important;
+  user-select: none !important;
+}
 .free-canvas.is-dragging {
   cursor: grabbing;
+}
+.inspiration-context-menu {
+  position: fixed;
+  z-index: 30;
+  min-width: 176px;
+  padding: 5px;
+  border: 1px solid #d7d0c2;
+  border-radius: 9px;
+  background: #fffdf7;
+  box-shadow: 0 8px 22px #5349352e;
+}
+.inspiration-context-menu button {
+  display: block;
+  width: 100%;
+  padding: 9px 11px;
+  border-radius: 5px;
+  color: #3f493d;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: left;
+}
+.inspiration-context-menu button:hover,
+.inspiration-context-menu button:focus-visible {
+  background: #e7ebdf;
 }
 .inspiration-world {
   position: absolute;
@@ -1119,6 +1164,30 @@
 }
 .inspiration-world > * {
   pointer-events: auto;
+}
+.inspiration-canvas-marks {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 0;
+  overflow: visible;
+  pointer-events: none !important;
+}
+.inspiration-canvas-marks + .inspiration-board-card {
+  z-index: 1;
+}
+.inspiration-alignment-guide {
+  stroke: #c65f57;
+  stroke-width: 1;
+  stroke-dasharray: 6 5;
+  vector-effect: non-scaling-stroke;
+}
+.inspiration-canvas-selection {
+  fill: #7185661a;
+  stroke: #718566;
+  stroke-width: 1.5;
+  stroke-dasharray: 5 4;
+  vector-effect: non-scaling-stroke;
 }
 .inspiration-tools {
   position: absolute;
@@ -1148,10 +1217,67 @@
 .inspiration-zoom button:hover {
   background: #e7ebdf;
 }
+.inspiration-tools button:disabled {
+  cursor: not-allowed;
+  color: #c1c1b7;
+}
 .inspiration-tools > span {
   height: 23px;
   border-left: 1px solid #ddd7cc;
   margin: 0 3px;
+}
+.inspiration-stroke-controls {
+  position: absolute;
+  top: 68px;
+  left: 18px;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 7px;
+  border: 1px solid #d7d0c2;
+  border-radius: 9px;
+  background: #fffdf7;
+  box-shadow: 0 3px 12px #53493516;
+}
+.inspiration-stroke-controls > span {
+  margin-right: 3px;
+  color: #817766;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.inspiration-stroke-controls button {
+  display: grid;
+  width: 25px;
+  height: 25px;
+  place-items: center;
+  border-radius: 5px;
+}
+.inspiration-stroke-controls button[aria-pressed='true'],
+.inspiration-stroke-controls button:hover {
+  background: #e7ebdf;
+}
+.inspiration-stroke-color::before {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--stroke-color);
+  content: '';
+}
+.inspiration-stroke-weight i {
+  display: block;
+  width: 14px;
+  border-radius: 20px;
+  background: #566b55;
+}
+.inspiration-stroke-style {
+  width: 34px !important;
+  color: #566b55;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 1px;
 }
 .inspiration-canvas-footer {
   display: flex;
@@ -1264,6 +1390,35 @@
   width: max-content;
   max-width: 320px;
 }
+.inspiration-comment-bubble {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 4;
+  display: inline-flex;
+  min-width: 29px;
+  height: 27px;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 0 7px;
+  border: 1px solid #d7d0c2;
+  border-radius: 14px;
+  background: #fffdf7e8;
+  color: #4f5d4d;
+  box-shadow: 0 2px 8px #1c251b22;
+  font-size: 11px;
+  font-weight: 700;
+}
+.inspiration-comment-bubble:hover {
+  background: #e7ebdf;
+}
+.inspiration-photo-frame > .inspiration-comment-bubble {
+  right: 47px;
+}
+.post-it .inspiration-comment-bubble {
+  background: #fffdf7b8;
+}
 .inspiration-photo-card .inspiration-photo-media {
   max-width: 320px;
   max-height: 420px;
@@ -1287,6 +1442,70 @@
   color: #515b4c;
   box-shadow: 0 2px 8px #1c251b30;
 }
+.inspiration-comments {
+  width: min(510px, calc(100vw - 32px));
+}
+.inspiration-comments-title {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+}
+.inspiration-comments-title h2 {
+  margin-bottom: 18px;
+}
+.inspiration-comments-title span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #65735f;
+  font-size: 13px;
+  font-weight: 700;
+}
+.inspiration-comment-list {
+  max-height: min(42dvh, 360px);
+  overflow: auto;
+  border-top: 1px solid #dde0d7;
+}
+.inspiration-comment-list article {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 14px;
+  padding: 14px 0;
+  border-bottom: 1px solid #dde0d7;
+}
+.inspiration-comment-list strong {
+  font-size: 13px;
+}
+.inspiration-comment-list time {
+  color: #87907e;
+  font-size: 11px;
+}
+.inspiration-comment-list p {
+  grid-column: 1 / -1;
+  margin: 0;
+  white-space: pre-wrap;
+  color: #596055;
+  font-size: 13px;
+  line-height: 1.55;
+}
+.inspiration-comment-list > .workspace-muted {
+  margin: 18px 0;
+  font-size: 13px;
+}
+.inspiration-comment-form {
+  margin-top: 18px;
+}
+.inspiration-comment-form label {
+  display: grid;
+  gap: 7px;
+  color: #586352;
+  font-size: 12px;
+  font-weight: 700;
+}
+.inspiration-comment-form textarea {
+  resize: vertical;
+}
 .inspiration-photo-details {
   position: absolute;
   right: 0;
@@ -1309,11 +1528,6 @@
   visibility: visible;
   pointer-events: auto;
 }
-.inspiration-photo-card .inspiration-photo-details h3 {
-  margin: 0 0 4px;
-  font-size: 18px;
-  overflow-wrap: anywhere;
-}
 .inspiration-photo-card .inspiration-photo-details p {
   max-height: 90px;
   overflow: auto;
@@ -1332,13 +1546,8 @@
   gap: 7px;
   margin-top: 8px;
 }
-.inspiration-photo-card .inspiration-photo-actions a,
-.inspiration-photo-actions .inspiration-card-controls button {
+.inspiration-photo-card .inspiration-photo-actions a {
   color: #fff;
-}
-.inspiration-photo-actions .inspiration-card-controls select {
-  max-width: 105px;
-  min-height: 28px;
 }
 .inspiration-pending img {
   width: 100%;
@@ -1359,7 +1568,6 @@
   background: linear-gradient(transparent, #142116e8 45%);
   color: #fff;
 }
-.inspiration-pending-photo .inspiration-card-body h3,
 .inspiration-pending-photo .inspiration-card-body output {
   color: #fff;
 }
@@ -1389,6 +1597,17 @@
 }
 .free-canvas .post-it .inspiration-card-body {
   min-height: 230px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  padding-top: 18px;
+  text-align: left;
+}
+.free-canvas .post-it .inspiration-card-body h3 {
+  margin: 0 0 10px;
+}
+.free-canvas .post-it .inspiration-card-body p {
+  margin: 0;
 }
 .free-canvas .inspiration-note-text {
   white-space: pre-wrap;
@@ -1632,25 +1851,6 @@
   gap: 10px;
   color: #90988c;
   font-size: 10px;
-}
-.inspiration-card-controls {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-}
-.inspiration-card-controls select {
-  width: auto;
-  max-width: 126px;
-  min-height: 27px;
-  font-size: 10px;
-  padding: 3px 5px;
-}
-.inspiration-card-controls button {
-  padding: 5px;
-  color: #9da69a;
-}
-.inspiration-card-controls button:hover {
-  color: #ad6251;
 }
 .proposals-hero {
   background: #e3e7de;

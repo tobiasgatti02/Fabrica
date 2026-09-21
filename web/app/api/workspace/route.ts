@@ -4,12 +4,14 @@ import { randomToken, sha256, validRequestOrigin } from '@/features/auth/core';
 import { getFabricaUser } from '@/features/auth/server';
 import { getDb } from '@/db';
 import { createStarterProject } from '@/features/studio/server/seed';
+import { INSPIRATION_FILE_LIMIT } from '@/features/files/validation';
 import {
   studioAssets,
   studioAssetUploads,
   studioBudgetItems,
   studioClients,
   studioInspiration,
+  studioInspirationComments,
   studioProjects,
   studioProposalFeedback,
   studioProposalOptions,
@@ -142,6 +144,11 @@ const url = (value: unknown) => {
   }
 };
 function fail(error: unknown) {
+  if ((error as Error).message === 'INSPIRATION_FILE_LIMIT')
+    return json(
+      { error: 'Cada archivo de Inspiración puede pesar hasta 20 MB.' },
+      413,
+    );
   const code = Number((error as Error).message);
   if ([400, 401, 403, 404, 409, 413].includes(code)) {
     return json(
@@ -446,6 +453,7 @@ export async function GET(request: Request) {
     const [
       tasks,
       inspiration,
+      inspirationComments,
       allProposals,
       allOptions,
       allFeedback,
@@ -467,6 +475,13 @@ export async function GET(request: Request) {
             .from(studioInspiration)
             .where(eq(studioInspiration.project, ctx.project.id))
             .orderBy(asc(studioInspiration.created))
+        : Promise.resolve([]),
+      inspirationView
+        ? db
+            .select()
+            .from(studioInspirationComments)
+            .where(eq(studioInspirationComments.project, ctx.project.id))
+            .orderBy(asc(studioInspirationComments.created))
         : Promise.resolve([]),
       proposalsView
         ? db
@@ -574,6 +589,7 @@ export async function GET(request: Request) {
       budgetItems,
       projectStats,
       inspiration,
+      inspirationComments,
       proposals: visibleProposals,
       options,
       feedback: allFeedback
@@ -668,6 +684,7 @@ export async function POST(request: Request) {
       'save-budget-item': 'panel',
       'delete-budget-item': 'panel',
       'add-inspiration': 'inspiracion',
+      'add-inspiration-comment': 'inspiracion',
       'update-inspiration': 'inspiracion',
       'delete-inspiration': 'inspiracion',
       'delete-asset': 'inspiracion',
@@ -691,7 +708,11 @@ export async function POST(request: Request) {
       throw new Error('403');
     if (action === 'add-inspiration') {
       const asset = string(body.asset);
-      if (asset) await assetInProject(db, asset, project.id);
+      if (asset) {
+        const uploadedAsset = await assetInProject(db, asset, project.id);
+        if (uploadedAsset.size > INSPIRATION_FILE_LIMIT)
+          throw new Error('INSPIRATION_FILE_LIMIT');
+      }
       const title = required(body.title, 160);
       const link = url(body.url);
       if (!asset && !link && !string(body.note)) throw new Error('400');
@@ -706,6 +727,31 @@ export async function POST(request: Request) {
         category: choice(body.category || 'general', categories),
         status: 'idea',
         author: ctx.name,
+        created: Date.now(),
+      });
+      return json({ ok: true, id }, 201);
+    }
+    if (action === 'add-inspiration-comment') {
+      const inspiration = required(body.inspiration);
+      const text = required(body.text, 2000);
+      const [item] = await db
+        .select({ id: studioInspiration.id })
+        .from(studioInspiration)
+        .where(
+          and(
+            eq(studioInspiration.id, inspiration),
+            eq(studioInspiration.project, project.id),
+          ),
+        )
+        .limit(1);
+      if (!item) throw new Error('404');
+      const id = crypto.randomUUID();
+      await db.insert(studioInspirationComments).values({
+        id,
+        project: project.id,
+        inspiration,
+        author: ctx.name,
+        text,
         created: Date.now(),
       });
       return json({ ok: true, id }, 201);
@@ -921,6 +967,14 @@ export async function POST(request: Request) {
         )
         .limit(1);
       await db
+        .delete(studioInspirationComments)
+        .where(
+          and(
+            eq(studioInspirationComments.inspiration, required(body.id)),
+            eq(studioInspirationComments.project, project.id),
+          ),
+        );
+      await db
         .delete(studioInspiration)
         .where(
           and(
@@ -1017,6 +1071,8 @@ export async function POST(request: Request) {
       const size = Number(body.size);
       const name = required(body.name, 240);
       if (!Number.isSafeInteger(size) || size < 1) throw new Error('400');
+      if (body.scope === 'inspiration' && size > INSPIRATION_FILE_LIMIT)
+        throw new Error('INSPIRATION_FILE_LIMIT');
       if (size > MAX_ASSET) throw new Error('413');
       const mime = string(body.mime, 120) || 'application/octet-stream';
       if (
@@ -1236,7 +1292,7 @@ async function assetInProject(
   project: string,
 ) {
   const [asset] = await db
-    .select({ id: studioAssets.id })
+    .select({ id: studioAssets.id, size: studioAssets.size })
     .from(studioAssets)
     .where(and(eq(studioAssets.id, id), eq(studioAssets.project, project)))
     .limit(1);

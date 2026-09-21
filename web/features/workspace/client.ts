@@ -50,6 +50,14 @@ export type WorkspaceInspiration = {
   author: string;
   created: number;
 };
+export type WorkspaceInspirationComment = {
+  id: string;
+  project: string;
+  inspiration: string;
+  author: string;
+  text: string;
+  created: number;
+};
 export type WorkspaceProposal = {
   id: string;
   project: string;
@@ -120,6 +128,7 @@ export type WorkspaceData = {
   tasks: WorkspaceTask[];
   budgetItems: WorkspaceBudgetItem[];
   inspiration: WorkspaceInspiration[];
+  inspirationComments: WorkspaceInspirationComment[];
   proposals: WorkspaceProposal[];
   options: WorkspaceOption[];
   feedback: WorkspaceFeedback[];
@@ -212,6 +221,7 @@ export async function uploadWorkspaceAsset(
   project: string,
   share: string,
   invite = '',
+  scope?: 'inspiration',
 ) {
   const { id, partSize } = await workspaceRequest<{
     id: string;
@@ -222,6 +232,7 @@ export async function uploadWorkspaceAsset(
       name: file.name,
       mime: file.type || 'application/octet-stream',
       size: file.size,
+      scope,
     },
     project,
     share,

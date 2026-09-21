@@ -15,6 +15,7 @@ import {
   studioClients,
   studioComments,
   studioInspiration,
+  studioInspirationComments,
   studioMeasurements,
   studioPlans,
   studioProjects,
@@ -113,6 +114,7 @@ async function deleteAccount(userId: string) {
       database.delete(studioUploads).where(inArray(studioUploads.project, projectIds)),
       database.delete(studioAssetUploads).where(inArray(studioAssetUploads.project, projectIds)),
       database.delete(studioTasks).where(inArray(studioTasks.project, projectIds)),
+      database.delete(studioInspirationComments).where(inArray(studioInspirationComments.project, projectIds)),
       database.delete(studioInspiration).where(inArray(studioInspiration.project, projectIds)),
       database.delete(studioTeamMembers).where(inArray(studioTeamMembers.project, projectIds)),
       ...(proposalIds.length

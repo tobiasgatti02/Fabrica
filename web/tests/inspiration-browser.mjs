@@ -159,12 +159,10 @@ try {
     'Native image paste must not open a form',
   );
   assert.match(await savedCards.first().innerText(), /Por Ana/);
-  const first = await savedCards
-    .first()
-    .evaluate((node) => ({
-      x: parseFloat(node.style.left),
-      y: parseFloat(node.style.top),
-    }));
+  const first = await savedCards.first().evaluate((node) => ({
+    x: parseFloat(node.style.left),
+    y: parseFloat(node.style.top),
+  }));
   assert.ok(
     Math.abs(first.x - 270) < 3 && Math.abs(first.y - 120) < 3,
     'Image must land at the click position',
@@ -221,7 +219,10 @@ try {
   await ready(5);
   assert.equal(data.inspiration[4].url, 'https://example.com/referencia');
 
-  await page.getByRole('button', { name: 'Nueva idea', exact: true }).click();
+  await board.click({ button: 'right', position: { x: 550, y: 490 } });
+  await page
+    .getByRole('menuitem', { name: 'Crear post-it', exact: true })
+    .click();
   await page.getByRole('textbox', { name: 'Nota', exact: true }).click();
   await pasteText('Texto dentro del formulario');
   assert.equal(
@@ -247,12 +248,10 @@ try {
   await page.mouse.down();
   await page.mouse.move(rect.x + 110, rect.y + 72, { steps: 5 });
   await page.mouse.up();
-  const moved = await savedCards
-    .first()
-    .evaluate((node) => ({
-      x: parseFloat(node.style.left),
-      y: parseFloat(node.style.top),
-    }));
+  const moved = await savedCards.first().evaluate((node) => ({
+    x: parseFloat(node.style.left),
+    y: parseFloat(node.style.top),
+  }));
   assert.ok(
     Math.abs(moved.x - first.x - 90) < 3 &&
       Math.abs(moved.y - first.y - 60) < 3,
