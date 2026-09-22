@@ -569,6 +569,7 @@ export async function GET(request: Request) {
     const projectStats: Record<string, { total: number; done: number }> =
       Object.fromEntries(projectIds.map((id) => [id, { total: 0, done: 0 }]));
     for (const task of tasks) {
+      if (ctx.guest && task.clientVisible !== 1) continue;
       projectStats[task.project].total++;
       if (task.status === 'done') projectStats[task.project].done++;
     }
@@ -582,11 +583,22 @@ export async function GET(request: Request) {
         permissions: ctx.permissions,
         external: ctx.external,
       },
-      project: ctx.accountOwner
-        ? ctx.project
-        : { ...ctx.project, share: undefined },
+      project:
+        ctx.canEdit && !ctx.external
+          ? ctx.project
+          : { ...ctx.project, share: undefined },
       projects: ctx.projects.map((item) => ({ ...item, share: undefined })),
-      tasks: ctx.guest ? [] : tasks,
+      tasks: ctx.guest
+        ? tasks
+            .filter(
+              (item) =>
+                item.project === ctx.project.id && item.clientVisible === 1,
+            )
+            .map(({ assignee: _assignee, ...item }) => ({
+              ...item,
+              assignee: null,
+            }))
+        : tasks,
       budgetItems,
       projectStats,
       inspiration,
@@ -719,7 +731,9 @@ export async function POST(request: Request) {
       const rawUrl = string(body.url, 2000);
       const link = rawUrl ? safeReferenceUrl(rawUrl) : '';
       if (link === null) throw new Error('400');
-      if (!asset && !link && !string(body.note)) throw new Error('400');
+      // Empty post-its are valid: the editor is opened directly on the card.
+      if (!asset && !link && !string(body.note) && body.sticky !== true)
+        throw new Error('400');
       const id = crypto.randomUUID();
       await db.insert(studioInspiration).values({
         id,
@@ -752,7 +766,7 @@ export async function POST(request: Request) {
       const note = string(body.note, 2000);
       const rawUrl = string(body.url, 2000);
       const link = rawUrl ? safeReferenceUrl(rawUrl) : '';
-      if (link === null || (!item.asset && !link && !note))
+      if (link === null || (!item.asset && !link && !note && body.sticky !== true))
         throw new Error('400');
       await db
         .update(studioInspiration)
@@ -894,14 +908,18 @@ export async function POST(request: Request) {
         (!Number.isInteger(progress) || progress < 0 || progress > 100)
       )
         throw new Error('400');
+      const startDate = date(body.startDate);
+      const dueDate = date(body.dueDate);
+      if (startDate && dueDate && startDate > dueDate)
+        throw new Error('La fecha de inicio debe ser anterior a la entrega.');
       await db
         .update(studioProjects)
         .set({
           stage: choice(body.stage, stages),
           progress,
           description: string(body.description, 2000),
-          startDate: date(body.startDate),
-          dueDate: date(body.dueDate),
+          startDate,
+          dueDate,
         })
         .where(eq(studioProjects.id, project.id));
     } else if (action === 'save-task') {
@@ -909,9 +927,17 @@ export async function POST(request: Request) {
       const values = {
         title: required(body.title, 180),
         status: choice(body.status || 'todo', taskStates),
+        startDate: date(body.startDate),
         dueDate: date(body.dueDate),
+        clientVisible: body.clientVisible ? 1 : 0,
         assignee: string(body.assignee) || null,
       };
+      if (
+        values.startDate &&
+        values.dueDate &&
+        values.startDate > values.dueDate
+      )
+        throw new Error('La fecha de inicio debe ser anterior a la entrega.');
       if (id) {
         const [existing] = await db
           .select({ id: studioTasks.id })

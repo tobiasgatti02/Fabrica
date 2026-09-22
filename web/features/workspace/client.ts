@@ -23,7 +23,9 @@ export type WorkspaceTask = {
   project: string;
   title: string;
   status: string;
+  startDate: string | null;
   dueDate: string | null;
+  clientVisible: number;
   assignee: string | null;
   created: number;
 };

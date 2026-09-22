@@ -1,6 +1,6 @@
 'use client';
 
-import { memo, useEffect, useRef } from 'react';
+import { memo, useLayoutEffect, useRef } from 'react';
 import {
   boundsForCanvasElement,
   type AlignmentGuide,
@@ -10,6 +10,23 @@ import {
 import { elementIndex } from '@/features/workspace/inspiration-scene';
 
 function drawElement(ctx: CanvasRenderingContext2D, element: CanvasElement) {
+  ctx.globalAlpha = element.opacity ?? 1;
+  if (element.type === 'frame') {
+    ctx.fillStyle = element.fill;
+    ctx.fillRect(element.x, element.y, element.width, element.height);
+    ctx.strokeStyle = '#c9cdc5';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([]);
+    ctx.strokeRect(element.x + 0.5, element.y + 0.5, element.width - 1, element.height - 1);
+    if (element.title) {
+      ctx.font = '500 15px sans-serif';
+      ctx.textBaseline = 'bottom';
+      ctx.fillStyle = '#343a34';
+      ctx.fillText(element.title, element.x, element.y - 7, element.width);
+    }
+    ctx.globalAlpha = 1;
+    return;
+  }
   ctx.strokeStyle = element.stroke;
   ctx.lineWidth = element.weight;
   ctx.setLineDash(element.style === 'dashed' ? [10, 7] : []);
@@ -62,6 +79,7 @@ function drawElement(ctx: CanvasRenderingContext2D, element: CanvasElement) {
     ctx.fillStyle = element.stroke;
     ctx.fill();
   }
+  ctx.globalAlpha = 1;
 }
 
 /** One viewport-sized surface. No permanent animation loop or 5000px backing store. */
@@ -78,11 +96,12 @@ export const InspirationCanvas = memo(function InspirationCanvas({
   size: { width: number; height: number };
   draft: CanvasElement | null;
   guides: AlignmentGuide[];
-  selected: CanvasElement | null;
+  selected: CanvasElement[];
 }) {
   const ref = useRef<HTMLCanvasElement>(null);
-  useEffect(() => {
-    const frame = requestAnimationFrame(() => {
+  const lastIndex = useRef(index);
+  useLayoutEffect(() => {
+    const draw = () => {
       const canvas = ref.current;
       const ctx = canvas?.getContext('2d');
       if (!canvas || !ctx || !size.width || !size.height) return;
@@ -107,9 +126,11 @@ export const InspirationCanvas = memo(function InspirationCanvas({
       };
       const visible = index.search(bounds).sort((a, b) => a.order - b.order);
       canvas.dataset.visibleMarks = String(visible.length);
-      visible.forEach(({ element }) => drawElement(ctx, element));
+      // Frames are backgrounds regardless of creation order.
+      visible.forEach(({ element }) => { if (element.type === 'frame') drawElement(ctx, element); });
+      visible.forEach(({ element }) => { if (element.type !== 'frame') drawElement(ctx, element); });
       if (draft) drawElement(ctx, draft);
-      if (selected) {
+      selected.forEach((selected) => {
         const b = boundsForCanvasElement(selected),
           padding = Math.max(6 / camera.zoom, selected.weight + 3);
         ctx.strokeStyle = '#566b55';
@@ -128,7 +149,7 @@ export const InspirationCanvas = memo(function InspirationCanvas({
           b.right - b.left + padding * 2,
           b.bottom - b.top + padding * 2,
         );
-      }
+      });
       ctx.strokeStyle = '#aa674b';
       ctx.lineWidth = 1 / camera.zoom;
       ctx.setLineDash([6 / camera.zoom, 5 / camera.zoom]);
@@ -143,7 +164,15 @@ export const InspirationCanvas = memo(function InspirationCanvas({
         }
         ctx.stroke();
       });
-    });
+    };
+    // New elements paint in the same commit; camera and pointer updates stay
+    // coalesced to one draw per display frame.
+    if (lastIndex.current !== index) {
+      lastIndex.current = index;
+      draw();
+      return;
+    }
+    const frame = requestAnimationFrame(draw);
     return () => cancelAnimationFrame(frame);
   }, [index, camera, size, draft, guides, selected]);
   return (

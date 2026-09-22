@@ -14,32 +14,44 @@ import {
 } from 'react';
 import Image from 'next/image';
 import {
+  AlignCenter,
+  AlignLeft,
+  AlignRight,
   ArrowRight,
   ArrowUpRight,
   Circle,
+  Bold,
   Eraser,
   FileText,
+  Frame,
   GripHorizontal,
   Hand,
   ImagePlus,
-  Search,
+  SmilePlus,
+  Tag,
   X,
   Keyboard,
   Trash2,
   Pencil,
   Link2,
+  LockKeyhole,
+  UnlockKeyhole,
   LoaderCircle,
   MessageCircle,
   Minus,
   MousePointer2,
   PencilLine,
+  Highlighter,
+  Sparkles,
+  Lasso,
+  Group,
+  Ungroup,
   Plus,
   Redo2,
   Scan,
   Square,
   StickyNote,
   Undo2,
-  UploadCloud,
 } from 'lucide-react';
 import { InspirationCanvas } from './inspiration-canvas';
 import {
@@ -59,7 +71,6 @@ import {
 import type { WorkspaceViewProps } from './workspace';
 import {
   assetUrl,
-  categoryLabels,
   createImagePreview,
   shortDate,
   uploadWorkspaceAsset,
@@ -87,10 +98,12 @@ type Camera = Point & { zoom: number };
 type Draft = {
   title: string;
   note?: string;
+  sequenceFrom?: string;
   url?: string;
   asset?: string;
   file?: File;
   category?: string;
+  sticky?: StickyMeta;
 };
 type Pending = {
   id: string;
@@ -115,6 +128,21 @@ type CardGesture = {
   targets: BoardBounds[];
   before: BoardSnapshot;
 };
+type ResizeGesture = {
+  pointer: number;
+  start: Point;
+  kind: 'resize';
+  card: string;
+  size: { width: number; height: number };
+};
+type FrameResizeGesture = {
+  kind: 'frame-resize';
+  pointer: number;
+  start: Point;
+  element: Extract<CanvasElement, { type: 'frame' }>;
+  corner: 'nw' | 'ne' | 'sw' | 'se';
+  before: BoardSnapshot;
+};
 type CanvasGesture = {
   pointer: number;
   start: Point;
@@ -124,7 +152,16 @@ type CanvasGesture = {
   before: BoardSnapshot;
   targets: BoardBounds[];
 };
-type Gesture = PanGesture | CardGesture | CanvasGesture;
+type MultiGesture = {
+  kind: 'multi'; pointer: number; start: Point; camera: Camera;
+  before: BoardSnapshot; cards: { id: string; point: Point }[];
+  elements: CanvasElement[];
+};
+type MarqueeGesture = {
+  kind: 'marquee'; pointer: number; start: Point; camera: Camera;
+  origin: Point; additive: boolean; points: Point[];
+};
+type Gesture = PanGesture | CardGesture | CanvasGesture | ResizeGesture | FrameResizeGesture | MultiGesture | MarqueeGesture;
 type BoardContextMenu = {
   x: number;
   y: number;
@@ -134,20 +171,143 @@ type BoardContextMenu = {
 };
 type CanvasTool =
   | 'select'
+  | 'sticky'
+  | 'frame'
   | 'rectangle'
   | 'circle'
   | 'arrow'
   | 'draw'
-  | 'erase';
+  | 'marker'
+  | 'smart'
+  | 'lasso'
+  | 'erase'
+  | 'erase-area';
 type ActiveCanvasElement = {
   pointer: number;
-  type: Exclude<CanvasTool, 'select' | 'erase'>;
+  type: Exclude<CanvasTool, 'select' | 'sticky' | 'erase' | 'erase-area' | 'lasso'>;
   start: Point;
   points: Point[];
   targets: BoardBounds[];
 };
 type CanvasPreview = { element: CanvasElement; guides: AlignmentGuide[] };
 const initialCamera = { x: 60, y: 90, zoom: 1 };
+function pointInPolygon(point: Point, polygon: Point[]) {
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const a = polygon[i], b = polygon[j];
+    if ((a.y > point.y) !== (b.y > point.y) &&
+      point.x < ((b.x - a.x) * (point.y - a.y)) / (b.y - a.y) + a.x)
+      inside = !inside;
+  }
+  return inside;
+}
+const stickyColors = [
+  '#fff3a6',
+  '#ffe36e',
+  '#ffb36d',
+  '#ff969b',
+  '#ffd0ec',
+  '#ed8bda',
+  '#a9caff',
+  '#ada4f5',
+  '#8bdcf4',
+  '#7ca6ea',
+  '#72dbd1',
+  '#5dd786',
+  '#c9eb8c',
+  '#a7e35b',
+  '#f2f2ef',
+  '#303030',
+] as const;
+type StickyMeta = {
+  color: string;
+  width: number;
+  height: number;
+  tags: string[];
+  reactions: Record<string, number>;
+  fontSize: number;
+  bold: boolean;
+  align: 'left' | 'center' | 'right';
+  locked: boolean;
+};
+const defaultStickyMeta = (color: string = stickyColors[0]): StickyMeta => ({
+  color,
+  width: 260,
+  height: 240,
+  tags: [],
+  reactions: {},
+  fontSize: 18,
+  bold: false,
+  align: 'left',
+  locked: false,
+});
+function readStickyMetadata(project: string): Record<string, StickyMeta> {
+  try {
+    const value = JSON.parse(
+      localStorage.getItem('fabrica:inspiration-stickies:' + project) || '{}',
+    ) as Record<string, Partial<StickyMeta>>;
+    return Object.fromEntries(
+      Object.entries(value).flatMap(([id, item]) => {
+        if (!item || typeof item !== 'object' || id.length > 100) return [];
+        const color =
+          typeof item.color === 'string' && /^#[0-9a-f]{6}$/i.test(item.color)
+            ? item.color
+            : stickyColors[0];
+        const width = Math.min(800, Math.max(180, Number(item.width) || 260));
+        const height = Math.min(800, Math.max(180, Number(item.height) || 240));
+        const tags = Array.isArray(item.tags)
+          ? item.tags
+              .filter((tag): tag is string => typeof tag === 'string')
+              .map((tag) => tag.trim().slice(0, 24))
+              .filter(Boolean)
+              .slice(0, 5)
+          : [];
+        const reactions = Object.fromEntries(
+          Object.entries(item.reactions || {})
+            .filter(
+              ([emoji, count]) =>
+                emoji.length <= 8 &&
+                typeof count === 'number' &&
+                Number.isFinite(count) &&
+                count > 0,
+            )
+            .slice(0, 8)
+            .map(([emoji, count]) => [emoji, Math.min(999, Math.floor(count))]),
+        );
+        const fontSize = Math.min(36, Math.max(12, Number(item.fontSize) || 18));
+        const align = item.align === 'center' || item.align === 'right' ? item.align : 'left';
+        return [[id, { color, width, height, tags, reactions, fontSize,
+          bold: item.bold === true, align, locked: item.locked === true }]];
+      }),
+    );
+  } catch {
+    return {};
+  }
+}
+type StickyLink = { from: string; to: string };
+function readStickyLinks(project: string): StickyLink[] {
+  try {
+    const value: unknown = JSON.parse(localStorage.getItem('fabrica:inspiration-sticky-links:' + project) || '[]');
+    if (!Array.isArray(value)) return [];
+    return value.slice(0, 1000).filter((link): link is StickyLink =>
+      link && typeof link.from === 'string' && typeof link.to === 'string' &&
+      link.from.length <= 100 && link.to.length <= 100 && link.from !== link.to);
+  } catch { return []; }
+}
+const stickyCursor = (color: string) => {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><path d="M6 4h21v18l-7 7H6z" fill="${color}" stroke="#252525" stroke-width="2"/><path d="M20 29v-7h7" fill="none" stroke="#252525" stroke-width="2"/></svg>`;
+  return `url("data:image/svg+xml,${encodeURIComponent(svg)}") 7 5, crosshair`;
+};
+const framePresets = [
+  { label: 'A4', width: 595, height: 842 },
+  { label: 'Letter', width: 612, height: 792 },
+  { label: '16 : 9', width: 640, height: 360 },
+  { label: '4 : 3', width: 600, height: 450 },
+  { label: '1 : 1', width: 480, height: 480 },
+  { label: 'Mobile', width: 390, height: 844 },
+  { label: 'Tablet', width: 768, height: 1024 },
+  { label: 'Desktop', width: 1280, height: 800 },
+] as const;
 const editableTarget = (target: EventTarget | null) =>
   target instanceof HTMLElement &&
   Boolean(target.closest('input, textarea, select, [contenteditable="true"]'));
@@ -367,7 +527,7 @@ function PhotoFrame({
               target="_blank"
               rel="noopener noreferrer"
             >
-              Referencia <ArrowUpRight size={15} />
+              Enlace <ArrowUpRight size={15} />
             </a>
           )}
         </div>
@@ -386,11 +546,8 @@ export default function Inspiration({
   notify,
 }: WorkspaceViewProps) {
   const canEdit = data.viewer.permissions.inspiracion === 'edit';
-  const [category, setCategory] = useState('all');
   const [selected, setSelected] = useState<string | null>(null);
-  const [search, setSearch] = useState('');
   const [help, setHelp] = useState(false);
-  const [editing, setEditing] = useState<string | null>(null);
   const [storageError, setStorageError] = useState(false);
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
   const [positionsReady, setPositionsReady] = useState(false);
@@ -400,6 +557,29 @@ export default function Inspiration({
   const [dragging, setDragging] = useState(false);
   const [contextMenu, setContextMenu] = useState<BoardContextMenu | null>(null);
   const [tool, setTool] = useState<CanvasTool>('select');
+  const [stickyColor, setStickyColor] = useState<string>(stickyColors[0]);
+  const [stickyStore, setStickyStore] = useState<{
+    project: string;
+    items: Record<string, StickyMeta>;
+  }>({ project: '', items: {} });
+  const stickyMetadata =
+    stickyStore.project === project ? stickyStore.items : {};
+  const [stickyLinks, setStickyLinks] = useState<StickyLink[]>([]);
+  const stickyLinksProject = useRef<string | null>(null);
+  const [activeFrameResize, setActiveFrameResize] = useState<string | null>(null);
+  const [stickyPanel, setStickyPanel] = useState<
+    'colors' | 'tags' | 'reactions' | 'link' | null
+  >(null);
+  const [tagDraft, setTagDraft] = useState('');
+  const [linkDraft, setLinkDraft] = useState('');
+  const [penMenuOpen, setPenMenuOpen] = useState(false);
+  const [selection, setSelection] = useState<string[]>([]);
+  const [groups, setGroups] = useState<Record<string, string>>({});
+  const groupsProject = useRef<string | null>(null);
+  const [marquee, setMarquee] = useState<BoardBounds | null>(null);
+  const [lassoPoints, setLassoPoints] = useState<Point[]>([]);
+  const [frameMenuOpen, setFrameMenuOpen] = useState(false);
+  const [editingFrameTitle, setEditingFrameTitle] = useState(false);
   const [stroke, setStroke] = useState('#566b55');
   const [strokeWeight, setStrokeWeight] = useState(3);
   const [strokeStyle, setStrokeStyle] = useState<StrokeStyle>('solid');
@@ -414,6 +594,10 @@ export default function Inspiration({
     () => elementIndex(canvasElements),
     [canvasElements],
   );
+  const selectedCanvasMarks = useMemo(
+    () => canvasElements.filter((element) => selection.includes('element:' + element.id)),
+    [canvasElements, selection],
+  );
   const [selectedCanvasElement, setSelectedCanvasElement] = useState<
     string | null
   >(null);
@@ -421,16 +605,12 @@ export default function Inspiration({
   const [canvasDraft, setCanvasDraft] = useState<CanvasElement | null>(null);
   const [alignmentGuides, setAlignmentGuides] = useState<AlignmentGuide[]>([]);
   const [pending, setPending] = useState<Pending[]>([]);
-  const [showForm, setShowForm] = useState(false);
   const [commentTarget, setCommentTarget] = useState<string | null>(null);
   const [commentText, setCommentText] = useState('');
-  const [title, setTitle] = useState('');
-  const [note, setNote] = useState('');
-  const [url, setUrl] = useState('');
-  const [itemCategory, setItemCategory] = useState('general');
   const viewport = useRef<HTMLDivElement>(null);
   const cardNodes = useRef(new Map<string, HTMLElement>());
-  const fileInput = useRef<HTMLInputElement>(null);
+  const frameTitleInput = useRef<HTMLInputElement>(null);
+  const stickyLinkInput = useRef<HTMLInputElement>(null);
   const gesture = useRef<Gesture | null>(null);
   const activeCanvasElement = useRef<ActiveCanvasElement | null>(null);
   const previewFrame = useRef<number | null>(null);
@@ -446,6 +626,12 @@ export default function Inspiration({
   useEffect(() => {
     operations.current = { run, notify };
   }, [run, notify]);
+  useEffect(() => {
+    if (editingFrameTitle) frameTitleInput.current?.focus();
+  }, [editingFrameTitle]);
+  useEffect(() => {
+    if (stickyPanel === 'link') stickyLinkInput.current?.focus();
+  }, [stickyPanel]);
   useEffect(() => {
     mounted.current = true;
     const previews = urls.current;
@@ -466,9 +652,42 @@ export default function Inspiration({
         positions: readPositions(project),
       });
       setCanvasReady(true);
+      setStickyStore({ project, items: readStickyMetadata(project) });
+      stickyLinksProject.current = project;
+      setStickyLinks(readStickyLinks(project));
+      groupsProject.current = project;
+      try {
+        const saved = JSON.parse(localStorage.getItem('fabrica:inspiration-groups:' + project) || '{}');
+        setGroups(saved && typeof saved === 'object' && !Array.isArray(saved)
+          ? Object.fromEntries(Object.entries(saved).filter((entry): entry is [string, string] =>
+              /^(card|element):/.test(entry[0]) && typeof entry[1] === 'string')) : {});
+      } catch { setGroups({}); }
     });
     return () => cancelAnimationFrame(frame);
   }, [project]);
+  useEffect(() => {
+    if (canvasReady && groupsProject.current === project) {
+      try {
+        localStorage.setItem('fabrica:inspiration-groups:' + project, JSON.stringify(groups));
+      } catch { setStorageError(true); }
+    }
+  }, [groups, project, canvasReady]);
+  useEffect(() => {
+    if (stickyStore.project !== project) return;
+    try {
+      localStorage.setItem(
+        'fabrica:inspiration-stickies:' + project,
+        JSON.stringify(stickyStore.items),
+      );
+    } catch {
+      setStorageError(true);
+    }
+  }, [project, stickyStore]);
+  useEffect(() => {
+    if (!canvasReady || stickyLinksProject.current !== project) return;
+    try { localStorage.setItem('fabrica:inspiration-sticky-links:' + project, JSON.stringify(stickyLinks)); }
+    catch { setStorageError(true); }
+  }, [project, stickyLinks, canvasReady]);
   const saveLocal = useRef<(() => void) | null>(null);
   useEffect(() => {
     if (!positionsReady || !canvasReady) return;
@@ -512,18 +731,7 @@ export default function Inspiration({
       document.removeEventListener('visibilitychange', hidden);
     };
   }, []);
-  const items = useMemo(
-    () =>
-      data.inspiration.filter(
-        (item) =>
-          (category === 'all' || item.category === category) &&
-          (!search.trim() ||
-            `${item.title} ${item.note}`
-              .toLocaleLowerCase()
-              .includes(search.trim().toLocaleLowerCase())),
-      ),
-    [data.inspiration, category, search],
-  );
+  const items = data.inspiration;
   const assetMap = useMemo(
     () => new Map(data.assets.map((asset) => [asset.id, asset])),
     [data.assets],
@@ -640,17 +848,82 @@ export default function Inspiration({
   function selectCard(id: string | null) {
     setSelected(id);
     setSelectedCanvasElement(null);
+    setActiveFrameResize(null);
+    setSelection(id ? ['card:' + id] : []);
   }
 
   function selectCanvasElement(id: string | null) {
+    if (id !== activeFrameResize) setActiveFrameResize(null);
     setSelectedCanvasElement(id);
     setSelected(null);
+    setSelection(id ? ['element:' + id] : []);
+  }
+
+  function selectTarget(key: string, additive = false) {
+    const members = groups[key] ? Object.keys(groups).filter((id) => groups[id] === groups[key]) : [key];
+    setSelection((current) => additive
+      ? members.every((id) => current.includes(id))
+        ? current.filter((id) => !members.includes(id))
+        : [...new Set([...current, ...members])]
+      : current.includes(key) && current.length > 1 ? current : members);
+    setSelected(key.startsWith('card:') ? key.slice(5) : null);
+    setSelectedCanvasElement(key.startsWith('element:') ? key.slice(8) : null);
+  }
+
+  function groupSelection() {
+    if (selection.length < 2) return;
+    const id = crypto.randomUUID();
+    setGroups((current) => ({ ...current, ...Object.fromEntries(selection.map((key) => [key, id])) }));
+  }
+
+  function ungroupSelection() {
+    setGroups((current) => Object.fromEntries(Object.entries(current).filter(([key]) => !selection.includes(key))));
   }
 
   function chooseTool(next: CanvasTool) {
     setTool(next);
+    setPenMenuOpen(['draw', 'marker', 'smart', 'erase', 'erase-area', 'lasso'].includes(next));
+    setFrameMenuOpen(false);
     setHand(false);
     setContextMenu(null);
+    setStickyPanel(null);
+    focusBoard();
+  }
+
+  function updateStickyMeta(
+    id: string,
+    update: (current: StickyMeta) => StickyMeta,
+  ) {
+    setStickyStore((current) => {
+      const items = current.project === project ? current.items : {};
+      return {
+        project,
+        items: {
+          ...items,
+          [id]: update(items[id] || defaultStickyMeta()),
+        },
+      };
+    });
+  }
+
+  function createFrame(width: number, height: number, title = '') {
+    if (!canEdit || canvasElements.length >= MAX_ELEMENTS) return;
+    const bounds = viewport.current;
+    if (!bounds) return;
+    const center = worldPoint(
+      bounds.getBoundingClientRect().left + bounds.clientWidth / 2,
+      bounds.getBoundingClientRect().top + bounds.clientHeight / 2,
+    );
+    const frame: CanvasElement = {
+      id: crypto.randomUUID(), type: 'frame',
+      x: Math.round(center.x - width / 2), y: Math.round(center.y - height / 2),
+      width, height, title, fill: '#ffffff',
+      stroke: '#c9cdc5', weight: 1, style: 'solid',
+    };
+    dispatchCanvas({ type: 'add', element: frame });
+    selectCanvasElement(frame.id);
+    setFrameMenuOpen(false);
+    setTool('select');
     focusBoard();
   }
 
@@ -772,7 +1045,21 @@ export default function Inspiration({
   }
 
   function elementForGesture(active: ActiveCanvasElement, point: Point) {
-    const style = { stroke, weight: strokeWeight, style: strokeStyle };
+    const style = {
+      stroke,
+      weight: active.type === 'marker' ? Math.max(12, strokeWeight * 4) : strokeWeight,
+      style: strokeStyle,
+      opacity: active.type === 'marker' ? 0.35 : 1,
+    };
+    if (active.type === 'frame')
+      return {
+        id: 'draft', type: 'frame' as const,
+        x: Math.min(active.start.x, point.x),
+        y: Math.min(active.start.y, point.y),
+        width: Math.abs(point.x - active.start.x),
+        height: Math.abs(point.y - active.start.y),
+        title: '', fill: '#ffffff', ...style,
+      };
     if (active.type === 'rectangle')
       return {
         id: 'draft',
@@ -835,12 +1122,27 @@ export default function Inspiration({
     setAlignmentGuides([]);
   }
 
+  function eraseAtPointer(event: PointerEvent<HTMLDivElement>) {
+    if (!canEdit || busy) return;
+    // Cards (photos, links and stickies) live in the DOM rather than in the
+    // canvas spatial index, so resolve them from the pointer before checking
+    // canvas marks. This keeps the object eraser consistent across both layers.
+    const target = document.elementFromPoint(event.clientX, event.clientY);
+    const card = target?.closest<HTMLElement>('[data-card]');
+    if (card?.dataset.card) {
+      deleteInspiration(card.dataset.card);
+      setSelection([]);
+      return;
+    }
+    eraseAt(worldPoint(event.clientX, event.clientY));
+  }
+
   function beginCanvasElement(event: PointerEvent<HTMLDivElement>) {
     if (canvasElements.length >= MAX_ELEMENTS) {
       notify('El lienzo alcanzó el límite de 10.000 dibujos.');
       return false;
     }
-    if (!canEdit || tool === 'select' || hand || space || event.button !== 0)
+    if (!canEdit || tool === 'select' || tool === 'lasso' || tool === 'erase-area' || tool === 'sticky' || hand || space || event.button !== 0)
       return false;
     event.preventDefault();
     event.stopPropagation();
@@ -854,11 +1156,11 @@ export default function Inspiration({
     }
     activeCanvasElement.current = {
       pointer: event.pointerId,
-      type: tool,
+      type: tool as ActiveCanvasElement['type'],
       start: point,
       points: [point],
       targets:
-        tool === 'rectangle' || tool === 'circle' ? alignmentTargets() : [],
+        tool === 'rectangle' || tool === 'circle' || tool === 'frame' ? alignmentTargets() : [],
     };
     viewport.current?.setPointerCapture(event.pointerId);
     setDragging(true);
@@ -889,7 +1191,7 @@ export default function Inspiration({
       preview.element.type === 'stroke'
         ? {
             ...preview.element,
-            points: simplifyStroke(preview.element.points, 0.8 / camera.zoom),
+            points: simplifyStroke(preview.element.points, (active.type === 'smart' ? 3 : 0.8) / camera.zoom),
           }
         : preview.element;
     const bounds = boundsForCanvasElement(element);
@@ -897,7 +1199,7 @@ export default function Inspiration({
       bounds.right - bounds.left,
       bounds.bottom - bounds.top,
     );
-    if (size > 8 && (active.type !== 'draw' || active.points.length > 1)) {
+    if (size > 8 && (!['draw', 'marker', 'smart'].includes(active.type) || active.points.length > 1)) {
       dispatchCanvas({
         type: 'add',
         element: { ...element, id: crypto.randomUUID() },
@@ -955,10 +1257,23 @@ export default function Inspiration({
           note: draft.note || '',
           url: draft.url || '',
           asset,
+          sticky: Boolean(draft.sticky),
           category: draft.category || 'general',
         });
         if (!mounted.current) return;
         setPositions((current) => ({ ...current, [result.id]: entry.point }));
+        if (draft.sticky) {
+          setStickyStore((current) => ({
+            project,
+            items: {
+              ...(current.project === project ? current.items : {}),
+              [result.id]: draft.sticky!,
+            },
+          }));
+        }
+        if (draft.sequenceFrom && stickyLinksProject.current === project) {
+          setStickyLinks((current) => [...current, { from: draft.sequenceFrom!, to: result.id }].slice(-1000));
+        }
         selectCard(result.id);
         setPending((current) => current.filter((item) => item.id !== entry.id));
         if (entry.preview) {
@@ -966,8 +1281,8 @@ export default function Inspiration({
           urls.current.delete(entry.preview);
         }
       } catch (error) {
-        const message = (error as Error).message;
-        showErrorToast(message, 'No pudimos subir el archivo');
+        const uploadError = (error as Error).message;
+        showErrorToast(uploadError, 'No pudimos subir el archivo');
         if (mounted.current)
           setPending((current) =>
             current.map((item) =>
@@ -975,7 +1290,7 @@ export default function Inspiration({
                 ? {
                     ...entry,
                     draft: retryDraft,
-                    error: message,
+                    error: uploadError,
                   }
                 : item,
             ),
@@ -994,7 +1309,6 @@ export default function Inspiration({
       return false;
     });
     if (!acceptedDrafts.length) return;
-    setCategory('all');
     const entries = acceptedDrafts.map((draft, index): Pending => {
       const preview =
         draft.file && /^image\/(jpeg|png|webp|avif)$/.test(draft.file.type)
@@ -1169,9 +1483,35 @@ export default function Inspiration({
   }
 
   function createPostItAt(point: Point) {
-    insertion.current = point;
     setContextMenu(null);
-    openForm();
+    addDrafts(
+      [
+        {
+          title: 'Post-it',
+          note: '',
+          sticky: defaultStickyMeta(stickyColor),
+        },
+      ],
+      point,
+    );
+    setTool('select');
+    setStickyPanel(null);
+  }
+  function createNextPostIt(id: string) {
+    const source = cardBounds(id);
+    const sourceMeta = stickyMetadata[id] || defaultStickyMeta(stickyColor);
+    addDrafts([{
+      title: 'Post-it', note: '', sequenceFrom: id,
+      sticky: defaultStickyMeta(sourceMeta.color),
+    }], { x: source.right + 150, y: source.top });
+    setStickyPanel(null);
+  }
+  function saveStickyText(item: WorkspaceInspiration, text: string) {
+    const original = item.note || (item.title !== 'Post-it' ? item.title : '');
+    if (text === original) return;
+    void run({ action: 'edit-inspiration', id: item.id, title: item.title,
+      note: text, url: item.url || '', sticky: true,
+      category: item.category || 'general' }).catch(() => {});
   }
 
   function drop(event: DragEvent<HTMLDivElement>) {
@@ -1239,6 +1579,10 @@ export default function Inspiration({
 
   function startGesture(event: PointerEvent<HTMLElement>, card?: string) {
     if (event.button !== 0 && event.button !== 1) return;
+    if (card && event.button === 0 && stickyMetadata[card]?.locked && !hand && !space) {
+      selectCard(card);
+      return;
+    }
     if (card && !canEdit && !hand && !space) {
       selectCard(card);
       focusBoard();
@@ -1252,8 +1596,15 @@ export default function Inspiration({
       ? data.inspiration.find((item) => item.id === card)
       : undefined;
     insertion.current = worldPoint(event.clientX, event.clientY);
-    if (panning) {
-      selectCard(null);
+    if (panning && !hand && !space && event.button === 0 && (tool === 'select' || tool === 'lasso' || tool === 'erase-area')) {
+      const origin = worldPoint(event.clientX, event.clientY);
+      gesture.current = { kind: 'marquee', pointer: event.pointerId,
+        start: { x: event.clientX, y: event.clientY }, camera, origin,
+        additive: event.shiftKey || event.metaKey || event.ctrlKey, points: [origin] };
+      if (tool === 'lasso') setLassoPoints([origin]);
+      else setMarquee({ left: origin.x, right: origin.x, top: origin.y, bottom: origin.y });
+    } else if (panning) {
+      if (!hand && !space) selectCard(null);
       gesture.current = {
         kind: 'pan',
         pointer: event.pointerId,
@@ -1261,7 +1612,19 @@ export default function Inspiration({
         camera,
       };
     } else {
-      selectCard(card!);
+      selectTarget('card:' + card!, event.shiftKey || event.metaKey || event.ctrlKey);
+      const cardKey = 'card:' + card!;
+      const keys = selection.includes(cardKey) ? selection : groups[cardKey]
+        ? Object.keys(groups).filter((key) => groups[key] === groups[cardKey]) : [cardKey];
+      if (canEdit && keys.length > 1 && !(event.shiftKey || event.metaKey || event.ctrlKey)) {
+        gesture.current = {
+          kind: 'multi', pointer: event.pointerId,
+          start: { x: event.clientX, y: event.clientY }, camera,
+          before: { elements: canvasElements, positions },
+          cards: keys.filter((key) => key.startsWith('card:')).map((key) => ({ id: key.slice(5), point: positionFor(key.slice(5)) })),
+          elements: canvasElements.filter((element) => keys.includes('element:' + element.id)),
+        };
+      } else {
       gesture.current = {
         kind: 'card',
         before: { elements: canvasElements, positions },
@@ -1273,6 +1636,7 @@ export default function Inspiration({
         targets:
           movingItem && isGuideItem(movingItem) ? alignmentTargets(card) : [],
       };
+      }
     }
     viewport.current?.setPointerCapture(event.pointerId);
     setDragging(true);
@@ -1282,13 +1646,28 @@ export default function Inspiration({
     event: PointerEvent<HTMLDivElement>,
     element: CanvasElement,
   ) {
-    if (event.button !== 0 || hand || space || tool !== 'select') return;
+    if (event.button !== 0 || hand || space || !['select', 'lasso'].includes(tool)) return;
     event.preventDefault();
     event.stopPropagation();
     focusBoard();
     insertion.current = worldPoint(event.clientX, event.clientY);
-    selectCanvasElement(element.id);
+    selectTarget('element:' + element.id, event.shiftKey || event.metaKey || event.ctrlKey);
     if (!canEdit) return;
+    const elementKey = 'element:' + element.id;
+    const keys = selection.includes(elementKey) ? selection : groups[elementKey]
+      ? Object.keys(groups).filter((key) => groups[key] === groups[elementKey]) : [elementKey];
+    if (keys.length > 1 && !(event.shiftKey || event.metaKey || event.ctrlKey)) {
+      gesture.current = {
+        kind: 'multi', pointer: event.pointerId,
+        start: { x: event.clientX, y: event.clientY }, camera,
+        before: { elements: canvasElements, positions },
+        cards: keys.filter((key) => key.startsWith('card:')).map((key) => ({ id: key.slice(5), point: positionFor(key.slice(5)) })),
+        elements: canvasElements.filter((candidate) => keys.includes('element:' + candidate.id)),
+      };
+      viewport.current?.setPointerCapture(event.pointerId);
+      setDragging(true);
+      return;
+    }
     gesture.current = {
       kind: 'canvas',
       pointer: event.pointerId,
@@ -1302,12 +1681,79 @@ export default function Inspiration({
     setDragging(true);
   }
 
+  function startStickyResize(event: PointerEvent<HTMLButtonElement>, id: string) {
+    if (!canEdit || event.button !== 0 || stickyMetadata[id]?.locked) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const node = cardNodes.current.get(id);
+    const meta = stickyMetadata[id] || defaultStickyMeta();
+    gesture.current = {
+      kind: 'resize',
+      pointer: event.pointerId,
+      start: { x: event.clientX, y: event.clientY },
+      card: id,
+      size: {
+        width: node?.offsetWidth || meta.width,
+        height: node?.offsetHeight || meta.height,
+      },
+    };
+    selectCard(id);
+    viewport.current?.setPointerCapture(event.pointerId);
+    setDragging(true);
+  }
+  function startFrameResize(event: PointerEvent<HTMLButtonElement>, element: Extract<CanvasElement, { type: 'frame' }>, corner: FrameResizeGesture['corner']) {
+    if (!canEdit || event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    selectCanvasElement(element.id);
+    gesture.current = {
+      kind: 'frame-resize', pointer: event.pointerId,
+      start: { x: event.clientX, y: event.clientY },
+      element, corner, before: { elements: canvasElements, positions },
+    };
+    viewport.current?.setPointerCapture(event.pointerId);
+    setDragging(true);
+  }
+
   function moveGesture(event: PointerEvent<HTMLDivElement>) {
     const active = gesture.current;
     if (!active || active.pointer !== event.pointerId) return;
     const x = event.clientX - active.start.x,
       y = event.clientY - active.start.y;
-    if (active.kind === 'card') {
+    if (active.kind === 'frame-resize') {
+      const dx = x / camera.zoom, dy = y / camera.zoom;
+      const left = active.corner.includes('w') ? active.element.x + dx : active.element.x;
+      const top = active.corner.includes('n') ? active.element.y + dy : active.element.y;
+      const right = active.corner.includes('e') ? active.element.x + active.element.width + dx : active.element.x + active.element.width;
+      const bottom = active.corner.includes('s') ? active.element.y + active.element.height + dy : active.element.y + active.element.height;
+      const width = Math.max(80, right - left), height = Math.max(80, bottom - top);
+      queueCanvasMove({ ...active.element,
+        x: active.corner.includes('w') ? right - width : left,
+        y: active.corner.includes('n') ? bottom - height : top,
+        width, height });
+    } else if (active.kind === 'resize') {
+      updateStickyMeta(active.card, (current) => ({
+        ...current,
+        width: Math.min(800, Math.max(180, active.size.width + x / camera.zoom)),
+        height: Math.min(800, Math.max(180, active.size.height + y / camera.zoom)),
+      }));
+    } else if (active.kind === 'marquee') {
+      const point = worldPoint(event.clientX, event.clientY);
+      if (tool === 'lasso') {
+        const last = active.points.at(-1)!;
+        if (Math.hypot(point.x - last.x, point.y - last.y) > 3 / camera.zoom) {
+          active.points.push(point);
+          setLassoPoints([...active.points]);
+        }
+      } else setMarquee({ left: Math.min(active.origin.x, point.x), top: Math.min(active.origin.y, point.y),
+        right: Math.max(active.origin.x, point.x), bottom: Math.max(active.origin.y, point.y) });
+    } else if (active.kind === 'multi') {
+      const offset = { x: x / active.camera.zoom, y: y / active.camera.zoom };
+      setPositions((current) => ({ ...current, ...Object.fromEntries(active.cards.map(({ id, point }) =>
+        [id, { x: point.x + offset.x, y: point.y + offset.y }])) }));
+      const moved = new Map(active.elements.map((element) => [element.id, translateCanvasElement(element, offset)]));
+      dispatchCanvas({ type: 'replace', elements: active.before.elements.map((element) => moved.get(element.id) || element) });
+    } else if (active.kind === 'card') {
       const rawPoint = {
         x: active.point.x + x / active.camera.zoom,
         y: active.point.y + y / active.camera.zoom,
@@ -1331,7 +1777,7 @@ export default function Inspiration({
       const alignment = alignedCanvasElement(rawElement, active.targets);
       queueCanvasMove(alignment.element);
       setAlignmentGuides(alignment.guides);
-    } else
+    } else if (active.kind === 'pan')
       setCamera({
         ...active.camera,
         x: active.camera.x + x,
@@ -1340,8 +1786,40 @@ export default function Inspiration({
   }
   function endGesture() {
     const active = gesture.current;
-    if (active?.kind === 'canvas' || active?.kind === 'card') {
-      if (active.kind === 'canvas') flushCanvasMove();
+    if (active?.kind === 'marquee') {
+      if ((marquee && (marquee.right - marquee.left > 3 || marquee.bottom - marquee.top > 3)) || active.points.length > 2) {
+        const hit = (b: BoardBounds) => tool === 'lasso'
+          ? [
+              { x: b.left, y: b.top }, { x: b.right, y: b.top },
+              { x: b.left, y: b.bottom }, { x: b.right, y: b.bottom },
+              { x: (b.left + b.right) / 2, y: (b.top + b.bottom) / 2 },
+            ].some((point) => pointInPolygon(point, active.points)) ||
+            active.points.some((point) => point.x >= b.left && point.x <= b.right && point.y >= b.top && point.y <= b.bottom)
+          : !!marquee && b.left <= marquee.right && b.right >= marquee.left && b.top <= marquee.bottom && b.bottom >= marquee.top;
+        if (tool === 'erase-area') {
+          const ids = new Set(canvasElements.filter((element) => hit(boundsForCanvasElement(element))).map((element) => element.id));
+          if (ids.size) {
+            dispatchCanvas({ type: 'replace', elements: canvasElements.filter((element) => !ids.has(element.id)) });
+            dispatchCanvas({ type: 'commit', before: { elements: canvasElements, positions } });
+          }
+          setMarquee(null);
+          gesture.current = null;
+          setDragging(false);
+          return;
+        }
+        const keys = [
+          ...items.filter((item) => hit(cardBounds(item.id))).map((item) => 'card:' + item.id),
+          ...canvasElements.filter((element) => hit(boundsForCanvasElement(element))).map((element) => 'element:' + element.id),
+        ];
+        setSelection((current) => active.additive ? [...new Set([...current, ...keys])] : keys);
+        setSelected(null);
+        setSelectedCanvasElement(null);
+      } else if (!active.additive) selectCard(null);
+      setMarquee(null);
+      setLassoPoints([]);
+    }
+    if (active?.kind === 'canvas' || active?.kind === 'card' || active?.kind === 'multi' || active?.kind === 'frame-resize') {
+      if (active.kind === 'canvas' || active.kind === 'frame-resize') flushCanvasMove();
       dispatchCanvas({ type: 'commit', before: active.before });
     }
     gesture.current = null;
@@ -1384,7 +1862,16 @@ export default function Inspiration({
     if (!canEdit || busy || deleting.current) return;
     deleting.current = true;
     void run({ action: 'delete-inspiration', id })
-      .then(() => setSelected((current) => (current === id ? null : current)))
+      .then(() => {
+        setSelected((current) => (current === id ? null : current));
+        setStickyLinks((current) => current.filter((link) => link.from !== id && link.to !== id));
+        setStickyStore((current) => {
+          if (current.project !== project || !current.items[id]) return current;
+          const items = { ...current.items };
+          delete items[id];
+          return { ...current, items };
+        });
+      })
       .catch(() => {})
       .finally(() => {
         deleting.current = false;
@@ -1393,6 +1880,18 @@ export default function Inspiration({
 
   function deleteSelected() {
     if (!canEdit || busy) return;
+    if (selection.length > 1) {
+      const cards = selection.filter((key) => key.startsWith('card:')).map((key) => key.slice(5));
+      const marks = new Set(selection.filter((key) => key.startsWith('element:')).map((key) => key.slice(8)));
+      if (marks.size) {
+        dispatchCanvas({ type: 'replace', elements: canvasElements.filter((element) => !marks.has(element.id)) });
+        dispatchCanvas({ type: 'commit', before: { elements: canvasElements, positions } });
+      }
+      cards.forEach((id) => void run({ action: 'delete-inspiration', id }).catch(() => {}));
+      setStickyLinks((current) => current.filter((link) => !cards.includes(link.from) && !cards.includes(link.to)));
+      setSelection([]); setSelected(null); setSelectedCanvasElement(null);
+      return;
+    }
     if (selected) {
       deleteInspiration(selected);
       return;
@@ -1403,103 +1902,26 @@ export default function Inspiration({
     }
   }
 
-  function openForm(item?: WorkspaceInspiration) {
-    setEditing(item?.id || null);
-    setTitle(item?.title || '');
-    setNote(item?.note || '');
-    setUrl(item?.url || '');
-    setItemCategory(item?.category || 'general');
-    setShowForm(true);
-  }
-
-  function closeForm() {
-    setShowForm(false);
-    setEditing(null);
-    focusBoard();
-  }
-
-  function save(event: SyntheticEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!canEdit || busy) return;
-    if (url.trim() && !safeReferenceUrl(url.trim())) {
-      notify('Usá un enlace http o https sin credenciales.');
-      return;
-    }
-    if (editing) {
-      void run({
-        action: 'edit-inspiration',
-        id: editing,
-        title: title.trim(),
-        note,
-        url,
-        category: itemCategory,
-      })
-        .then(closeForm)
-        .catch(() => {});
-    } else {
-      addDrafts([
-        { title: title.trim() || 'Nota', note, url, category: itemCategory },
-      ]);
-      closeForm();
-    }
-  }
   const selectedItem = data.inspiration.find((item) => item.id === selected);
+  const selectedSticky =
+    selectedItem &&
+    !selectedItem.asset &&
+    (!selectedItem.url || stickyMetadata[selectedItem.id])
+      ? stickyMetadata[selectedItem.id] || defaultStickyMeta()
+      : null;
+  const selectedFrame = canvasElements.find(
+    (element): element is Extract<CanvasElement, { type: 'frame' }> =>
+      element.id === selectedCanvasElement && element.type === 'frame',
+  );
+  const availableStickyIds = useMemo(
+    () => new Set(data.inspiration.map((item) => item.id)),
+    [data.inspiration],
+  );
 
   return (
     <div className="workspace-content inspiration-page">
       <section className="workspace-section inspiration-board-section">
-        <div className="inspiration-command-bar">
-          <div className="inspiration-board-title">
-            <h1>Inspiración</h1>
-            <span>{data.inspiration.length} referencias</span>
-          </div>
-          <div className="inspiration-command-actions">
-            <label className="inspiration-search">
-              <Search size={16} />
-              <input
-                type="search"
-                aria-label="Buscar referencias"
-                placeholder="Buscar referencias"
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-              />
-            </label>
-            {canEdit && (
-              <button className="workspace-primary" onClick={() => openForm()}>
-                <Plus size={16} /> Nueva idea
-              </button>
-            )}
-          </div>
-        </div>
-        <div
-          className="workspace-filter-row"
-          aria-label="Categorías de referencias"
-        >
-          <button
-            aria-pressed={category === 'all'}
-            className={category === 'all' ? 'active' : ''}
-            onClick={() => setCategory('all')}
-          >
-            Todas <span>{data.inspiration.length}</span>
-          </button>
-          {Object.entries(categoryLabels)
-            .filter(([key]) => key !== 'general')
-            .map(([key, label]) => {
-              const count = data.inspiration.filter(
-                (item) => item.category === key,
-              ).length;
-              return count ? (
-                <button
-                  key={key}
-                  aria-pressed={category === key}
-                  className={category === key ? 'active' : ''}
-                  onClick={() => setCategory(key)}
-                >
-                  {label} <span>{count}</span>
-                </button>
-              ) : null;
-            })}
-        </div>
+        <div className="inspiration-command-bar"><div className="inspiration-board-title"><h1>Lienzo</h1></div></div>
         <div className="inspiration-canvas-wrap">
           <div
             className="inspiration-tools"
@@ -1513,6 +1935,7 @@ export default function Inspiration({
               onClick={() => {
                 setHand(false);
                 setTool('select');
+                setPenMenuOpen(false);
                 focusBoard();
               }}
             >
@@ -1551,6 +1974,15 @@ export default function Inspiration({
                 </button>
                 <span />
                 <button
+                  title="Crear frame"
+                  aria-label="Crear frame"
+                  aria-expanded={frameMenuOpen}
+                  aria-pressed={tool === 'frame'}
+                  onClick={() => setFrameMenuOpen((open) => !open)}
+                >
+                  <Frame size={19} />
+                </button>
+                <button
                   title="Crear rectángulo"
                   aria-label="Crear rectángulo"
                   aria-pressed={tool === 'rectangle'}
@@ -1575,41 +2007,103 @@ export default function Inspiration({
                   <ArrowRight size={19} />
                 </button>
                 <button
-                  title="Dibujar"
-                  aria-label="Dibujar"
-                  aria-pressed={tool === 'draw'}
-                  onClick={() => chooseTool('draw')}
+                  title="Lápiz y dibujo"
+                  aria-label="Lápiz y dibujo"
+                  aria-expanded={penMenuOpen}
+                  aria-pressed={['draw', 'marker', 'smart', 'erase', 'erase-area', 'lasso'].includes(tool)}
+                  onClick={() => {
+                    if (!penMenuOpen && tool === 'select') setTool('draw');
+                    setPenMenuOpen((open) => !open);
+                    setHand(false);
+                    focusBoard();
+                  }}
                 >
                   <PencilLine size={19} />
-                </button>
-                <button
-                  title="Borrador"
-                  aria-label="Borrador"
-                  aria-pressed={tool === 'erase'}
-                  onClick={() => chooseTool('erase')}
-                >
-                  <Eraser size={18} />
                 </button>
                 <span />
                 <button
                   title="Crear post-it"
                   aria-label="Crear post-it"
-                  onClick={() => openForm()}
+                  aria-expanded={tool === 'sticky'}
+                  aria-pressed={tool === 'sticky'}
+                  onClick={() => {
+                    if (tool === 'sticky') chooseTool('select');
+                    else {
+                      chooseTool('sticky');
+                      setStickyPanel('colors');
+                    }
+                  }}
                 >
                   <StickyNote size={19} />
-                </button>
-                <button
-                  title="Subir archivos"
-                  aria-label="Subir archivos"
-                  onClick={() => fileInput.current?.click()}
-                >
-                  <UploadCloud size={19} />
                 </button>
               </>
             )}
           </div>
+          {canEdit && tool === 'sticky' && (
+            <div className="inspiration-sticky-palette" role="toolbar" aria-label="Color del post-it">
+              <span>Elegí un color</span>
+              <div>
+                {stickyColors.map((color) => (
+                  <button
+                    key={color}
+                    type="button"
+                    aria-label={`Post-it ${color}`}
+                    aria-pressed={stickyColor === color}
+                    onClick={() => setStickyColor(color)}
+                    style={{ '--sticky-color': color } as CSSProperties}
+                  />
+                ))}
+              </div>
+              <small>Después hacé click en el lienzo</small>
+            </div>
+          )}
+          {canEdit && penMenuOpen && (
+            <div className="inspiration-pen-menu" role="toolbar" aria-label="Herramientas del lápiz">
+              {([
+                ['draw', 'Lápiz', PencilLine],
+                ['marker', 'Resaltador', Highlighter],
+                ['smart', 'Lápiz suavizado', Sparkles],
+                ['erase', 'Borrador de objetos', Eraser],
+                ['erase-area', 'Borrar área', Scan],
+                ['lasso', 'Selección libre', Lasso],
+              ] as const).map(([id, label, Icon]) => (
+                <button key={id} type="button" title={label} aria-label={label}
+                  aria-pressed={tool === id} onClick={() => chooseTool(id)}><Icon size={23} /></button>
+              ))}
+              <span className="inspiration-pen-divider" />
+              {[2, 4, 7].map((weight) => (
+                <button key={weight} type="button" title={`Grosor ${weight}`}
+                  aria-label={`Grosor ${weight}`} aria-pressed={strokeWeight === weight}
+                  onClick={() => setStrokeWeight(weight)}>
+                  <i className="inspiration-pen-size" style={{ width: weight, height: weight }} />
+                </button>
+              ))}
+              {['#1f2933', '#ff6570', '#29ba62'].map((color) => (
+                <button key={color} type="button" title={`Color ${color}`}
+                  aria-label={`Color ${color}`} aria-pressed={stroke === color}
+                  onClick={() => setStroke(color)}>
+                  <i className="inspiration-pen-swatch" style={{ backgroundColor: color }} />
+                </button>
+              ))}
+            </div>
+          )}
+          {canEdit && frameMenuOpen && (
+            <fieldset className="inspiration-frame-menu" aria-label="Tamaño del frame">
+              <button className="inspiration-frame-custom" onClick={() => chooseTool('frame')}>
+                <Frame size={22} /> <span>Personalizado <small>Arrastrá en el lienzo</small></span>
+              </button>
+              <div className="inspiration-frame-presets">
+                {framePresets.map((preset) => (
+                  <button key={preset.label} onClick={() => createFrame(preset.width, preset.height)}>
+                    <span className="inspiration-frame-preset-icon" style={{ aspectRatio: `${preset.width} / ${preset.height}` }} />
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
+            </fieldset>
+          )}
           {canEdit &&
-            ['rectangle', 'circle', 'arrow', 'draw'].includes(tool) && (
+            ['rectangle', 'circle', 'arrow'].includes(tool) && (
               <div
                 className="inspiration-stroke-controls"
                 aria-label="Estilo de trazo"
@@ -1650,21 +2144,101 @@ export default function Inspiration({
                 </button>
               </div>
             )}
-          {(selectedItem || selectedCanvasElement) && canEdit && (
+          {(selection.length > 0 || selectedItem || selectedCanvasElement) && canEdit && (
             <div
-              className="inspiration-selection-actions"
+              className={'inspiration-selection-actions' + (selectedSticky ? ' inspiration-sticky-toolbar' : '')}
               role="toolbar"
               aria-label="Acciones de selección"
+              style={selectedSticky && selectedItem ? {
+                left: Math.max(70, Math.min(viewportSize.width - 630,
+                  positionFor(selectedItem.id).x * camera.zoom + camera.x)),
+                top: Math.max(12, positionFor(selectedItem.id).y * camera.zoom + camera.y - 64),
+                right: 'auto',
+              } : undefined}
             >
-              <span>{selectedItem?.title || 'Dibujo'}</span>
-              {selectedItem && (
-                <button
-                  aria-label="Editar referencia"
-                  title="Editar referencia"
-                  onClick={() => openForm(selectedItem)}
-                >
-                  <Pencil size={16} />
-                </button>
+              {selectedFrame && editingFrameTitle ? (
+                <input
+                  ref={frameTitleInput}
+                  className="inspiration-frame-title-input"
+                  aria-label="Título del frame"
+                  defaultValue={selectedFrame.title}
+                  maxLength={120}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') event.currentTarget.blur();
+                    if (event.key === 'Escape') { event.currentTarget.value = selectedFrame.title; event.currentTarget.blur(); }
+                  }}
+                  onBlur={(event) => {
+                    const title = event.currentTarget.value.trim();
+                    if (title !== selectedFrame.title)
+                      dispatchCanvas({ type: 'update', element: { ...selectedFrame, title } });
+                    setEditingFrameTitle(false);
+                  }}
+                />
+              ) : !selectedSticky ? (
+                <span>{selection.length > 1 ? `${selection.length} elementos` : selectedItem?.title || selectedFrame?.title || (selectedFrame ? 'Frame' : 'Dibujo')}</span>
+              ) : null}
+              {selection.length > 1 && !selection.every((key) => groups[key] && groups[key] === groups[selection[0]]) && (
+                <button aria-label="Agrupar selección" title="Agrupar selección (Ctrl / ⌘ G)" onClick={groupSelection}><Group size={16} /></button>
+              )}
+              {selection.some((key) => groups[key]) && (
+                <button aria-label="Desagrupar selección" title="Desagrupar selección" onClick={ungroupSelection}><Ungroup size={16} /></button>
+              )}
+              {selectedFrame && selection.length === 1 && (
+                <>
+                  <button aria-label="Editar título del frame" title="Editar título" onClick={() => setEditingFrameTitle(true)}><Pencil size={16} /></button>
+                  <label className="inspiration-frame-color" title="Color de fondo">
+                    <input type="color" aria-label="Color de fondo del frame" value={selectedFrame.fill} onChange={(event) => dispatchCanvas({ type: 'update', element: { ...selectedFrame, fill: event.target.value } })} />
+                  </label>
+                </>
+              )}
+              {selectedItem && selection.length === 1 && (
+                <>
+                  {selectedSticky && (
+                    <>
+                      <span className="inspiration-sticky-type-mark">Aa</span>
+                      <select aria-label="Tamaño de letra" value={selectedSticky.fontSize}
+                        onChange={(event) => updateStickyMeta(selectedItem.id, (current) => ({ ...current, fontSize: Number(event.target.value) }))}>
+                        {[14, 18, 24, 30, 36].map((size) => <option key={size} value={size}>{size}px</option>)}
+                      </select>
+                      <button aria-label="Negrita" title="Negrita" aria-pressed={selectedSticky.bold}
+                        onClick={() => updateStickyMeta(selectedItem.id, (current) => ({ ...current, bold: !current.bold }))}><Bold size={18} /></button>
+                      <button aria-label="Alinear texto" title="Alinear texto"
+                        onClick={() => updateStickyMeta(selectedItem.id, (current) => ({ ...current,
+                          align: current.align === 'left' ? 'center' : current.align === 'center' ? 'right' : 'left' }))}>
+                        {selectedSticky.align === 'center' ? <AlignCenter size={18} /> : selectedSticky.align === 'right' ? <AlignRight size={18} /> : <AlignLeft size={18} />}
+                      </button>
+                      <button
+                        className="inspiration-sticky-color-button"
+                        aria-label="Cambiar color"
+                        title="Cambiar color"
+                        aria-pressed={stickyPanel === 'colors'}
+                        style={{ '--sticky-color': selectedSticky.color } as CSSProperties}
+                        onClick={() => setStickyPanel((panel) => panel === 'colors' ? null : 'colors')}
+                      />
+                      <button aria-label="Agregar tag" title="Agregar tag"
+                        aria-pressed={stickyPanel === 'tags'}
+                        onClick={() => setStickyPanel((panel) => panel === 'tags' ? null : 'tags')}>
+                        <Tag size={17} />
+                      </button>
+                      <button aria-label="Agregar reacción" title="Agregar reacción"
+                        aria-pressed={stickyPanel === 'reactions'}
+                        onClick={() => setStickyPanel((panel) => panel === 'reactions' ? null : 'reactions')}>
+                        <SmilePlus size={18} />
+                      </button>
+                      <button aria-label="Adjuntar link" title="Adjuntar link" onClick={() => {
+                        setLinkDraft(selectedItem.url || '');
+                        setStickyPanel((panel) => panel === 'link' ? null : 'link');
+                      }}><Link2 size={17} /></button>
+                      <button aria-label="Crear siguiente post-it" title="Crear siguiente post-it"
+                        onClick={() => createNextPostIt(selectedItem.id)}><ArrowRight size={19} /></button>
+                      <button aria-label={selectedSticky.locked ? 'Desbloquear post-it' : 'Bloquear post-it'}
+                        title={selectedSticky.locked ? 'Desbloquear' : 'Bloquear'}
+                        onClick={() => updateStickyMeta(selectedItem.id, (current) => ({ ...current, locked: !current.locked }))}>
+                        {selectedSticky.locked ? <LockKeyhole size={18} /> : <UnlockKeyhole size={18} />}
+                      </button>
+                    </>
+                  )}
+                </>
               )}
               <button
                 aria-label="Eliminar selección"
@@ -1684,22 +2258,65 @@ export default function Inspiration({
               </button>
             </div>
           )}
-          <input
-            ref={fileInput}
-            className="workspace-file-input"
-            type="file"
-            multiple
-            aria-label="Elegir archivos"
-            onChange={(event) => {
-              addDrafts(
-                Array.from(event.target.files || []).map((file) => ({
-                  file,
-                  title: file.name,
-                })),
-              );
-              event.target.value = '';
-            }}
-          />
+          {selectedItem && selectedSticky && stickyPanel && (
+            <div className="inspiration-sticky-inspector" aria-label="Opciones del post-it"
+              style={{ left: Math.max(70, Math.min(viewportSize.width - 280,
+                positionFor(selectedItem.id).x * camera.zoom + camera.x)),
+                top: Math.max(54, positionFor(selectedItem.id).y * camera.zoom + camera.y - 12),
+                right: 'auto' }}>
+              {stickyPanel === 'colors' && (
+                <div className="inspiration-sticky-inspector-colors">
+                  {stickyColors.map((color) => (
+                    <button key={color} type="button" aria-label={`Color ${color}`}
+                      aria-pressed={selectedSticky.color === color}
+                      style={{ '--sticky-color': color } as CSSProperties}
+                      onClick={() => updateStickyMeta(selectedItem.id, (current) => ({ ...current, color }))} />
+                  ))}
+                </div>
+              )}
+              {stickyPanel === 'tags' && (
+                <form onSubmit={(event) => {
+                  event.preventDefault();
+                  const tag = tagDraft.trim().slice(0, 24);
+                  if (!tag) return;
+                  updateStickyMeta(selectedItem.id, (current) => ({
+                    ...current,
+                    tags: [...new Set([...current.tags, tag])].slice(0, 5),
+                  }));
+                  setTagDraft('');
+                }}>
+                  <input value={tagDraft} maxLength={24} aria-label="Nuevo tag"
+                    placeholder="Escribí un tag" onChange={(event) => setTagDraft(event.target.value)} />
+                  <button type="submit">Agregar</button>
+                </form>
+              )}
+              {stickyPanel === 'reactions' && (
+                <div className="inspiration-sticky-reaction-picker">
+                  {['👍', '❤️', '🎉', '👀', '💡', '✅'].map((emoji) => (
+                    <button key={emoji} type="button" aria-label={`Reaccionar ${emoji}`}
+                      onClick={() => updateStickyMeta(selectedItem.id, (current) => ({
+                        ...current,
+                        reactions: { ...current.reactions, [emoji]: (current.reactions[emoji] || 0) + 1 },
+                      }))}>{emoji}</button>
+                  ))}
+                </div>
+              )}
+              {stickyPanel === 'link' && (
+                <form onSubmit={(event) => {
+                  event.preventDefault();
+                  const url = linkDraft.trim();
+                  if (url && !safeReferenceUrl(url)) { notify('Usá un enlace http o https válido.'); return; }
+                  void run({ action: 'edit-inspiration', id: selectedItem.id,
+                    title: selectedItem.title, note: selectedItem.note || '',
+                    url, category: selectedItem.category || 'general' }).then(() => setStickyPanel(null)).catch(() => {});
+                }}>
+                  <input ref={stickyLinkInput} type="url" aria-label="Enlace del post-it" placeholder="https://…"
+                    value={linkDraft} onChange={(event) => setLinkDraft(event.target.value)} />
+                  <button type="submit">Guardar</button>
+                </form>
+              )}
+            </div>
+          )}
           {/* The canvas is a keyboard-operated application, not a document region. */}
           {/* oxlint-disable jsx-a11y/no-noninteractive-element-interactions, jsx-a11y/no-noninteractive-tabindex */}
           <div
@@ -1707,8 +2324,10 @@ export default function Inspiration({
             className={
               'inspiration-board-shell free-canvas' +
               (hand || space ? ' hand-tool' : '') +
-              (tool === 'draw' && !hand && !space ? ' draw-tool' : '') +
-              (tool === 'erase' && !hand && !space ? ' erase-tool' : '') +
+              (['draw', 'marker', 'smart'].includes(tool) && !hand && !space ? ' draw-tool' : '') +
+              (tool === 'sticky' && !hand && !space ? ' sticky-tool' : '') +
+              (tool === 'frame' && !hand && !space ? ' shape-tool' : '') +
+              (['erase', 'erase-area'].includes(tool) && !hand && !space ? ' erase-tool' : '') +
               ((tool === 'rectangle' ||
                 tool === 'circle' ||
                 tool === 'arrow') &&
@@ -1731,17 +2350,36 @@ export default function Inspiration({
               if (target.closest('.inspiration-context-menu')) return;
               setContextMenu(null);
               const card = target.closest<HTMLElement>('[data-card]');
+              if (
+                tool === 'sticky' &&
+                canEdit &&
+                !hand &&
+                !space &&
+                event.button === 0 &&
+                !card
+              ) {
+                event.preventDefault();
+                event.stopPropagation();
+                createPostItAt(worldPoint(event.clientX, event.clientY));
+                return;
+              }
               if (tool === 'erase' && canEdit) {
                 event.preventDefault();
                 event.stopPropagation();
-                // The eraser intentionally affects only board annotations,
-                // never project references such as photos or post-its.
-                if (!card) eraseAt(worldPoint(event.clientX, event.clientY));
+                eraseAtPointer(event);
+                viewport.current?.setPointerCapture(event.pointerId);
+                return;
+              }
+              if (tool === 'erase-area' && !card && canEdit) {
+                startGesture(event);
                 return;
               }
               const drawingTool =
                 tool !== 'select' &&
+                tool !== 'sticky' &&
                 tool !== 'erase' &&
+                tool !== 'erase-area' &&
+                tool !== 'lasso' &&
                 !hand &&
                 !space &&
                 event.button === 0 &&
@@ -1752,7 +2390,7 @@ export default function Inspiration({
               }
               if (!card) {
                 const element =
-                  tool === 'select' && !hand && !space
+                  (tool === 'select' || tool === 'lasso') && !hand && !space
                     ? markAt(worldPoint(event.clientX, event.clientY))
                     : undefined;
                 if (element) startCanvasGesture(event, element);
@@ -1769,7 +2407,17 @@ export default function Inspiration({
                 startGesture(event, card.dataset.card);
               }
             }}
+            onDoubleClick={(event) => {
+              const target = event.target as HTMLElement;
+              if (target.closest('[data-card], button, input, textarea')) return;
+              const element = markAt(worldPoint(event.clientX, event.clientY));
+              if (element?.type === 'frame') {
+                selectCanvasElement(element.id);
+              }
+            }}
             onPointerMove={(event) => {
+              if (tool === 'erase' && event.buttons === 1 && !gesture.current && !activeCanvasElement.current)
+                eraseAtPointer(event);
               if (!updateCanvasElement(event)) moveGesture(event);
             }}
             onPointerUp={(event) => {
@@ -1838,6 +2486,11 @@ export default function Inspiration({
                 redoCanvas();
                 return;
               }
+              if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'g') {
+                event.preventDefault();
+                if (event.shiftKey) ungroupSelection(); else groupSelection();
+                return;
+              }
               if (!event.metaKey && !event.ctrlKey && !event.altKey) {
                 const key = event.key.toLowerCase();
                 if (key === 'v') chooseTool('select');
@@ -1848,7 +2501,8 @@ export default function Inspiration({
                 if (key === '1') fitBoard();
                 if (canEdit && key === 'n') {
                   event.preventDefault();
-                  openForm();
+                  chooseTool('sticky');
+                  setStickyPanel('colors');
                 }
                 if (canEdit && key === 'p') chooseTool('draw');
                 if (canEdit && key === 'r') chooseTool('rectangle');
@@ -1872,7 +2526,7 @@ export default function Inspiration({
               }
               if (
                 event.key.startsWith('Arrow') &&
-                (selected || selectedCanvasElement) &&
+                (selected || selectedCanvasElement || selection.length) &&
                 canEdit
               ) {
                 event.preventDefault();
@@ -1891,7 +2545,20 @@ export default function Inspiration({
                         ? -delta
                         : 0,
                 };
-                if (selected) {
+                if (selection.length > 1) {
+                  const cards = selection.filter((key) => key.startsWith('card:')).map((key) => key.slice(5));
+                  const marks = new Set(selection.filter((key) => key.startsWith('element:')).map((key) => key.slice(8)));
+                  const before = { elements: canvasElements, positions };
+                  if (cards.length) setPositions((current) => ({ ...current,
+                    ...Object.fromEntries(cards.map((id) => {
+                      const point = positionFor(id);
+                      return [id, { x: point.x + offset.x, y: point.y + offset.y }];
+                    })),
+                  }));
+                  if (marks.size) dispatchCanvas({ type: 'replace', elements: canvasElements.map((element) =>
+                    marks.has(element.id) ? translateCanvasElement(element, offset) : element) });
+                  dispatchCanvas({ type: 'commit', before });
+                } else if (selected) {
                   const previous = positionFor(selected);
                   setPositions(
                     (current) => ({
@@ -1927,7 +2594,10 @@ export default function Inspiration({
             onKeyUp={(event) => {
               if (event.code === 'Space') setSpace(false);
             }}
-            style={{ backgroundPosition: camera.x + 'px ' + camera.y + 'px' }}
+            style={{
+              backgroundPosition: camera.x + 'px ' + camera.y + 'px',
+              '--sticky-cursor': stickyCursor(stickyColor),
+            } as CSSProperties}
           >
             {contextMenu && (
               <div
@@ -1968,12 +2638,15 @@ export default function Inspiration({
               size={viewportSize}
               draft={canvasDraft}
               guides={alignmentGuides}
-              selected={
-                canvasElements.find(
-                  (element) => element.id === selectedCanvasElement,
-                ) || null
-              }
+              selected={selectedCanvasMarks}
             />
+            {lassoPoints.length > 1 && (
+              <svg className="inspiration-lasso-preview" aria-hidden="true"
+                width={viewportSize.width} height={viewportSize.height}>
+                <polyline points={lassoPoints.map((point) =>
+                  `${point.x * camera.zoom + camera.x},${point.y * camera.zoom + camera.y}`).join(' ')} />
+              </svg>
+            )}
             <div
               className="inspiration-world"
               style={{
@@ -1987,10 +2660,54 @@ export default function Inspiration({
                   ')',
               }}
             >
+              <svg className="inspiration-sequence-links" aria-hidden="true">
+                <defs><marker id="inspiration-sequence-arrow" viewBox="0 0 10 10"
+                  refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+                  <path d="M 0 0 L 10 5 L 0 10 z" fill="#858c88" />
+                </marker></defs>
+                {[
+                  ...stickyLinks.map((link) => ({ ...link, point: null as Point | null })),
+                  ...pending.filter((entry) => entry.draft.sequenceFrom).map((entry) => ({
+                    from: entry.draft.sequenceFrom!, to: entry.id, point: entry.point as Point | null,
+                  })),
+                ].filter((link) => availableStickyIds.has(link.from) &&
+                  (link.point || availableStickyIds.has(link.to)))
+                  .map((link) => {
+                    const from = positionFor(link.from);
+                    const fromMeta = stickyMetadata[link.from] || defaultStickyMeta();
+                    const to = link.point || positionFor(link.to);
+                    return <line key={link.from + ':' + link.to}
+                      x1={from.x + fromMeta.width + 8} y1={from.y + fromMeta.height / 2}
+                      x2={to.x - 13} y2={to.y + (stickyMetadata[link.to]?.height || 240) / 2}
+                      stroke="#858c88" strokeWidth="2" markerEnd="url(#inspiration-sequence-arrow)" />;
+                  })}
+              </svg>
+              {selectedFrame && canEdit && (
+                <div className="inspiration-frame-resize-box" style={{
+                  left: selectedFrame.x, top: selectedFrame.y,
+                  width: selectedFrame.width, height: selectedFrame.height,
+                }}>
+                  {(['nw', 'ne', 'sw', 'se'] as const).map((corner) => (
+                    <button key={corner} type="button"
+                      className={'inspiration-frame-resize-handle ' + corner}
+                      aria-label={'Redimensionar frame ' + corner}
+                      onPointerDown={(event) => startFrameResize(event, selectedFrame, corner)} />
+                  ))}
+                </div>
+              )}
+              {marquee && <div className="inspiration-marquee" style={{
+                left: marquee.left, top: marquee.top,
+                width: marquee.right - marquee.left,
+                height: marquee.bottom - marquee.top,
+              }} />}
               {visibleItems.map(({ item, order: index }) => {
                 const point = positionFor(item.id),
                   asset = item.asset ? assetMap.get(item.asset) : undefined;
-                const isNote = !item.asset && !item.url;
+                const stickyMeta = stickyMetadata[item.id];
+                const isNote = !item.asset && (!item.url || Boolean(stickyMeta));
+                const noteMeta = isNote
+                  ? stickyMeta || defaultStickyMeta(stickyColors[index % 3])
+                  : null;
                 const isPhoto =
                   asset && /^image\/(jpeg|png|webp|avif)$/.test(asset.mime);
                 return (
@@ -2005,9 +2722,20 @@ export default function Inspiration({
                       'inspiration-card inspiration-board-card ' +
                       (isPhoto ? 'inspiration-photo-card ' : '') +
                       (isNote ? 'post-it post-it-' + (index % 3) : '') +
-                      (selected === item.id ? ' selected' : '')
+                      (selection.includes('card:' + item.id) ? ' selected' : '')
                     }
-                    style={{ left: point.x, top: point.y }}
+                    style={{
+                      left: point.x,
+                      top: point.y,
+                      ...(noteMeta
+                        ? {
+                            width: noteMeta.width,
+                            height: noteMeta.height,
+                            '--sticky-color': noteMeta.color,
+                            '--sticky-ink': noteMeta.color === '#303030' ? '#ffffff' : '#252525',
+                          }
+                        : {}),
+                    } as CSSProperties}
                   >
                     {isPhoto ? (
                       <PhotoFrame
@@ -2020,7 +2748,7 @@ export default function Inspiration({
                         commentCount={commentsByItem.get(item.id)?.length || 0}
                         onDrag={startGesture}
                         onSelect={(id) => {
-                          selectCard(id);
+                          if (!selection.includes('card:' + id)) selectTarget('card:' + id);
                           focusBoard();
                         }}
                         onComments={() => {
@@ -2039,7 +2767,7 @@ export default function Inspiration({
                             startGesture(event, item.id)
                           }
                           onClick={() => {
-                            selectCard(item.id);
+                            if (!selection.includes('card:' + item.id)) selectTarget('card:' + item.id);
                             focusBoard();
                           }}
                         >
@@ -2062,7 +2790,7 @@ export default function Inspiration({
                             share={share}
                             invite={invite}
                           />
-                        ) : item.url ? (
+                        ) : item.url && !isNote ? (
                           <div
                             className={
                               'inspiration-card-visual visual-' + (index % 5)
@@ -2085,9 +2813,40 @@ export default function Inspiration({
                               <span>{shortDate(item.created)}</span>
                             </div>
                           )}
-                          <h3>{item.title}</h3>
-                          {item.note && (
+                          {!isNote && <h3>{item.title}</h3>}
+                          {isNote ? (
+                            <div className="inspiration-note-text"
+                              role="textbox"
+                              tabIndex={0}
+                              aria-label="Texto del post-it"
+                              aria-multiline="true"
+                              contentEditable={canEdit && !noteMeta?.locked}
+                              suppressContentEditableWarning
+                              data-placeholder="Escribí aquí…"
+                              style={{ fontSize: noteMeta?.fontSize,
+                                fontWeight: noteMeta?.bold ? 700 : 400, textAlign: noteMeta?.align }}
+                              onPointerDown={(event) => event.stopPropagation()}
+                              onFocus={() => selectCard(item.id)}
+                              onKeyDown={(event) => {
+                                if (event.key === 'Escape' || ((event.metaKey || event.ctrlKey) && event.key === 'Enter'))
+                                  event.currentTarget.blur();
+                              }}
+                              onBlur={(event) => saveStickyText(item, event.currentTarget.innerText.replace(/\u00a0/g, ' '))}>
+                              {item.note || (item.title !== 'Post-it' ? item.title : '')}
+                            </div>
+                          ) : item.note ? (
                             <p className="inspiration-note-text">{item.note}</p>
+                          ) : null}
+                          {noteMeta && noteMeta.tags.length > 0 && (
+                            <div className="inspiration-sticky-tags" aria-label="Tags">
+                              {noteMeta.tags.map((tag) => (
+                                <button key={tag} type="button" title="Quitar tag"
+                                  onClick={() => updateStickyMeta(item.id, (current) => ({
+                                    ...current,
+                                    tags: current.tags.filter((value) => value !== tag),
+                                  }))}>#{tag}</button>
+                              ))}
+                            </div>
                           )}
                           {safeReferenceUrl(item.url) && (
                             <a
@@ -2095,7 +2854,7 @@ export default function Inspiration({
                               target="_blank"
                               rel="noopener noreferrer"
                             >
-                              Abrir referencia <ArrowUpRight size={15} />
+                              Abrir enlace <ArrowUpRight size={15} />
                             </a>
                           )}
                           {asset && (
@@ -2113,7 +2872,23 @@ export default function Inspiration({
                               <span>Por {item.author}</span>
                             </div>
                           )}
+                          {noteMeta && Object.keys(noteMeta.reactions).length > 0 && (
+                            <div className="inspiration-sticky-reactions" aria-label="Reacciones">
+                              {Object.entries(noteMeta.reactions).map(([emoji, count]) => (
+                                <button key={emoji} type="button" aria-label={`${emoji} ${count}`}
+                                  onClick={() => updateStickyMeta(item.id, (current) => ({
+                                    ...current,
+                                    reactions: { ...current.reactions, [emoji]: (current.reactions[emoji] || 0) + 1 },
+                                  }))}>{emoji} <span>{count}</span></button>
+                              ))}
+                            </div>
+                          )}
                         </div>
+                        {noteMeta && canEdit && (
+                          <button className="inspiration-sticky-resize" type="button"
+                            aria-label="Redimensionar post-it"
+                            onPointerDown={(event) => startStickyResize(event, item.id)} />
+                        )}
                       </>
                     )}
                   </article>
@@ -2125,9 +2900,21 @@ export default function Inspiration({
                   key={entry.id}
                   className={
                     'inspiration-card inspiration-board-card inspiration-pending' +
-                    (entry.preview ? ' inspiration-pending-photo' : '')
+                    (entry.preview ? ' inspiration-pending-photo' : '') +
+                    (entry.draft.sticky ? ' post-it inspiration-pending-sticky' : '')
                   }
-                  style={{ left: entry.point.x, top: entry.point.y }}
+                  style={{
+                    left: entry.point.x,
+                    top: entry.point.y,
+                    ...(entry.draft.sticky
+                      ? {
+                          width: entry.draft.sticky.width,
+                          height: entry.draft.sticky.height,
+                          '--sticky-color': entry.draft.sticky.color,
+                          '--sticky-ink': entry.draft.sticky.color === '#303030' ? '#ffffff' : '#252525',
+                        }
+                      : {}),
+                  } as CSSProperties}
                 >
                   {entry.preview && (
                     <Image
@@ -2141,7 +2928,7 @@ export default function Inspiration({
                   )}
                   {(!entry.preview || entry.error) && (
                     <div className="inspiration-card-body">
-                      {!entry.preview && <h3>{entry.draft.title}</h3>}
+                      {!entry.preview && <h3>{entry.draft.sticky ? 'Escribí una idea…' : entry.draft.title}</h3>}
                       {entry.error && (
                         <>
                           <output>{entry.error}</output>
@@ -2171,14 +2958,12 @@ export default function Inspiration({
               <div className="inspiration-canvas-empty">
                 <ImagePlus size={32} />
                 <strong>
-                  {search || category !== 'all'
-                    ? 'No hay referencias con ese filtro'
-                    : 'El proyecto empieza con una idea'}
+                  {'El proyecto empieza con una idea'}
                 </strong>
                 <p>
                   {canEdit
                     ? 'Arrastrá imágenes, pegá un enlace o anotá lo que querés explorar.'
-                    : 'Las referencias del proyecto aparecerán acá.'}
+                    : 'El lienzo aparecerá acá.'}
                 </p>
               </div>
             )}
@@ -2186,8 +2971,7 @@ export default function Inspiration({
           {/* oxlint-enable jsx-a11y/no-noninteractive-element-interactions, jsx-a11y/no-noninteractive-tabindex */}
           <div className="inspiration-canvas-footer">
             <div className="inspiration-board-state">
-              <span
-                role="status"
+              <output
                 className={storageError ? 'storage-error' : ''}
               >
                 {storageError
@@ -2195,7 +2979,7 @@ export default function Inspiration({
                   : dragging
                     ? 'Organizando…'
                     : 'Distribución en este navegador'}
-              </span>
+              </output>
               <button
                 aria-label="Ayuda del lienzo"
                 aria-expanded={help}
@@ -2209,7 +2993,7 @@ export default function Inspiration({
               <aside className="inspiration-help">
                 <strong>Tu mesa de trabajo</strong>
                 <p>
-                  Las referencias y los comentarios se guardan en el proyecto.
+                  Los post-its y los comentarios se guardan en el proyecto.
                   La distribución y los dibujos se guardan solo en este
                   navegador.
                 </p>
@@ -2227,7 +3011,7 @@ export default function Inspiration({
                 </dl>
                 <p>
                   Deshacer recupera dibujos y movimientos. La edición y
-                  eliminación de referencias se guardan en el proyecto.
+                  eliminación de post-its se guardan en el proyecto.
                 </p>
               </aside>
             )}
@@ -2248,7 +3032,7 @@ export default function Inspiration({
                 <Plus size={16} />
               </button>
               <button
-                aria-label="Ver todas las referencias"
+                aria-label="Ver todo el lienzo"
                 title="Ver todo"
                 onClick={fitBoard}
               >
@@ -2258,98 +3042,6 @@ export default function Inspiration({
           </div>
         </div>
       </section>
-      {showForm && (
-        <dialog
-          className="workspace-modal-backdrop inspiration-dialog"
-          aria-label={editing ? 'Editar referencia' : 'Nueva idea'}
-          ref={(node) => {
-            if (node && !node.open) node.showModal();
-          }}
-          onCancel={() => {
-            setShowForm(false);
-            focusBoard();
-          }}
-        >
-          <button
-            type="button"
-            className="workspace-backdrop-dismiss"
-            aria-label="Cerrar ventana"
-            onClick={() => {
-              setShowForm(false);
-              focusBoard();
-            }}
-          />
-          <form className="workspace-modal inspiration-form" onSubmit={save}>
-            <p className="workspace-eyebrow">SUMAR AL LIENZO</p>
-            <h2>{editing ? 'Editar referencia' : 'Una nueva idea'}</h2>
-            <label>
-              Título
-              <input
-                required
-                maxLength={160}
-                value={title}
-                onChange={(event) => setTitle(event.target.value)}
-                placeholder="Ej. Materiales cálidos"
-              />
-            </label>
-            <label>
-              Nota
-              <textarea
-                rows={5}
-                maxLength={2000}
-                value={note}
-                onChange={(event) => setNote(event.target.value)}
-                placeholder="Escribí tu idea…"
-              />
-            </label>
-            <label>
-              Enlace (opcional)
-              <input
-                type="url"
-                maxLength={2000}
-                value={url}
-                onChange={(event) => setUrl(event.target.value)}
-                placeholder="https://..."
-              />
-            </label>
-            <label>
-              Categoría
-              <select
-                value={itemCategory}
-                onChange={(event) => setItemCategory(event.target.value)}
-              >
-                {Object.entries(categoryLabels).map(([key, label]) => (
-                  <option key={key} value={key}>
-                    {label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <div className="workspace-modal-actions">
-              <button
-                type="button"
-                className="workspace-secondary"
-                onClick={() => {
-                  setShowForm(false);
-                  focusBoard();
-                }}
-              >
-                Cancelar
-              </button>
-              <button
-                className="workspace-primary"
-                disabled={
-                  !canEdit ||
-                  busy ||
-                  (!note.trim() && !url.trim() && !selectedItem?.asset)
-                }
-              >
-                {editing ? 'Guardar cambios' : 'Agregar al lienzo'}
-              </button>
-            </div>
-          </form>
-        </dialog>
-      )}
       {commentTarget && commentItem && (
         <dialog
           className="workspace-modal-backdrop inspiration-dialog"

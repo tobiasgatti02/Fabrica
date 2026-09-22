@@ -4,6 +4,7 @@ import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { StudioTourTrigger } from './studio-tour';
 import { StudioAreaNav } from './studio-area-nav';
+import { WorkspaceShareControl } from './workspace-share-control';
 import {
   StudioAccount,
   StudioHeader,
@@ -300,6 +301,19 @@ export default function Workspace({
         showTeam={!share && !data?.viewer.external}
         showModel={!data?.viewer.external}
         permissions={data?.viewer.permissions}
+        action={
+          data &&
+          !loading &&
+          !error &&
+          !share &&
+          !data.viewer.external &&
+          data.viewer.canEdit ? (
+            <WorkspaceShareControl
+              key={data.project.id}
+              project={data.project}
+            />
+          ) : undefined
+        }
       />
       {error && (
         <div className="workspace-error" role="alert">

@@ -42,6 +42,8 @@ export function parseElements(value: unknown): CanvasElement[] {
       stroke: item.stroke,
       weight: item.weight,
       style: item.style,
+      ...(typeof item.opacity === 'number' && item.opacity >= 0.1 && item.opacity <= 1
+        ? { opacity: item.opacity } : {}),
     };
     let element: CanvasElement;
     if (item.type === 'stroke') {
@@ -74,7 +76,7 @@ export function parseElements(value: unknown): CanvasElement[] {
         endX: item.endX,
         endY: item.endY,
       };
-    } else if (item.type === 'rectangle' || item.type === 'circle') {
+    } else if (item.type === 'rectangle' || item.type === 'circle' || item.type === 'frame') {
       if (
         !validPoint({ x: item.x, y: item.y }) ||
         !finiteCoordinate(item.width) ||
@@ -83,6 +85,10 @@ export function parseElements(value: unknown): CanvasElement[] {
         item.height <= 0
       )
         return [];
+      if (item.type === 'frame' && (
+        typeof item.title !== 'string' || item.title.length > 120 ||
+        !/^#[0-9a-f]{6}$/i.test(item.fill)
+      )) return [];
       element = {
         ...common,
         type: item.type,
@@ -90,6 +96,7 @@ export function parseElements(value: unknown): CanvasElement[] {
         y: item.y,
         width: item.width,
         height: item.height,
+        ...(item.type === 'frame' ? { title: item.title, fill: item.fill } : {}),
       };
     } else return [];
     ids.add(item.id);
@@ -242,6 +249,7 @@ export type BoardAction =
       record?: boolean;
     }
   | { type: 'add'; element: CanvasElement }
+  | { type: 'update'; element: CanvasElement }
   | { type: 'remove'; id: string }
   | { type: 'replace'; elements: CanvasElement[] }
   | { type: 'commit'; before: BoardSnapshot }
@@ -309,6 +317,15 @@ export function boardReducer(
       ...(action.record
         ? { past: [...doc.past, snapshot(doc)].slice(-50), future: [] }
         : {}),
+    };
+  }
+  if (action.type === 'update') {
+    if (!doc.elements.some((element) => element.id === action.element.id)) return doc;
+    return {
+      ...doc,
+      elements: doc.elements.map((element) => element.id === action.element.id ? action.element : element),
+      past: [...doc.past, snapshot(doc)].slice(-50),
+      future: [],
     };
   }
   const elements =

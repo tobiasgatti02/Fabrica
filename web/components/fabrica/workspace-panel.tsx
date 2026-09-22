@@ -17,6 +17,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import type { WorkspaceViewProps } from './workspace';
+import ClientPortal from './workspace-client-portal';
 import {
   shortDate,
   stageLabels,
@@ -28,7 +29,9 @@ const stageOrder = Object.keys(stageLabels);
 const emptyTask = {
   id: '',
   title: '',
+  startDate: '',
   dueDate: '',
+  clientVisible: false,
   assignee: '',
   status: 'todo',
 };
@@ -196,7 +199,9 @@ export default function Panel({
         action: 'save-task',
         id: task.id,
         title: task.title,
+        startDate: task.startDate,
         dueDate: task.dueDate,
+        clientVisible: task.clientVisible === 1,
         assignee: task.assignee,
         status,
       });
@@ -270,6 +275,8 @@ export default function Panel({
       /* run shows the error */
     }
   };
+
+  if (data.viewer.guest) return <ClientPortal data={data} />;
 
   return (
     <div className="workspace-content panel-page">
@@ -857,6 +864,16 @@ export default function Panel({
                   />
                 </label>
                 <label>
+                  Inicio (opcional)
+                  <input
+                    type="date"
+                    value={taskDraft.startDate}
+                    onChange={(event) =>
+                      setTaskDraft({ ...taskDraft, startDate: event.target.value })
+                    }
+                  />
+                </label>
+                <label>
                   Fecha límite
                   <input
                     type="date"
@@ -902,6 +919,19 @@ export default function Panel({
                     <option value="doing">En curso</option>
                     <option value="done">Completada</option>
                   </select>
+                </label>
+                <label className="panel-task-visible-toggle">
+                  <span>Visible para el cliente</span>
+                  <span>
+                    <input
+                      type="checkbox"
+                      checked={taskDraft.clientVisible}
+                      onChange={(event) =>
+                        setTaskDraft({ ...taskDraft, clientVisible: event.target.checked })
+                      }
+                    />
+                    Mostrar como hito en el portal
+                  </span>
                 </label>
               </div>
               <button className="workspace-primary" disabled={busy}>
@@ -999,7 +1029,9 @@ export default function Panel({
                           setTaskDraft({
                             id: task.id,
                             title: task.title,
+                            startDate: task.startDate || '',
                             dueDate: task.dueDate || '',
+                            clientVisible: task.clientVisible === 1,
                             assignee: task.assignee || '',
                             status: task.status,
                           });

@@ -92,6 +92,13 @@
       "when": 1789936081307,
       "tag": "0012_first_power_man",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1790110925344,
+      "tag": "0013_equal_wiccan",
+      "breakpoints": true
     }
   ]
 }

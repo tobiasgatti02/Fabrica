@@ -3,6 +3,20 @@ export type StrokeStyle = 'solid' | 'dashed';
 export type CanvasElement =
   | {
       id: string;
+      type: 'frame';
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+      title: string;
+      fill: string;
+      stroke: string;
+      weight: number;
+      style: StrokeStyle;
+      opacity?: number;
+    }
+  | {
+      id: string;
       type: 'rectangle' | 'circle';
       x: number;
       y: number;
@@ -11,6 +25,7 @@ export type CanvasElement =
       stroke: string;
       weight: number;
       style: StrokeStyle;
+      opacity?: number;
     }
   | {
       id: string;
@@ -22,6 +37,7 @@ export type CanvasElement =
       stroke: string;
       weight: number;
       style: StrokeStyle;
+      opacity?: number;
     }
   | {
       id: string;
@@ -30,6 +46,7 @@ export type CanvasElement =
       stroke: string;
       weight: number;
       style: StrokeStyle;
+      opacity?: number;
     };
 export type BoardBounds = {
   left: number;
@@ -168,7 +185,9 @@ export function canvasElementAt(
   point: Point,
   tolerance = 12,
 ) {
-  return [...elements].reverse().find((element) => {
+  const reversed = [...elements].reverse();
+  // Marks inside a frame remain selectable; the frame is the background.
+  return reversed.filter((element) => element.type !== 'frame').find((element) => {
     if (element.type === 'rectangle') {
       const bounds = boundsForCanvasElement(element);
       return (
@@ -203,7 +222,13 @@ export function canvasElementAt(
         distanceToSegment(point, element.points[index - 1], segmentPoint) <=
           tolerance + element.weight / 2,
     );
-  });
+  }) || reversed.find((element) =>
+    element.type === 'frame' &&
+    point.x >= element.x - tolerance &&
+    point.x <= element.x + element.width + tolerance &&
+    point.y >= element.y - tolerance &&
+    point.y <= element.y + element.height + tolerance,
+  );
 }
 
 type BoardContent =
