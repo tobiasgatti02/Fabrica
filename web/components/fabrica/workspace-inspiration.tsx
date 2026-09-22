@@ -22,6 +22,11 @@ import {
   GripHorizontal,
   Hand,
   ImagePlus,
+  Search,
+  X,
+  Keyboard,
+  Trash2,
+  Pencil,
   Link2,
   LoaderCircle,
   MessageCircle,
@@ -36,6 +41,21 @@ import {
   Undo2,
   UploadCloud,
 } from 'lucide-react';
+import { InspirationCanvas } from './inspiration-canvas';
+import {
+  boardReducer,
+  emptyBoard,
+  elementIndex,
+  parseElements,
+  safeReferenceUrl,
+  simplifyStroke,
+  validPoint,
+  MAX_STROKE_POINTS,
+  MAX_ELEMENTS,
+  unionBounds,
+  SpatialIndex,
+  type BoardSnapshot,
+} from '@/features/workspace/inspiration-scene';
 import type { WorkspaceViewProps } from './workspace';
 import {
   assetUrl,
@@ -93,6 +113,7 @@ type CardGesture = {
   card: string;
   point: Point;
   targets: BoardBounds[];
+  before: BoardSnapshot;
 };
 type CanvasGesture = {
   pointer: number;
@@ -100,7 +121,7 @@ type CanvasGesture = {
   camera: Camera;
   kind: 'canvas';
   element: CanvasElement;
-  before: CanvasElement[];
+  before: BoardSnapshot;
   targets: BoardBounds[];
 };
 type Gesture = PanGesture | CardGesture | CanvasGesture;
@@ -126,73 +147,7 @@ type ActiveCanvasElement = {
   targets: BoardBounds[];
 };
 type CanvasPreview = { element: CanvasElement; guides: AlignmentGuide[] };
-type CanvasDocument = {
-  elements: CanvasElement[];
-  past: CanvasElement[][];
-  future: CanvasElement[][];
-};
-type CanvasAction =
-  | { type: 'reset'; elements: CanvasElement[] }
-  | { type: 'add'; element: CanvasElement }
-  | { type: 'remove'; id: string }
-  | { type: 'replace'; elements: CanvasElement[] }
-  | { type: 'commit'; before: CanvasElement[] }
-  | { type: 'undo' }
-  | { type: 'redo' };
 const initialCamera = { x: 60, y: 90, zoom: 1 };
-const emptyCanvasDocument: CanvasDocument = {
-  elements: [],
-  past: [],
-  future: [],
-};
-const historyLimit = 100;
-
-function canvasReducer(
-  document: CanvasDocument,
-  action: CanvasAction,
-): CanvasDocument {
-  if (action.type === 'reset')
-    return { elements: action.elements, past: [], future: [] };
-  if (action.type === 'replace')
-    return { ...document, elements: action.elements };
-  if (action.type === 'commit') {
-    if (document.elements === action.before) return document;
-    return {
-      elements: document.elements,
-      past: [...document.past, action.before].slice(-historyLimit),
-      future: [],
-    };
-  }
-  if (action.type === 'undo') {
-    const previous = document.past.at(-1);
-    if (!previous) return document;
-    return {
-      elements: previous,
-      past: document.past.slice(0, -1),
-      future: [document.elements, ...document.future].slice(0, historyLimit),
-    };
-  }
-  if (action.type === 'redo') {
-    const next = document.future[0];
-    if (!next) return document;
-    return {
-      elements: next,
-      past: [...document.past, document.elements].slice(-historyLimit),
-      future: document.future.slice(1),
-    };
-  }
-  const elements =
-    action.type === 'add'
-      ? [...document.elements, action.element]
-      : document.elements.filter((element) => element.id !== action.id);
-  if (elements.length === document.elements.length && action.type === 'remove')
-    return document;
-  return {
-    elements,
-    past: [...document.past, document.elements].slice(-historyLimit),
-    future: [],
-  };
-}
 const editableTarget = (target: EventTarget | null) =>
   target instanceof HTMLElement &&
   Boolean(target.closest('input, textarea, select, [contenteditable="true"]'));
@@ -203,10 +158,7 @@ function readPositions(project: string): Record<string, Point> {
       localStorage.getItem('fabrica:inspiration:' + project) || '{}',
     ) as Record<string, Point>;
     return Object.fromEntries(
-      Object.entries(stored).filter(
-        ([, point]) =>
-          point && Number.isFinite(point.x) && Number.isFinite(point.y),
-      ),
+      Object.entries(stored).filter(([, point]) => validPoint(point)),
     );
   } catch {
     return {};
@@ -218,14 +170,7 @@ function readCanvasElements(project: string): CanvasElement[] {
     const stored = JSON.parse(
       localStorage.getItem('fabrica:inspiration-elements:' + project) || '[]',
     );
-    return Array.isArray(stored)
-      ? (stored.filter(
-          (item): item is CanvasElement =>
-            item &&
-            typeof item.id === 'string' &&
-            ['rectangle', 'circle', 'arrow', 'stroke'].includes(item.type),
-        ) as CanvasElement[])
-      : [];
+    return parseElements(stored);
   } catch {
     return [];
   }
@@ -253,137 +198,6 @@ function CommentBubble({
     >
       <MessageCircle size={15} /> <span>{count}</span>
     </button>
-  );
-}
-
-function CanvasMarks({
-  elements,
-  draft,
-  guides,
-  selected,
-}: {
-  elements: CanvasElement[];
-  draft: CanvasElement | null;
-  guides: AlignmentGuide[];
-  selected: string | null;
-}) {
-  const renderElement = (element: CanvasElement) => {
-    const common = {
-      fill: 'none',
-      stroke: element.stroke,
-      strokeWidth: element.weight,
-      strokeDasharray: element.style === 'dashed' ? '10 7' : undefined,
-      strokeLinecap: 'round' as const,
-      strokeLinejoin: 'round' as const,
-    };
-    if (element.type === 'rectangle')
-      return (
-        <rect
-          key={element.id}
-          x={element.x}
-          y={element.y}
-          width={element.width}
-          height={element.height}
-          rx="8"
-          {...common}
-        />
-      );
-    if (element.type === 'circle')
-      return (
-        <ellipse
-          key={element.id}
-          cx={element.x + element.width / 2}
-          cy={element.y + element.height / 2}
-          rx={element.width / 2}
-          ry={element.height / 2}
-          {...common}
-        />
-      );
-    if (element.type === 'arrow')
-      return (
-        <line
-          key={element.id}
-          x1={element.x}
-          y1={element.y}
-          x2={element.endX}
-          y2={element.endY}
-          markerEnd="url(#inspiration-arrow-head)"
-          {...common}
-        />
-      );
-    if (element.type === 'stroke')
-      return (
-        <polyline
-          key={element.id}
-          points={element.points
-            .map((point) => `${point.x},${point.y}`)
-            .join(' ')}
-          {...common}
-        />
-      );
-    return null;
-  };
-  return (
-    <svg
-      className="inspiration-canvas-marks"
-      width="5000"
-      height="5000"
-      aria-hidden="true"
-    >
-      <defs>
-        <marker
-          id="inspiration-arrow-head"
-          viewBox="0 0 10 10"
-          refX="8"
-          refY="5"
-          markerWidth="7"
-          markerHeight="7"
-          orient="auto-start-reverse"
-        >
-          <path d="M 0 0 L 10 5 L 0 10 z" fill="context-stroke" />
-        </marker>
-      </defs>
-      {elements.map(renderElement)}
-      {draft && renderElement(draft)}
-      {selected &&
-        (() => {
-          const element = elements.find((item) => item.id === selected);
-          if (!element) return null;
-          const bounds = boundsForCanvasElement(element);
-          const padding = Math.max(6, element.weight + 3);
-          return (
-            <rect
-              className="inspiration-canvas-selection"
-              x={bounds.left - padding}
-              y={bounds.top - padding}
-              width={bounds.right - bounds.left + padding * 2}
-              height={bounds.bottom - bounds.top + padding * 2}
-              rx="5"
-            />
-          );
-        })()}
-      {guides.map((guide) =>
-        guide.axis === 'x' ? (
-          <line
-            key={`x-${guide.value}`}
-            className="inspiration-alignment-guide"
-            x1={guide.value}
-            x2={guide.value}
-            y1={-5000}
-            y2={5000}
-          />
-        ) : (
-          <line
-            key={`y-${guide.value}`}
-            className="inspiration-alignment-guide"
-            x1={-5000}
-            x2={5000}
-            y1={guide.value}
-            y2={guide.value}
-          />
-        ),
-      )}
-    </svg>
   );
 }
 
@@ -547,8 +361,12 @@ function PhotoFrame({
           >
             Abrir foto <ArrowUpRight size={15} />
           </a>
-          {item.url && (
-            <a href={item.url} target="_blank" rel="noopener noreferrer">
+          {safeReferenceUrl(item.url) && (
+            <a
+              href={safeReferenceUrl(item.url) || undefined}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
               Referencia <ArrowUpRight size={15} />
             </a>
           )}
@@ -570,7 +388,11 @@ export default function Inspiration({
   const canEdit = data.viewer.permissions.inspiracion === 'edit';
   const [category, setCategory] = useState('all');
   const [selected, setSelected] = useState<string | null>(null);
-  const [positions, setPositions] = useState<Record<string, Point>>({});
+  const [search, setSearch] = useState('');
+  const [help, setHelp] = useState(false);
+  const [editing, setEditing] = useState<string | null>(null);
+  const [storageError, setStorageError] = useState(false);
+  const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
   const [positionsReady, setPositionsReady] = useState(false);
   const [camera, setCamera] = useState<Camera>(initialCamera);
   const [hand, setHand] = useState(false);
@@ -581,11 +403,17 @@ export default function Inspiration({
   const [stroke, setStroke] = useState('#566b55');
   const [strokeWeight, setStrokeWeight] = useState(3);
   const [strokeStyle, setStrokeStyle] = useState<StrokeStyle>('solid');
-  const [canvasDocument, dispatchCanvas] = useReducer(
-    canvasReducer,
-    emptyCanvasDocument,
-  );
+  const [canvasDocument, dispatchCanvas] = useReducer(boardReducer, emptyBoard);
   const canvasElements = canvasDocument.elements;
+  const positions = canvasDocument.positions;
+  const setPositions = (
+    update: (previous: Record<string, Point>) => Record<string, Point>,
+    record = false,
+  ) => dispatchCanvas({ type: 'positions', update, record });
+  const sceneIndex = useMemo(
+    () => elementIndex(canvasElements),
+    [canvasElements],
+  );
   const [selectedCanvasElement, setSelectedCanvasElement] = useState<
     string | null
   >(null);
@@ -601,6 +429,7 @@ export default function Inspiration({
   const [url, setUrl] = useState('');
   const [itemCategory, setItemCategory] = useState('general');
   const viewport = useRef<HTMLDivElement>(null);
+  const cardNodes = useRef(new Map<string, HTMLElement>());
   const fileInput = useRef<HTMLInputElement>(null);
   const gesture = useRef<Gesture | null>(null);
   const activeCanvasElement = useRef<ActiveCanvasElement | null>(null);
@@ -630,47 +459,70 @@ export default function Inspiration({
   }, []);
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
-      setPositions(readPositions(project));
       setPositionsReady(true);
-      dispatchCanvas({ type: 'reset', elements: readCanvasElements(project) });
+      dispatchCanvas({
+        type: 'reset',
+        elements: readCanvasElements(project),
+        positions: readPositions(project),
+      });
       setCanvasReady(true);
     });
     return () => cancelAnimationFrame(frame);
   }, [project]);
+  const saveLocal = useRef<(() => void) | null>(null);
   useEffect(() => {
-    if (!positionsReady) return;
-    const timer = window.setTimeout(() => {
+    if (!positionsReady || !canvasReady) return;
+    const persist = () => {
       try {
         localStorage.setItem(
           'fabrica:inspiration:' + project,
           JSON.stringify(positions),
         );
-      } catch {
-        /* Storage may be unavailable in private mode. */
-      }
-    }, 250);
-    return () => window.clearTimeout(timer);
-  }, [positions, positionsReady, project]);
-  useEffect(() => {
-    if (!canvasReady) return;
-    const timer = window.setTimeout(() => {
-      try {
         localStorage.setItem(
           'fabrica:inspiration-elements:' + project,
           JSON.stringify(canvasElements),
         );
+        if (mounted.current) setStorageError(false);
       } catch {
-        /* Storage may be unavailable in private mode. */
+        if (mounted.current) setStorageError(true);
       }
-    }, 250);
+    };
+    saveLocal.current = persist;
+    if (dragging) return;
+    const timer = window.setTimeout(persist, 250);
     return () => window.clearTimeout(timer);
-  }, [canvasElements, canvasReady, project]);
+  }, [
+    positions,
+    canvasElements,
+    positionsReady,
+    canvasReady,
+    project,
+    dragging,
+  ]);
+  useEffect(() => {
+    const flush = () => saveLocal.current?.();
+    const hidden = () => {
+      if (document.visibilityState === 'hidden') flush();
+    };
+    window.addEventListener('pagehide', flush);
+    document.addEventListener('visibilitychange', hidden);
+    return () => {
+      flush();
+      window.removeEventListener('pagehide', flush);
+      document.removeEventListener('visibilitychange', hidden);
+    };
+  }, []);
   const items = useMemo(
     () =>
       data.inspiration.filter(
-        (item) => category === 'all' || item.category === category,
+        (item) =>
+          (category === 'all' || item.category === category) &&
+          (!search.trim() ||
+            `${item.title} ${item.note}`
+              .toLocaleLowerCase()
+              .includes(search.trim().toLocaleLowerCase())),
       ),
-    [data.inspiration, category],
+    [data.inspiration, category, search],
   );
   const assetMap = useMemo(
     () => new Map(data.assets.map((asset) => [asset.id, asset])),
@@ -708,6 +560,70 @@ export default function Inspiration({
   );
   const positionFor = (id: string) =>
     positions[id] || defaults[id] || { x: 0, y: 0 };
+
+  useEffect(() => {
+    const node = viewport.current;
+    if (!node) return;
+    const observer = new ResizeObserver(([entry]) =>
+      setViewportSize({
+        width: entry.contentRect.width,
+        height: entry.contentRect.height,
+      }),
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+
+  function markAt(point: Point) {
+    const tolerance = 12 / camera.zoom;
+    const candidates = sceneIndex
+      .search({
+        left: point.x - tolerance,
+        right: point.x + tolerance,
+        top: point.y - tolerance,
+        bottom: point.y + tolerance,
+      })
+      .sort((a, b) => a.order - b.order);
+    return canvasElementAt(
+      candidates.map(({ element }) => element),
+      point,
+      tolerance,
+    );
+  }
+
+  const cardIndex = useMemo(
+    () =>
+      new SpatialIndex(
+        items.map((item, order) => {
+          const point = positions[item.id] ||
+            defaults[item.id] || { x: 0, y: 0 };
+          return {
+            value: { item, order },
+            bounds: {
+              left: point.x,
+              top: point.y,
+              right: point.x + 340,
+              bottom: point.y + 800,
+            },
+          };
+        }),
+      ),
+    [items, positions, defaults],
+  );
+  const visibleItems = useMemo(() => {
+    const margin = 300 / camera.zoom;
+    const candidates = cardIndex.search({
+      left: -camera.x / camera.zoom - margin,
+      top: -camera.y / camera.zoom - margin,
+      right: (viewportSize.width - camera.x) / camera.zoom + margin,
+      bottom: (viewportSize.height - camera.y) / camera.zoom + margin,
+    });
+    if (selected && !candidates.some(({ item }) => item.id === selected)) {
+      const order = items.findIndex((item) => item.id === selected);
+      if (order >= 0) candidates.push({ item: items[order], order });
+    }
+    return candidates.sort((a, b) => a.order - b.order);
+  }, [cardIndex, camera, viewportSize, items, selected]);
 
   function worldPoint(clientX: number, clientY: number) {
     const bounds = viewport.current!.getBoundingClientRect();
@@ -753,9 +669,7 @@ export default function Inspiration({
   }
 
   function cardBounds(id: string, point = positionFor(id)): BoardBounds {
-    const card = Array.from(
-      viewport.current?.querySelectorAll<HTMLElement>('[data-card]') || [],
-    ).find((node) => node.dataset.card === id);
+    const card = cardNodes.current.get(id);
     // offset dimensions are layout-space values, unaffected by the world's
     // CSS scale, so they can be compared directly with board coordinates.
     const width = card ? card.offsetWidth : 300;
@@ -775,10 +689,27 @@ export default function Inspiration({
   }
 
   function alignmentTargets(excludeCard?: string, excludeElement?: string) {
+    const sizes = new Map(
+      Array.from(
+        viewport.current?.querySelectorAll<HTMLElement>('[data-card]') || [],
+      ).map((node) => [
+        node.dataset.card,
+        { width: node.offsetWidth, height: node.offsetHeight },
+      ]),
+    );
     return [
       ...data.inspiration
         .filter((item) => item.id !== excludeCard && isGuideItem(item))
-        .map((item) => cardBounds(item.id)),
+        .map((item) => {
+          const point = positionFor(item.id),
+            size = sizes.get(item.id);
+          return {
+            left: point.x,
+            top: point.y,
+            right: point.x + (size?.width || 300),
+            bottom: point.y + (size?.height || 360),
+          };
+        }),
       ...canvasElements
         .filter((element) => element.id !== excludeElement)
         .map(boundsForCanvasElement),
@@ -878,7 +809,12 @@ export default function Inspiration({
         ...style,
       };
     const previous = active.points.at(-1);
-    if (!previous || Math.hypot(point.x - previous.x, point.y - previous.y) > 1)
+    if (
+      active.points.length < MAX_STROKE_POINTS &&
+      (!previous ||
+        Math.hypot(point.x - previous.x, point.y - previous.y) >
+          1 / camera.zoom)
+    )
       active.points.push(point);
     return {
       id: 'draft',
@@ -890,7 +826,7 @@ export default function Inspiration({
 
   function eraseAt(point: Point) {
     if (!canEdit || busy) return;
-    const element = canvasElementAt(canvasElements, point, 12 / camera.zoom);
+    const element = markAt(point);
     if (!element) return;
     dispatchCanvas({ type: 'remove', id: element.id });
     setSelectedCanvasElement((current) =>
@@ -900,6 +836,10 @@ export default function Inspiration({
   }
 
   function beginCanvasElement(event: PointerEvent<HTMLDivElement>) {
+    if (canvasElements.length >= MAX_ELEMENTS) {
+      notify('El lienzo alcanzó el límite de 10.000 dibujos.');
+      return false;
+    }
     if (!canEdit || tool === 'select' || hand || space || event.button !== 0)
       return false;
     event.preventDefault();
@@ -945,7 +885,13 @@ export default function Inspiration({
       elementForGesture(active, point),
       active.targets,
     );
-    const element = preview.element;
+    const element =
+      preview.element.type === 'stroke'
+        ? {
+            ...preview.element,
+            points: simplifyStroke(preview.element.points, 0.8 / camera.zoom),
+          }
+        : preview.element;
     const bounds = boundsForCanvasElement(element);
     const size = Math.max(
       bounds.right - bounds.left,
@@ -1225,7 +1171,7 @@ export default function Inspiration({
   function createPostItAt(point: Point) {
     insertion.current = point;
     setContextMenu(null);
-    setShowForm(true);
+    openForm();
   }
 
   function drop(event: DragEvent<HTMLDivElement>) {
@@ -1240,7 +1186,7 @@ export default function Inspiration({
       y: (bounds?.height || 600) / 2,
     };
     setCamera((current) => {
-      const zoom = Math.min(2, Math.max(0.05, value));
+      const zoom = Math.min(4, Math.max(0.05, value));
       return {
         zoom,
         x: anchor.x - ((anchor.x - current.x) * zoom) / current.zoom,
@@ -1264,7 +1210,7 @@ export default function Inspiration({
       setCamera((current) => {
         if (event.ctrlKey || event.metaKey) {
           const zoom = Math.min(
-            2,
+            4,
             Math.max(
               0.05,
               current.zoom * Math.exp(-event.deltaY * factor * 0.008),
@@ -1318,6 +1264,7 @@ export default function Inspiration({
       selectCard(card!);
       gesture.current = {
         kind: 'card',
+        before: { elements: canvasElements, positions },
         pointer: event.pointerId,
         start: { x: event.clientX, y: event.clientY },
         camera,
@@ -1348,7 +1295,7 @@ export default function Inspiration({
       start: { x: event.clientX, y: event.clientY },
       camera,
       element,
-      before: canvasElements,
+      before: { elements: canvasElements, positions },
       targets: alignmentTargets(undefined, element.id),
     };
     viewport.current?.setPointerCapture(event.pointerId);
@@ -1393,8 +1340,8 @@ export default function Inspiration({
   }
   function endGesture() {
     const active = gesture.current;
-    if (active?.kind === 'canvas') {
-      flushCanvasMove();
+    if (active?.kind === 'canvas' || active?.kind === 'card') {
+      if (active.kind === 'canvas') flushCanvasMove();
       dispatchCanvas({ type: 'commit', before: active.before });
     }
     gesture.current = null;
@@ -1403,15 +1350,17 @@ export default function Inspiration({
   }
 
   function fitBoard() {
-    if (!items.length) {
+    const boxes = [
+      ...items.map((item) => cardBounds(item.id)),
+      ...canvasElements.map(boundsForCanvasElement),
+    ];
+    if (!boxes.length) {
       setCamera(initialCamera);
       return;
     }
-    const points = items.map((item) => positionFor(item.id));
-    const minX = Math.min(...points.map((point) => point.x)),
-      minY = Math.min(...points.map((point) => point.y));
-    const width = Math.max(...points.map((point) => point.x)) - minX + 320;
-    const height = Math.max(...points.map((point) => point.y)) - minY + 470;
+    const { left: minX, top: minY, right, bottom } = unionBounds(boxes);
+    const width = Math.max(1, right - minX),
+      height = Math.max(1, bottom - minY);
     const bounds = viewport.current!;
     const zoom = Math.min(
       1,
@@ -1443,6 +1392,7 @@ export default function Inspiration({
   }
 
   function deleteSelected() {
+    if (!canEdit || busy) return;
     if (selected) {
       deleteInspiration(selected);
       return;
@@ -1453,20 +1403,74 @@ export default function Inspiration({
     }
   }
 
+  function openForm(item?: WorkspaceInspiration) {
+    setEditing(item?.id || null);
+    setTitle(item?.title || '');
+    setNote(item?.note || '');
+    setUrl(item?.url || '');
+    setItemCategory(item?.category || 'general');
+    setShowForm(true);
+  }
+
+  function closeForm() {
+    setShowForm(false);
+    setEditing(null);
+    focusBoard();
+  }
+
   function save(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
-    addDrafts([
-      { title: title.trim() || 'Nota', note, url, category: itemCategory },
-    ]);
-    setShowForm(false);
-    setTitle('');
-    setNote('');
-    setUrl('');
+    if (!canEdit || busy) return;
+    if (url.trim() && !safeReferenceUrl(url.trim())) {
+      notify('Usá un enlace http o https sin credenciales.');
+      return;
+    }
+    if (editing) {
+      void run({
+        action: 'edit-inspiration',
+        id: editing,
+        title: title.trim(),
+        note,
+        url,
+        category: itemCategory,
+      })
+        .then(closeForm)
+        .catch(() => {});
+    } else {
+      addDrafts([
+        { title: title.trim() || 'Nota', note, url, category: itemCategory },
+      ]);
+      closeForm();
+    }
   }
+  const selectedItem = data.inspiration.find((item) => item.id === selected);
 
   return (
     <div className="workspace-content inspiration-page">
       <section className="workspace-section inspiration-board-section">
+        <div className="inspiration-command-bar">
+          <div className="inspiration-board-title">
+            <h1>Inspiración</h1>
+            <span>{data.inspiration.length} referencias</span>
+          </div>
+          <div className="inspiration-command-actions">
+            <label className="inspiration-search">
+              <Search size={16} />
+              <input
+                type="search"
+                aria-label="Buscar referencias"
+                placeholder="Buscar referencias"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+              />
+            </label>
+            {canEdit && (
+              <button className="workspace-primary" onClick={() => openForm()}>
+                <Plus size={16} /> Nueva idea
+              </button>
+            )}
+          </div>
+        </div>
         <div
           className="workspace-filter-row"
           aria-label="Categorías de referencias"
@@ -1499,6 +1503,7 @@ export default function Inspiration({
         <div className="inspiration-canvas-wrap">
           <div
             className="inspiration-tools"
+            role="toolbar"
             aria-label="Herramientas del lienzo"
           >
             <button
@@ -1589,7 +1594,7 @@ export default function Inspiration({
                 <button
                   title="Crear post-it"
                   aria-label="Crear post-it"
-                  onClick={() => setShowForm(true)}
+                  onClick={() => openForm()}
                 >
                   <StickyNote size={19} />
                 </button>
@@ -1645,6 +1650,40 @@ export default function Inspiration({
                 </button>
               </div>
             )}
+          {(selectedItem || selectedCanvasElement) && canEdit && (
+            <div
+              className="inspiration-selection-actions"
+              role="toolbar"
+              aria-label="Acciones de selección"
+            >
+              <span>{selectedItem?.title || 'Dibujo'}</span>
+              {selectedItem && (
+                <button
+                  aria-label="Editar referencia"
+                  title="Editar referencia"
+                  onClick={() => openForm(selectedItem)}
+                >
+                  <Pencil size={16} />
+                </button>
+              )}
+              <button
+                aria-label="Eliminar selección"
+                title="Eliminar selección"
+                onClick={deleteSelected}
+              >
+                <Trash2 size={16} />
+              </button>
+              <button
+                aria-label="Cerrar selección"
+                onClick={() => {
+                  selectCard(null);
+                  focusBoard();
+                }}
+              >
+                <X size={16} />
+              </button>
+            </div>
+          )}
           <input
             ref={fileInput}
             className="workspace-file-input"
@@ -1680,6 +1719,7 @@ export default function Inspiration({
               (dragging ? ' is-dragging' : '')
             }
             tabIndex={0}
+            data-reference-count={data.inspiration.length}
             role="application"
             aria-label="Lienzo de inspiración. Seleccioná y arrastrá tarjetas, figuras, flechas o trazos para moverlos. Pegá imágenes con Control o Command V. Espacio y arrastrar para desplazarte."
             onPaste={paste}
@@ -1713,11 +1753,7 @@ export default function Inspiration({
               if (!card) {
                 const element =
                   tool === 'select' && !hand && !space
-                    ? canvasElementAt(
-                        canvasElements,
-                        worldPoint(event.clientX, event.clientY),
-                        12 / camera.zoom,
-                      )
+                    ? markAt(worldPoint(event.clientX, event.clientY))
                     : undefined;
                 if (element) startCanvasGesture(event, element);
                 else if (!beginCanvasElement(event)) startGesture(event);
@@ -1739,11 +1775,14 @@ export default function Inspiration({
             onPointerUp={(event) => {
               if (!finishCanvasElement(event)) endGesture();
             }}
-            onPointerCancel={(event) => {
-              if (!finishCanvasElement(event)) endGesture();
+            onPointerCancel={() => {
+              activeCanvasElement.current = null;
+              clearCanvasPreview();
+              endGesture();
             }}
             onLostPointerCapture={() => {
-              finishCanvasElement();
+              activeCanvasElement.current = null;
+              clearCanvasPreview();
               endGesture();
             }}
             onContextMenu={(event) => {
@@ -1755,11 +1794,7 @@ export default function Inspiration({
               const point = worldPoint(event.clientX, event.clientY);
               insertion.current = point;
               if (id) selectCard(id);
-              else
-                selectCanvasElement(
-                  canvasElementAt(canvasElements, point, 12 / camera.zoom)
-                    ?.id || null,
-                );
+              else selectCanvasElement(markAt(point)?.id || null);
               setContextMenu({
                 x: Math.min(event.clientX, window.innerWidth - 190),
                 y: Math.min(event.clientY, window.innerHeight - 150),
@@ -1775,7 +1810,8 @@ export default function Inspiration({
               )
                 return;
               setSpace(false);
-              finishCanvasElement();
+              activeCanvasElement.current = null;
+              clearCanvasPreview();
               endGesture();
               setContextMenu(null);
             }}
@@ -1802,11 +1838,31 @@ export default function Inspiration({
                 redoCanvas();
                 return;
               }
+              if (!event.metaKey && !event.ctrlKey && !event.altKey) {
+                const key = event.key.toLowerCase();
+                if (key === 'v') chooseTool('select');
+                if (key === 'h') {
+                  setHand(true);
+                  setTool('select');
+                }
+                if (key === '1') fitBoard();
+                if (canEdit && key === 'n') {
+                  event.preventDefault();
+                  openForm();
+                }
+                if (canEdit && key === 'p') chooseTool('draw');
+                if (canEdit && key === 'r') chooseTool('rectangle');
+                if (canEdit && key === 'o') chooseTool('circle');
+              }
               if (event.code === 'Space') {
                 event.preventDefault();
                 setSpace(true);
               }
               if (event.key === 'Escape') {
+                activeCanvasElement.current = null;
+                clearCanvasPreview();
+                endGesture();
+                chooseTool('select');
                 selectCard(null);
                 setContextMenu(null);
               }
@@ -1837,13 +1893,16 @@ export default function Inspiration({
                 };
                 if (selected) {
                   const previous = positionFor(selected);
-                  setPositions((current) => ({
-                    ...current,
-                    [selected]: {
-                      x: previous.x + offset.x,
-                      y: previous.y + offset.y,
-                    },
-                  }));
+                  setPositions(
+                    (current) => ({
+                      ...current,
+                      [selected]: {
+                        x: previous.x + offset.x,
+                        y: previous.y + offset.y,
+                      },
+                    }),
+                    true,
+                  );
                 } else if (selectedCanvasElement) {
                   const element = canvasElements.find(
                     (candidate) => candidate.id === selectedCanvasElement,
@@ -1857,7 +1916,10 @@ export default function Inspiration({
                           : candidate,
                       ),
                     });
-                    dispatchCanvas({ type: 'commit', before: canvasElements });
+                    dispatchCanvas({
+                      type: 'commit',
+                      before: { elements: canvasElements, positions },
+                    });
                   }
                 }
               }
@@ -1900,6 +1962,18 @@ export default function Inspiration({
                 )}
               </div>
             )}
+            <InspirationCanvas
+              index={sceneIndex}
+              camera={camera}
+              size={viewportSize}
+              draft={canvasDraft}
+              guides={alignmentGuides}
+              selected={
+                canvasElements.find(
+                  (element) => element.id === selectedCanvasElement,
+                ) || null
+              }
+            />
             <div
               className="inspiration-world"
               style={{
@@ -1913,13 +1987,7 @@ export default function Inspiration({
                   ')',
               }}
             >
-              <CanvasMarks
-                elements={canvasElements}
-                draft={canvasDraft}
-                guides={alignmentGuides}
-                selected={selectedCanvasElement}
-              />
-              {items.map((item, index) => {
+              {visibleItems.map(({ item, order: index }) => {
                 const point = positionFor(item.id),
                   asset = item.asset ? assetMap.get(item.asset) : undefined;
                 const isNote = !item.asset && !item.url;
@@ -1928,6 +1996,10 @@ export default function Inspiration({
                 return (
                   <article
                     data-card={item.id}
+                    ref={(node) => {
+                      if (node) cardNodes.current.set(item.id, node);
+                      else cardNodes.current.delete(item.id);
+                    }}
                     key={item.id}
                     className={
                       'inspiration-card inspiration-board-card ' +
@@ -1999,10 +2071,10 @@ export default function Inspiration({
                             <div className="inspiration-link-art">
                               <Link2 size={26} />
                               <span>
-                                {new URL(item.url).hostname.replace(
-                                  /^www\./,
-                                  '',
-                                )}
+                                {new URL(
+                                  safeReferenceUrl(item.url) ||
+                                    'https://enlace.invalid',
+                                ).hostname.replace(/^www\./, '')}
                               </span>
                             </div>
                           </div>
@@ -2017,9 +2089,9 @@ export default function Inspiration({
                           {item.note && (
                             <p className="inspiration-note-text">{item.note}</p>
                           )}
-                          {item.url && (
+                          {safeReferenceUrl(item.url) && (
                             <a
-                              href={item.url}
+                              href={safeReferenceUrl(item.url) || undefined}
                               target="_blank"
                               rel="noopener noreferrer"
                             >
@@ -2095,13 +2167,17 @@ export default function Inspiration({
                 </article>
               ))}
             </div>
-            {!items.length && !pending.length && (
+            {!items.length && !pending.length && !canvasElements.length && (
               <div className="inspiration-canvas-empty">
                 <ImagePlus size={32} />
-                <strong>Un lugar para todas tus ideas</strong>
+                <strong>
+                  {search || category !== 'all'
+                    ? 'No hay referencias con ese filtro'
+                    : 'El proyecto empieza con una idea'}
+                </strong>
                 <p>
                   {canEdit
-                    ? 'Hacé clic acá y pegá una imagen con Ctrl / ⌘ V, arrastrá archivos o creá un post-it.'
+                    ? 'Arrastrá imágenes, pegá un enlace o anotá lo que querés explorar.'
                     : 'Las referencias del proyecto aparecerán acá.'}
                 </p>
               </div>
@@ -2109,11 +2185,52 @@ export default function Inspiration({
           </div>
           {/* oxlint-enable jsx-a11y/no-noninteractive-element-interactions, jsx-a11y/no-noninteractive-tabindex */}
           <div className="inspiration-canvas-footer">
-            <span>
-              Arrastrá cualquier elemento para moverlo · Espacio para desplazar
-              el lienzo · Ctrl / ⌘ + rueda para zoom · Delete para eliminar la
-              selección
-            </span>
+            <div className="inspiration-board-state">
+              <span
+                role="status"
+                className={storageError ? 'storage-error' : ''}
+              >
+                {storageError
+                  ? 'No se pudo guardar la distribución'
+                  : dragging
+                    ? 'Organizando…'
+                    : 'Distribución en este navegador'}
+              </span>
+              <button
+                aria-label="Ayuda del lienzo"
+                aria-expanded={help}
+                onClick={() => setHelp((value) => !value)}
+              >
+                <Keyboard size={16} />
+                <span>Atajos y guardado</span>
+              </button>
+            </div>
+            {help && (
+              <aside className="inspiration-help">
+                <strong>Tu mesa de trabajo</strong>
+                <p>
+                  Las referencias y los comentarios se guardan en el proyecto.
+                  La distribución y los dibujos se guardan solo en este
+                  navegador.
+                </p>
+                <dl>
+                  <dt>Seleccionar / mover</dt>
+                  <dd>V / H</dd>
+                  <dt>Nota / lápiz</dt>
+                  <dd>N / P</dd>
+                  <dt>Desplazar</dt>
+                  <dd>Espacio + arrastrar</dd>
+                  <dt>Deshacer / rehacer</dt>
+                  <dd>⌘ / Ctrl Z · Shift Z</dd>
+                  <dt>Ver todo</dt>
+                  <dd>1</dd>
+                </dl>
+                <p>
+                  Deshacer recupera dibujos y movimientos. La edición y
+                  eliminación de referencias se guardan en el proyecto.
+                </p>
+              </aside>
+            )}
             <div className="inspiration-zoom">
               <button
                 aria-label="Alejar"
@@ -2144,7 +2261,7 @@ export default function Inspiration({
       {showForm && (
         <dialog
           className="workspace-modal-backdrop inspiration-dialog"
-          aria-label="Nueva idea"
+          aria-label={editing ? 'Editar referencia' : 'Nueva idea'}
           ref={(node) => {
             if (node && !node.open) node.showModal();
           }}
@@ -2164,7 +2281,7 @@ export default function Inspiration({
           />
           <form className="workspace-modal inspiration-form" onSubmit={save}>
             <p className="workspace-eyebrow">SUMAR AL LIENZO</p>
-            <h2>Una nueva idea</h2>
+            <h2>{editing ? 'Editar referencia' : 'Una nueva idea'}</h2>
             <label>
               Título
               <input
@@ -2221,9 +2338,13 @@ export default function Inspiration({
               </button>
               <button
                 className="workspace-primary"
-                disabled={!canEdit || (!note.trim() && !url.trim())}
+                disabled={
+                  !canEdit ||
+                  busy ||
+                  (!note.trim() && !url.trim() && !selectedItem?.asset)
+                }
               >
-                Agregar al lienzo
+                {editing ? 'Guardar cambios' : 'Agregar al lienzo'}
               </button>
             </div>
           </form>

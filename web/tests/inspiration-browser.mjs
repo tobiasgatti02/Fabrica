@@ -78,6 +78,16 @@ await page.route('**/api/workspace?**', async (route) => {
     data.assets.push(asset);
     return route.fulfill({ json: { asset: body.id } });
   }
+  if (body.action === 'edit-inspiration') {
+    const item = data.inspiration.find((item) => item.id === body.id);
+    Object.assign(item, {
+      title: body.title,
+      note: body.note,
+      url: body.url,
+      category: body.category,
+    });
+    return route.fulfill({ json: { ok: true } });
+  }
   if (body.action === 'add-inspiration') {
     if (failNextAdd) {
       failNextAdd = false;
@@ -113,9 +123,8 @@ const savedCards = page.locator(
 async function ready(count) {
   await page.waitForFunction(
     (count) =>
-      document.querySelectorAll(
-        '.inspiration-world > article:not(.inspiration-pending)',
-      ).length === count && !document.querySelector('.inspiration-pending'),
+      Number(document.querySelector('.free-canvas')?.dataset.referenceCount) ===
+        count && !document.querySelector('.inspiration-pending'),
     count,
   );
 }

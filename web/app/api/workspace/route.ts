@@ -4,6 +4,7 @@ import { randomToken, sha256, validRequestOrigin } from '@/features/auth/core';
 import { getFabricaUser } from '@/features/auth/server';
 import { getDb } from '@/db';
 import { createStarterProject } from '@/features/studio/server/seed';
+import { safeReferenceUrl } from '@/features/workspace/inspiration-scene';
 import { INSPIRATION_FILE_LIMIT } from '@/features/files/validation';
 import {
   studioAssets,
@@ -686,6 +687,7 @@ export async function POST(request: Request) {
       'add-inspiration': 'inspiracion',
       'add-inspiration-comment': 'inspiracion',
       'update-inspiration': 'inspiracion',
+      'edit-inspiration': 'inspiracion',
       'delete-inspiration': 'inspiracion',
       'delete-asset': 'inspiracion',
       'begin-asset': 'inspiracion',
@@ -714,7 +716,9 @@ export async function POST(request: Request) {
           throw new Error('INSPIRATION_FILE_LIMIT');
       }
       const title = required(body.title, 160);
-      const link = url(body.url);
+      const rawUrl = string(body.url, 2000);
+      const link = rawUrl ? safeReferenceUrl(rawUrl) : '';
+      if (link === null) throw new Error('400');
       if (!asset && !link && !string(body.note)) throw new Error('400');
       const id = crypto.randomUUID();
       await db.insert(studioInspiration).values({
@@ -730,6 +734,41 @@ export async function POST(request: Request) {
         created: Date.now(),
       });
       return json({ ok: true, id }, 201);
+    }
+    if (action === 'edit-inspiration') {
+      const id = required(body.id);
+      const [item] = await db
+        .select({ asset: studioInspiration.asset })
+        .from(studioInspiration)
+        .where(
+          and(
+            eq(studioInspiration.id, id),
+            eq(studioInspiration.project, project.id),
+          ),
+        )
+        .limit(1);
+      if (!item) throw new Error('404');
+      const title = required(body.title, 160);
+      const note = string(body.note, 2000);
+      const rawUrl = string(body.url, 2000);
+      const link = rawUrl ? safeReferenceUrl(rawUrl) : '';
+      if (link === null || (!item.asset && !link && !note))
+        throw new Error('400');
+      await db
+        .update(studioInspiration)
+        .set({
+          title,
+          note,
+          url: link,
+          category: choice(body.category, categories),
+        })
+        .where(
+          and(
+            eq(studioInspiration.id, id),
+            eq(studioInspiration.project, project.id),
+          ),
+        );
+      return json({ ok: true });
     }
     if (action === 'add-inspiration-comment') {
       const inspiration = required(body.inspiration);

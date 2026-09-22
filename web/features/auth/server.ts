@@ -8,6 +8,7 @@ import { cookieValue, SESSION_COOKIE, sha256 } from './core';
 
 export type FabricaUser = ChatGPTUser & {
   provider: 'chatgpt' | 'google' | 'fabrica';
+  created?: number;
 };
 
 export async function getFabricaUser(
@@ -26,6 +27,7 @@ export async function getFabricaUser(
           email: studioUsers.email,
           name: studioUsers.name,
           googleSubject: studioUsers.googleSubject,
+          created: studioUsers.created,
         })
         .from(studioSessions)
         .innerJoin(studioUsers, eq(studioUsers.id, studioSessions.user))
@@ -44,6 +46,7 @@ export async function getFabricaUser(
           email: user.email,
           fullName: user.name,
           provider: user.googleSubject ? 'google' : 'fabrica',
+          created: user.created,
         };
       }
     } catch (error) {

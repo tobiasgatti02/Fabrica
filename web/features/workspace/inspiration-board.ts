@@ -179,13 +179,10 @@ export function canvasElementAt(
       );
     }
     if (element.type === 'circle') {
-      const radius = element.width / 2 + tolerance;
-      return (
-        Math.hypot(
-          point.x - (element.x + element.width / 2),
-          point.y - (element.y + element.height / 2),
-        ) <= radius
-      );
+      const radiusX = element.width / 2 + tolerance;
+      const radiusY = element.height / 2 + tolerance;
+      if (radiusX <= 0 || radiusY <= 0) return false;
+      return ((point.x - element.x - element.width / 2) / radiusX) ** 2 + ((point.y - element.y - element.height / 2) / radiusY) ** 2 <= 1;
     }
     if (element.type === 'arrow')
       return (

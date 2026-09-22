@@ -12,6 +12,7 @@ import { getDb } from '@/db';
 import {
   studioAssetUploads,
   studioAssets,
+  studioBudgetItems,
   studioClients,
   studioComments,
   studioInspiration,
@@ -113,6 +114,7 @@ async function deleteAccount(userId: string) {
       database.delete(studioPlans).where(inArray(studioPlans.project, projectIds)),
       database.delete(studioUploads).where(inArray(studioUploads.project, projectIds)),
       database.delete(studioAssetUploads).where(inArray(studioAssetUploads.project, projectIds)),
+      database.delete(studioBudgetItems).where(inArray(studioBudgetItems.project, projectIds)),
       database.delete(studioTasks).where(inArray(studioTasks.project, projectIds)),
       database.delete(studioInspirationComments).where(inArray(studioInspirationComments.project, projectIds)),
       database.delete(studioInspiration).where(inArray(studioInspiration.project, projectIds)),

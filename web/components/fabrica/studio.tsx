@@ -142,6 +142,7 @@ type Account = {
   name: string;
   email: string;
   provider: 'chatgpt' | 'google' | 'fabrica';
+  created?: number;
 };
 
 function AccountSettings({
@@ -182,6 +183,15 @@ function AccountSettings({
       <div className="account-settings-heading">
         <h3>Configuración</h3>
         <p>Actualizá los datos con los que accedés a Fabrica.</p>
+        {typeof account.created === 'number' && (
+          <p>
+            Cuenta creada el{' '}
+            {new Intl.DateTimeFormat('es-AR', {
+              dateStyle: 'long',
+              timeZone: 'America/Argentina/Buenos_Aires',
+            }).format(account.created)}.
+          </p>
+        )}
       </div>
       <form
         className="account-settings-card"
