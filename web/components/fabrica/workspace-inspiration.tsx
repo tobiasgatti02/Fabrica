@@ -3,36 +3,75 @@
 import {
   useEffect,
   useMemo,
+  useReducer,
   useRef,
   useState,
   type ClipboardEvent,
+  type CSSProperties,
   type DragEvent,
   type PointerEvent,
   type SyntheticEvent,
 } from 'react';
 import Image from 'next/image';
 import {
+  AlignCenter,
+  AlignLeft,
+  AlignRight,
+  ArrowRight,
   ArrowUpRight,
+  Circle,
+  Bold,
+  Eraser,
   FileText,
+  Frame,
   GripHorizontal,
   Hand,
   ImagePlus,
+  SmilePlus,
+  Tag,
+  X,
+  Keyboard,
+  Trash2,
+  Pencil,
   Link2,
+  LockKeyhole,
+  UnlockKeyhole,
   LoaderCircle,
+  MessageCircle,
   Minus,
   MousePointer2,
+  PencilLine,
+  Highlighter,
+  Sparkles,
+  Lasso,
+  Group,
+  Ungroup,
   Plus,
+  Redo2,
   Scan,
+  Square,
   StickyNote,
-  Trash2,
-  UploadCloud,
+  Undo2,
 } from 'lucide-react';
+import { InspirationCanvas } from './inspiration-canvas';
+import {
+  boardReducer,
+  emptyBoard,
+  elementIndex,
+  parseElements,
+  safeReferenceUrl,
+  simplifyStroke,
+  validPoint,
+  MAX_STROKE_POINTS,
+  MAX_ELEMENTS,
+  unionBounds,
+  SpatialIndex,
+  type BoardSnapshot,
+} from '@/features/workspace/inspiration-scene';
 import type { WorkspaceViewProps } from './workspace';
 import {
   assetUrl,
-  categoryLabels,
   createImagePreview,
-  inspirationStatusLabels,
   shortDate,
   uploadWorkspaceAsset,
   type WorkspaceAsset,
@@ -41,18 +80,30 @@ import {
 import { formatBytes } from '@/features/studio/domain';
 import {
   boardClipboard,
+  boundsForCanvasElement,
+  canvasElementAt,
   clipboardReferenceType,
+  findAlignment,
+  translateCanvasElement,
   type Point,
+  type AlignmentGuide,
+  type BoardBounds,
+  type CanvasElement,
+  type StrokeStyle,
 } from '@/features/workspace/inspiration-board';
+import { inspirationFileError } from '@/features/files/validation';
+import { showErrorToast } from '@/lib/notifications';
 
 type Camera = Point & { zoom: number };
 type Draft = {
   title: string;
   note?: string;
+  sequenceFrom?: string;
   url?: string;
   asset?: string;
   file?: File;
   category?: string;
+  sticky?: StickyMeta;
 };
 type Pending = {
   id: string;
@@ -61,14 +112,202 @@ type Pending = {
   preview?: string;
   error?: string;
 };
-type Gesture = {
+type PanGesture = {
   pointer: number;
   start: Point;
   camera: Camera;
-  card?: string;
-  point?: Point;
+  kind: 'pan';
 };
+type CardGesture = {
+  pointer: number;
+  start: Point;
+  camera: Camera;
+  kind: 'card';
+  card: string;
+  point: Point;
+  targets: BoardBounds[];
+  before: BoardSnapshot;
+};
+type ResizeGesture = {
+  pointer: number;
+  start: Point;
+  kind: 'resize';
+  card: string;
+  size: { width: number; height: number };
+};
+type FrameResizeGesture = {
+  kind: 'frame-resize';
+  pointer: number;
+  start: Point;
+  element: Extract<CanvasElement, { type: 'frame' }>;
+  corner: 'nw' | 'ne' | 'sw' | 'se';
+  before: BoardSnapshot;
+};
+type CanvasGesture = {
+  pointer: number;
+  start: Point;
+  camera: Camera;
+  kind: 'canvas';
+  element: CanvasElement;
+  before: BoardSnapshot;
+  targets: BoardBounds[];
+};
+type MultiGesture = {
+  kind: 'multi'; pointer: number; start: Point; camera: Camera;
+  before: BoardSnapshot; cards: { id: string; point: Point }[];
+  elements: CanvasElement[];
+};
+type MarqueeGesture = {
+  kind: 'marquee'; pointer: number; start: Point; camera: Camera;
+  origin: Point; additive: boolean; points: Point[];
+};
+type Gesture = PanGesture | CardGesture | CanvasGesture | ResizeGesture | FrameResizeGesture | MultiGesture | MarqueeGesture;
+type BoardContextMenu = {
+  x: number;
+  y: number;
+  point: Point;
+  card?: string;
+  isPostIt: boolean;
+};
+type CanvasTool =
+  | 'select'
+  | 'sticky'
+  | 'frame'
+  | 'rectangle'
+  | 'circle'
+  | 'arrow'
+  | 'draw'
+  | 'marker'
+  | 'smart'
+  | 'lasso'
+  | 'erase'
+  | 'erase-area';
+type ActiveCanvasElement = {
+  pointer: number;
+  type: Exclude<CanvasTool, 'select' | 'sticky' | 'erase' | 'erase-area' | 'lasso'>;
+  start: Point;
+  points: Point[];
+  targets: BoardBounds[];
+};
+type CanvasPreview = { element: CanvasElement; guides: AlignmentGuide[] };
 const initialCamera = { x: 60, y: 90, zoom: 1 };
+function pointInPolygon(point: Point, polygon: Point[]) {
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const a = polygon[i], b = polygon[j];
+    if ((a.y > point.y) !== (b.y > point.y) &&
+      point.x < ((b.x - a.x) * (point.y - a.y)) / (b.y - a.y) + a.x)
+      inside = !inside;
+  }
+  return inside;
+}
+const stickyColors = [
+  '#fff3a6',
+  '#ffe36e',
+  '#ffb36d',
+  '#ff969b',
+  '#ffd0ec',
+  '#ed8bda',
+  '#a9caff',
+  '#ada4f5',
+  '#8bdcf4',
+  '#7ca6ea',
+  '#72dbd1',
+  '#5dd786',
+  '#c9eb8c',
+  '#a7e35b',
+  '#f2f2ef',
+  '#303030',
+] as const;
+type StickyMeta = {
+  color: string;
+  width: number;
+  height: number;
+  tags: string[];
+  reactions: Record<string, number>;
+  fontSize: number;
+  bold: boolean;
+  align: 'left' | 'center' | 'right';
+  locked: boolean;
+};
+const defaultStickyMeta = (color: string = stickyColors[0]): StickyMeta => ({
+  color,
+  width: 260,
+  height: 240,
+  tags: [],
+  reactions: {},
+  fontSize: 18,
+  bold: false,
+  align: 'left',
+  locked: false,
+});
+function readStickyMetadata(project: string): Record<string, StickyMeta> {
+  try {
+    const value = JSON.parse(
+      localStorage.getItem('fabrica:inspiration-stickies:' + project) || '{}',
+    ) as Record<string, Partial<StickyMeta>>;
+    return Object.fromEntries(
+      Object.entries(value).flatMap(([id, item]) => {
+        if (!item || typeof item !== 'object' || id.length > 100) return [];
+        const color =
+          typeof item.color === 'string' && /^#[0-9a-f]{6}$/i.test(item.color)
+            ? item.color
+            : stickyColors[0];
+        const width = Math.min(800, Math.max(180, Number(item.width) || 260));
+        const height = Math.min(800, Math.max(180, Number(item.height) || 240));
+        const tags = Array.isArray(item.tags)
+          ? item.tags
+              .filter((tag): tag is string => typeof tag === 'string')
+              .map((tag) => tag.trim().slice(0, 24))
+              .filter(Boolean)
+              .slice(0, 5)
+          : [];
+        const reactions = Object.fromEntries(
+          Object.entries(item.reactions || {})
+            .filter(
+              ([emoji, count]) =>
+                emoji.length <= 8 &&
+                typeof count === 'number' &&
+                Number.isFinite(count) &&
+                count > 0,
+            )
+            .slice(0, 8)
+            .map(([emoji, count]) => [emoji, Math.min(999, Math.floor(count))]),
+        );
+        const fontSize = Math.min(36, Math.max(12, Number(item.fontSize) || 18));
+        const align = item.align === 'center' || item.align === 'right' ? item.align : 'left';
+        return [[id, { color, width, height, tags, reactions, fontSize,
+          bold: item.bold === true, align, locked: item.locked === true }]];
+      }),
+    );
+  } catch {
+    return {};
+  }
+}
+type StickyLink = { from: string; to: string };
+function readStickyLinks(project: string): StickyLink[] {
+  try {
+    const value: unknown = JSON.parse(localStorage.getItem('fabrica:inspiration-sticky-links:' + project) || '[]');
+    if (!Array.isArray(value)) return [];
+    return value.slice(0, 1000).filter((link): link is StickyLink =>
+      link && typeof link.from === 'string' && typeof link.to === 'string' &&
+      link.from.length <= 100 && link.to.length <= 100 && link.from !== link.to);
+  } catch { return []; }
+}
+const stickyCursor = (color: string) => {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><path d="M6 4h21v18l-7 7H6z" fill="${color}" stroke="#252525" stroke-width="2"/><path d="M20 29v-7h7" fill="none" stroke="#252525" stroke-width="2"/></svg>`;
+  return `url("data:image/svg+xml,${encodeURIComponent(svg)}") 7 5, crosshair`;
+};
+const framePresets = [
+  { label: 'A4', width: 595, height: 842 },
+  { label: 'Letter', width: 612, height: 792 },
+  { label: '16 : 9', width: 640, height: 360 },
+  { label: '4 : 3', width: 600, height: 450 },
+  { label: '1 : 1', width: 480, height: 480 },
+  { label: 'Mobile', width: 390, height: 844 },
+  { label: 'Tablet', width: 768, height: 1024 },
+  { label: 'Desktop', width: 1280, height: 800 },
+] as const;
 const editableTarget = (target: EventTarget | null) =>
   target instanceof HTMLElement &&
   Boolean(target.closest('input, textarea, select, [contenteditable="true"]'));
@@ -79,14 +318,47 @@ function readPositions(project: string): Record<string, Point> {
       localStorage.getItem('fabrica:inspiration:' + project) || '{}',
     ) as Record<string, Point>;
     return Object.fromEntries(
-      Object.entries(stored).filter(
-        ([, point]) =>
-          point && Number.isFinite(point.x) && Number.isFinite(point.y),
-      ),
+      Object.entries(stored).filter(([, point]) => validPoint(point)),
     );
   } catch {
     return {};
   }
+}
+
+function readCanvasElements(project: string): CanvasElement[] {
+  try {
+    const stored = JSON.parse(
+      localStorage.getItem('fabrica:inspiration-elements:' + project) || '[]',
+    );
+    return parseElements(stored);
+  } catch {
+    return [];
+  }
+}
+
+function CommentBubble({
+  count,
+  title,
+  onClick,
+}: {
+  count: number;
+  title: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className="inspiration-comment-bubble"
+      aria-label={`Ver comentarios de ${title}. ${count} comentarios.`}
+      onPointerDown={(event) => event.stopPropagation()}
+      onClick={(event) => {
+        event.stopPropagation();
+        onClick();
+      }}
+    >
+      <MessageCircle size={15} /> <span>{count}</span>
+    </button>
+  );
 }
 
 function Media({
@@ -188,55 +460,6 @@ function Media({
   );
 }
 
-function CardControls({
-  item,
-  canEdit,
-  busy,
-  run,
-}: {
-  item: WorkspaceInspiration;
-  canEdit: boolean;
-  busy: boolean;
-  run: WorkspaceViewProps['run'];
-}) {
-  if (!canEdit) return null;
-  return (
-    <div className="inspiration-card-controls">
-      <select
-        aria-label={'Estado de ' + item.title}
-        value={item.status}
-        disabled={busy}
-        onChange={(event) =>
-          void run({
-            action: 'update-inspiration',
-            id: item.id,
-            status: event.target.value,
-            category: item.category,
-          }).catch(() => {})
-        }
-      >
-        {Object.entries(inspirationStatusLabels).map(([key, label]) => (
-          <option key={key} value={key}>
-            {label}
-          </option>
-        ))}
-      </select>
-      <button
-        type="button"
-        aria-label={'Eliminar ' + item.title}
-        onClick={() => {
-          if (window.confirm('¿Eliminar “' + item.title + '”?'))
-            void run({ action: 'delete-inspiration', id: item.id }).catch(
-              () => {},
-            );
-        }}
-      >
-        <Trash2 size={15} />
-      </button>
-    </div>
-  );
-}
-
 function PhotoFrame({
   item,
   asset,
@@ -244,11 +467,10 @@ function PhotoFrame({
   share,
   invite,
   selected,
-  canEdit,
-  busy,
-  run,
+  commentCount,
   onDrag,
   onSelect,
+  onComments,
 }: {
   item: WorkspaceInspiration;
   asset: WorkspaceAsset;
@@ -256,11 +478,10 @@ function PhotoFrame({
   share: string;
   invite: string;
   selected: boolean;
-  canEdit: boolean;
-  busy: boolean;
-  run: WorkspaceViewProps['run'];
+  commentCount: number;
   onDrag: (event: PointerEvent<HTMLElement>, id: string) => void;
   onSelect: (id: string) => void;
+  onComments: () => void;
 }) {
   return (
     <div className="inspiration-photo-frame">
@@ -280,15 +501,17 @@ function PhotoFrame({
         onClick={() => onSelect(item.id)}
       >
         <GripHorizontal size={19} />
-        <span>Foto</span>
       </button>
+      <CommentBubble
+        count={commentCount}
+        title={item.title}
+        onClick={onComments}
+      />
       <div className="inspiration-photo-details">
-        <h3>{item.title}</h3>
         {item.note && <p className="inspiration-note-text">{item.note}</p>}
         <div className="inspiration-photo-meta">
-          {categoryLabels[item.category] || 'General'} ·{' '}
-          {shortDate(item.created)}
-          {' · '}Por {item.author} · {formatBytes(asset.size)}
+          {shortDate(item.created)} · Por {item.author} ·{' '}
+          {formatBytes(asset.size)}
         </div>
         <div className="inspiration-photo-actions">
           <a
@@ -298,12 +521,15 @@ function PhotoFrame({
           >
             Abrir foto <ArrowUpRight size={15} />
           </a>
-          {item.url && (
-            <a href={item.url} target="_blank" rel="noopener noreferrer">
-              Referencia <ArrowUpRight size={15} />
+          {safeReferenceUrl(item.url) && (
+            <a
+              href={safeReferenceUrl(item.url) || undefined}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Enlace <ArrowUpRight size={15} />
             </a>
           )}
-          <CardControls item={item} canEdit={canEdit} busy={busy} run={run} />
         </div>
       </div>
     </div>
@@ -320,72 +546,215 @@ export default function Inspiration({
   notify,
 }: WorkspaceViewProps) {
   const canEdit = data.viewer.permissions.inspiracion === 'edit';
-  const [category, setCategory] = useState('all');
   const [selected, setSelected] = useState<string | null>(null);
-  const [positions, setPositions] = useState<Record<string, Point>>({});
+  const [help, setHelp] = useState(false);
+  const [storageError, setStorageError] = useState(false);
+  const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
   const [positionsReady, setPositionsReady] = useState(false);
   const [camera, setCamera] = useState<Camera>(initialCamera);
   const [hand, setHand] = useState(false);
   const [space, setSpace] = useState(false);
   const [dragging, setDragging] = useState(false);
+  const [contextMenu, setContextMenu] = useState<BoardContextMenu | null>(null);
+  const [tool, setTool] = useState<CanvasTool>('select');
+  const [stickyColor, setStickyColor] = useState<string>(stickyColors[0]);
+  const [stickyStore, setStickyStore] = useState<{
+    project: string;
+    items: Record<string, StickyMeta>;
+  }>({ project: '', items: {} });
+  const stickyMetadata =
+    stickyStore.project === project ? stickyStore.items : {};
+  const [stickyLinks, setStickyLinks] = useState<StickyLink[]>([]);
+  const stickyLinksProject = useRef<string | null>(null);
+  const [activeFrameResize, setActiveFrameResize] = useState<string | null>(null);
+  const [stickyPanel, setStickyPanel] = useState<
+    'colors' | 'tags' | 'reactions' | 'link' | null
+  >(null);
+  const [tagDraft, setTagDraft] = useState('');
+  const [linkDraft, setLinkDraft] = useState('');
+  const [penMenuOpen, setPenMenuOpen] = useState(false);
+  const [selection, setSelection] = useState<string[]>([]);
+  const [groups, setGroups] = useState<Record<string, string>>({});
+  const groupsProject = useRef<string | null>(null);
+  const [marquee, setMarquee] = useState<BoardBounds | null>(null);
+  const [lassoPoints, setLassoPoints] = useState<Point[]>([]);
+  const [frameMenuOpen, setFrameMenuOpen] = useState(false);
+  const [editingFrameTitle, setEditingFrameTitle] = useState(false);
+  const [stroke, setStroke] = useState('#566b55');
+  const [strokeWeight, setStrokeWeight] = useState(3);
+  const [strokeStyle, setStrokeStyle] = useState<StrokeStyle>('solid');
+  const [canvasDocument, dispatchCanvas] = useReducer(boardReducer, emptyBoard);
+  const canvasElements = canvasDocument.elements;
+  const positions = canvasDocument.positions;
+  const setPositions = (
+    update: (previous: Record<string, Point>) => Record<string, Point>,
+    record = false,
+  ) => dispatchCanvas({ type: 'positions', update, record });
+  const sceneIndex = useMemo(
+    () => elementIndex(canvasElements),
+    [canvasElements],
+  );
+  const selectedCanvasMarks = useMemo(
+    () => canvasElements.filter((element) => selection.includes('element:' + element.id)),
+    [canvasElements, selection],
+  );
+  const [selectedCanvasElement, setSelectedCanvasElement] = useState<
+    string | null
+  >(null);
+  const [canvasReady, setCanvasReady] = useState(false);
+  const [canvasDraft, setCanvasDraft] = useState<CanvasElement | null>(null);
+  const [alignmentGuides, setAlignmentGuides] = useState<AlignmentGuide[]>([]);
   const [pending, setPending] = useState<Pending[]>([]);
-  const [showForm, setShowForm] = useState(false);
-  const [title, setTitle] = useState('');
-  const [note, setNote] = useState('');
-  const [url, setUrl] = useState('');
-  const [itemCategory, setItemCategory] = useState('general');
+  const [commentTarget, setCommentTarget] = useState<string | null>(null);
+  const [commentText, setCommentText] = useState('');
   const viewport = useRef<HTMLDivElement>(null);
-  const fileInput = useRef<HTMLInputElement>(null);
+  const cardNodes = useRef(new Map<string, HTMLElement>());
+  const frameTitleInput = useRef<HTMLInputElement>(null);
+  const stickyLinkInput = useRef<HTMLInputElement>(null);
   const gesture = useRef<Gesture | null>(null);
+  const activeCanvasElement = useRef<ActiveCanvasElement | null>(null);
+  const previewFrame = useRef<number | null>(null);
+  const queuedPreview = useRef<CanvasPreview | null>(null);
+  const moveFrame = useRef<number | null>(null);
+  const queuedCanvasMove = useRef<CanvasElement | null>(null);
   const insertion = useRef<Point>({ x: 40, y: 50 });
   const queue = useRef(Promise.resolve());
   const urls = useRef(new Set<string>());
   const mounted = useRef(true);
+  const deleting = useRef(false);
   const operations = useRef({ run, notify });
   useEffect(() => {
     operations.current = { run, notify };
   }, [run, notify]);
   useEffect(() => {
+    if (editingFrameTitle) frameTitleInput.current?.focus();
+  }, [editingFrameTitle]);
+  useEffect(() => {
+    if (stickyPanel === 'link') stickyLinkInput.current?.focus();
+  }, [stickyPanel]);
+  useEffect(() => {
     mounted.current = true;
     const previews = urls.current;
     return () => {
       mounted.current = false;
+      if (previewFrame.current) cancelAnimationFrame(previewFrame.current);
+      if (moveFrame.current) cancelAnimationFrame(moveFrame.current);
       previews.forEach((value) => URL.revokeObjectURL(value));
       previews.clear();
     };
   }, []);
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
-      setPositions(readPositions(project));
       setPositionsReady(true);
+      dispatchCanvas({
+        type: 'reset',
+        elements: readCanvasElements(project),
+        positions: readPositions(project),
+      });
+      setCanvasReady(true);
+      setStickyStore({ project, items: readStickyMetadata(project) });
+      stickyLinksProject.current = project;
+      setStickyLinks(readStickyLinks(project));
+      groupsProject.current = project;
+      try {
+        const saved = JSON.parse(localStorage.getItem('fabrica:inspiration-groups:' + project) || '{}');
+        setGroups(saved && typeof saved === 'object' && !Array.isArray(saved)
+          ? Object.fromEntries(Object.entries(saved).filter((entry): entry is [string, string] =>
+              /^(card|element):/.test(entry[0]) && typeof entry[1] === 'string')) : {});
+      } catch { setGroups({}); }
     });
     return () => cancelAnimationFrame(frame);
   }, [project]);
   useEffect(() => {
-    if (!positionsReady) return;
-    const timer = window.setTimeout(() => {
+    if (canvasReady && groupsProject.current === project) {
+      try {
+        localStorage.setItem('fabrica:inspiration-groups:' + project, JSON.stringify(groups));
+      } catch { setStorageError(true); }
+    }
+  }, [groups, project, canvasReady]);
+  useEffect(() => {
+    if (stickyStore.project !== project) return;
+    try {
+      localStorage.setItem(
+        'fabrica:inspiration-stickies:' + project,
+        JSON.stringify(stickyStore.items),
+      );
+    } catch {
+      setStorageError(true);
+    }
+  }, [project, stickyStore]);
+  useEffect(() => {
+    if (!canvasReady || stickyLinksProject.current !== project) return;
+    try { localStorage.setItem('fabrica:inspiration-sticky-links:' + project, JSON.stringify(stickyLinks)); }
+    catch { setStorageError(true); }
+  }, [project, stickyLinks, canvasReady]);
+  const saveLocal = useRef<(() => void) | null>(null);
+  useEffect(() => {
+    if (!positionsReady || !canvasReady) return;
+    const persist = () => {
       try {
         localStorage.setItem(
           'fabrica:inspiration:' + project,
           JSON.stringify(positions),
         );
+        localStorage.setItem(
+          'fabrica:inspiration-elements:' + project,
+          JSON.stringify(canvasElements),
+        );
+        if (mounted.current) setStorageError(false);
       } catch {
-        /* Storage may be unavailable in private mode. */
+        if (mounted.current) setStorageError(true);
       }
-    }, 250);
+    };
+    saveLocal.current = persist;
+    if (dragging) return;
+    const timer = window.setTimeout(persist, 250);
     return () => window.clearTimeout(timer);
-  }, [positions, positionsReady, project]);
-  const items = useMemo(
-    () =>
-      data.inspiration.filter(
-        (item) => category === 'all' || item.category === category,
-      ),
-    [data.inspiration, category],
-  );
+  }, [
+    positions,
+    canvasElements,
+    positionsReady,
+    canvasReady,
+    project,
+    dragging,
+  ]);
+  useEffect(() => {
+    const flush = () => saveLocal.current?.();
+    const hidden = () => {
+      if (document.visibilityState === 'hidden') flush();
+    };
+    window.addEventListener('pagehide', flush);
+    document.addEventListener('visibilitychange', hidden);
+    return () => {
+      flush();
+      window.removeEventListener('pagehide', flush);
+      document.removeEventListener('visibilitychange', hidden);
+    };
+  }, []);
+  const items = data.inspiration;
   const assetMap = useMemo(
     () => new Map(data.assets.map((asset) => [asset.id, asset])),
     [data.assets],
   );
+  const inspirationComments = useMemo(
+    () => data.inspirationComments || [],
+    [data.inspirationComments],
+  );
+  const commentsByItem = useMemo(() => {
+    const groups = new Map<string, typeof inspirationComments>();
+    inspirationComments.forEach((comment) => {
+      const comments = groups.get(comment.inspiration) || [];
+      comments.push(comment);
+      groups.set(comment.inspiration, comments);
+    });
+    return groups;
+  }, [inspirationComments]);
+  const selectedComments = commentTarget
+    ? commentsByItem.get(commentTarget) || []
+    : [];
+  const commentItem = commentTarget
+    ? data.inspiration.find((item) => item.id === commentTarget)
+    : undefined;
   // Default placement uses the full board order, so filtering never moves cards.
   const defaults = useMemo(
     () =>
@@ -400,6 +769,70 @@ export default function Inspiration({
   const positionFor = (id: string) =>
     positions[id] || defaults[id] || { x: 0, y: 0 };
 
+  useEffect(() => {
+    const node = viewport.current;
+    if (!node) return;
+    const observer = new ResizeObserver(([entry]) =>
+      setViewportSize({
+        width: entry.contentRect.width,
+        height: entry.contentRect.height,
+      }),
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+
+  function markAt(point: Point) {
+    const tolerance = 12 / camera.zoom;
+    const candidates = sceneIndex
+      .search({
+        left: point.x - tolerance,
+        right: point.x + tolerance,
+        top: point.y - tolerance,
+        bottom: point.y + tolerance,
+      })
+      .sort((a, b) => a.order - b.order);
+    return canvasElementAt(
+      candidates.map(({ element }) => element),
+      point,
+      tolerance,
+    );
+  }
+
+  const cardIndex = useMemo(
+    () =>
+      new SpatialIndex(
+        items.map((item, order) => {
+          const point = positions[item.id] ||
+            defaults[item.id] || { x: 0, y: 0 };
+          return {
+            value: { item, order },
+            bounds: {
+              left: point.x,
+              top: point.y,
+              right: point.x + 340,
+              bottom: point.y + 800,
+            },
+          };
+        }),
+      ),
+    [items, positions, defaults],
+  );
+  const visibleItems = useMemo(() => {
+    const margin = 300 / camera.zoom;
+    const candidates = cardIndex.search({
+      left: -camera.x / camera.zoom - margin,
+      top: -camera.y / camera.zoom - margin,
+      right: (viewportSize.width - camera.x) / camera.zoom + margin,
+      bottom: (viewportSize.height - camera.y) / camera.zoom + margin,
+    });
+    if (selected && !candidates.some(({ item }) => item.id === selected)) {
+      const order = items.findIndex((item) => item.id === selected);
+      if (order >= 0) candidates.push({ item: items[order], order });
+    }
+    return candidates.sort((a, b) => a.order - b.order);
+  }, [cardIndex, camera, viewportSize, items, selected]);
+
   function worldPoint(clientX: number, clientY: number) {
     const bounds = viewport.current!.getBoundingClientRect();
     return {
@@ -412,6 +845,387 @@ export default function Inspiration({
     viewport.current?.focus({ preventScroll: true });
   }
 
+  function selectCard(id: string | null) {
+    setSelected(id);
+    setSelectedCanvasElement(null);
+    setActiveFrameResize(null);
+    setSelection(id ? ['card:' + id] : []);
+  }
+
+  function selectCanvasElement(id: string | null) {
+    if (id !== activeFrameResize) setActiveFrameResize(null);
+    setSelectedCanvasElement(id);
+    setSelected(null);
+    setSelection(id ? ['element:' + id] : []);
+  }
+
+  function selectTarget(key: string, additive = false) {
+    const members = groups[key] ? Object.keys(groups).filter((id) => groups[id] === groups[key]) : [key];
+    setSelection((current) => additive
+      ? members.every((id) => current.includes(id))
+        ? current.filter((id) => !members.includes(id))
+        : [...new Set([...current, ...members])]
+      : current.includes(key) && current.length > 1 ? current : members);
+    setSelected(key.startsWith('card:') ? key.slice(5) : null);
+    setSelectedCanvasElement(key.startsWith('element:') ? key.slice(8) : null);
+  }
+
+  function groupSelection() {
+    if (selection.length < 2) return;
+    const id = crypto.randomUUID();
+    setGroups((current) => ({ ...current, ...Object.fromEntries(selection.map((key) => [key, id])) }));
+  }
+
+  function ungroupSelection() {
+    setGroups((current) => Object.fromEntries(Object.entries(current).filter(([key]) => !selection.includes(key))));
+  }
+
+  function chooseTool(next: CanvasTool) {
+    setTool(next);
+    setPenMenuOpen(['draw', 'marker', 'smart', 'erase', 'erase-area', 'lasso'].includes(next));
+    setFrameMenuOpen(false);
+    setHand(false);
+    setContextMenu(null);
+    setStickyPanel(null);
+    focusBoard();
+  }
+
+  function updateStickyMeta(
+    id: string,
+    update: (current: StickyMeta) => StickyMeta,
+  ) {
+    setStickyStore((current) => {
+      const items = current.project === project ? current.items : {};
+      return {
+        project,
+        items: {
+          ...items,
+          [id]: update(items[id] || defaultStickyMeta()),
+        },
+      };
+    });
+  }
+
+  function createFrame(width: number, height: number, title = '') {
+    if (!canEdit || canvasElements.length >= MAX_ELEMENTS) return;
+    const bounds = viewport.current;
+    if (!bounds) return;
+    const center = worldPoint(
+      bounds.getBoundingClientRect().left + bounds.clientWidth / 2,
+      bounds.getBoundingClientRect().top + bounds.clientHeight / 2,
+    );
+    const frame: CanvasElement = {
+      id: crypto.randomUUID(), type: 'frame',
+      x: Math.round(center.x - width / 2), y: Math.round(center.y - height / 2),
+      width, height, title, fill: '#ffffff',
+      stroke: '#c9cdc5', weight: 1, style: 'solid',
+    };
+    dispatchCanvas({ type: 'add', element: frame });
+    selectCanvasElement(frame.id);
+    setFrameMenuOpen(false);
+    setTool('select');
+    focusBoard();
+  }
+
+  function undoCanvas() {
+    if (!canEdit || !canvasDocument.past.length) return;
+    clearCanvasPreview();
+    setAlignmentGuides([]);
+    dispatchCanvas({ type: 'undo' });
+  }
+
+  function redoCanvas() {
+    if (!canEdit || !canvasDocument.future.length) return;
+    clearCanvasPreview();
+    setAlignmentGuides([]);
+    dispatchCanvas({ type: 'redo' });
+  }
+
+  function cardBounds(id: string, point = positionFor(id)): BoardBounds {
+    const card = cardNodes.current.get(id);
+    // offset dimensions are layout-space values, unaffected by the world's
+    // CSS scale, so they can be compared directly with board coordinates.
+    const width = card ? card.offsetWidth : 300;
+    const height = card ? card.offsetHeight : 360;
+    return {
+      left: point.x,
+      top: point.y,
+      right: point.x + width,
+      bottom: point.y + height,
+    };
+  }
+
+  function isGuideItem(item: WorkspaceInspiration) {
+    if (!item.asset && !item.url) return true;
+    const asset = item.asset ? assetMap.get(item.asset) : undefined;
+    return Boolean(asset && /^image\/(jpeg|png|webp|avif)$/.test(asset.mime));
+  }
+
+  function alignmentTargets(excludeCard?: string, excludeElement?: string) {
+    const sizes = new Map(
+      Array.from(
+        viewport.current?.querySelectorAll<HTMLElement>('[data-card]') || [],
+      ).map((node) => [
+        node.dataset.card,
+        { width: node.offsetWidth, height: node.offsetHeight },
+      ]),
+    );
+    return [
+      ...data.inspiration
+        .filter((item) => item.id !== excludeCard && isGuideItem(item))
+        .map((item) => {
+          const point = positionFor(item.id),
+            size = sizes.get(item.id);
+          return {
+            left: point.x,
+            top: point.y,
+            right: point.x + (size?.width || 300),
+            bottom: point.y + (size?.height || 360),
+          };
+        }),
+      ...canvasElements
+        .filter((element) => element.id !== excludeElement)
+        .map(boundsForCanvasElement),
+    ];
+  }
+
+  function alignedCanvasElement(
+    element: CanvasElement,
+    targets: BoardBounds[],
+  ) {
+    const alignment = findAlignment(
+      boundsForCanvasElement(element),
+      targets,
+      8 / camera.zoom,
+    );
+    return {
+      element: translateCanvasElement(element, alignment.offset),
+      guides: alignment.guides,
+    };
+  }
+
+  function queueCanvasPreview(preview: CanvasPreview) {
+    queuedPreview.current = preview;
+    if (previewFrame.current) return;
+    previewFrame.current = requestAnimationFrame(() => {
+      const next = queuedPreview.current;
+      previewFrame.current = null;
+      queuedPreview.current = null;
+      if (!next) return;
+      setCanvasDraft(next.element);
+      setAlignmentGuides(next.guides);
+    });
+  }
+
+  function clearCanvasPreview() {
+    if (previewFrame.current) cancelAnimationFrame(previewFrame.current);
+    previewFrame.current = null;
+    queuedPreview.current = null;
+    setCanvasDraft(null);
+  }
+
+  function flushCanvasMove() {
+    if (moveFrame.current) cancelAnimationFrame(moveFrame.current);
+    moveFrame.current = null;
+    const next = queuedCanvasMove.current;
+    queuedCanvasMove.current = null;
+    if (!next) return;
+    dispatchCanvas({
+      type: 'replace',
+      elements: canvasElements.map((element) =>
+        element.id === next.id ? next : element,
+      ),
+    });
+  }
+
+  function queueCanvasMove(element: CanvasElement) {
+    queuedCanvasMove.current = element;
+    if (moveFrame.current) return;
+    moveFrame.current = requestAnimationFrame(flushCanvasMove);
+  }
+
+  function elementForGesture(active: ActiveCanvasElement, point: Point) {
+    const style = {
+      stroke,
+      weight: active.type === 'marker' ? Math.max(12, strokeWeight * 4) : strokeWeight,
+      style: strokeStyle,
+      opacity: active.type === 'marker' ? 0.35 : 1,
+    };
+    if (active.type === 'frame')
+      return {
+        id: 'draft', type: 'frame' as const,
+        x: Math.min(active.start.x, point.x),
+        y: Math.min(active.start.y, point.y),
+        width: Math.abs(point.x - active.start.x),
+        height: Math.abs(point.y - active.start.y),
+        title: '', fill: '#ffffff', ...style,
+      };
+    if (active.type === 'rectangle')
+      return {
+        id: 'draft',
+        type: 'rectangle' as const,
+        x: Math.min(active.start.x, point.x),
+        y: Math.min(active.start.y, point.y),
+        width: Math.abs(point.x - active.start.x),
+        height: Math.abs(point.y - active.start.y),
+        ...style,
+      };
+    if (active.type === 'circle') {
+      const radius = Math.hypot(
+        point.x - active.start.x,
+        point.y - active.start.y,
+      );
+      return {
+        id: 'draft',
+        type: 'circle' as const,
+        x: active.start.x - radius,
+        y: active.start.y - radius,
+        width: radius * 2,
+        height: radius * 2,
+        ...style,
+      };
+    }
+    if (active.type === 'arrow')
+      return {
+        id: 'draft',
+        type: 'arrow' as const,
+        x: active.start.x,
+        y: active.start.y,
+        endX: point.x,
+        endY: point.y,
+        ...style,
+      };
+    const previous = active.points.at(-1);
+    if (
+      active.points.length < MAX_STROKE_POINTS &&
+      (!previous ||
+        Math.hypot(point.x - previous.x, point.y - previous.y) >
+          1 / camera.zoom)
+    )
+      active.points.push(point);
+    return {
+      id: 'draft',
+      type: 'stroke' as const,
+      points: [...active.points],
+      ...style,
+    };
+  }
+
+  function eraseAt(point: Point) {
+    if (!canEdit || busy) return;
+    const element = markAt(point);
+    if (!element) return;
+    dispatchCanvas({ type: 'remove', id: element.id });
+    setSelectedCanvasElement((current) =>
+      current === element.id ? null : current,
+    );
+    setAlignmentGuides([]);
+  }
+
+  function eraseAtPointer(event: PointerEvent<HTMLDivElement>) {
+    if (!canEdit || busy) return;
+    // Cards (photos, links and stickies) live in the DOM rather than in the
+    // canvas spatial index, so resolve them from the pointer before checking
+    // canvas marks. This keeps the object eraser consistent across both layers.
+    const target = document.elementFromPoint(event.clientX, event.clientY);
+    const card = target?.closest<HTMLElement>('[data-card]');
+    if (card?.dataset.card) {
+      deleteInspiration(card.dataset.card);
+      setSelection([]);
+      return;
+    }
+    eraseAt(worldPoint(event.clientX, event.clientY));
+  }
+
+  function beginCanvasElement(event: PointerEvent<HTMLDivElement>) {
+    if (canvasElements.length >= MAX_ELEMENTS) {
+      notify('El lienzo alcanzó el límite de 10.000 dibujos.');
+      return false;
+    }
+    if (!canEdit || tool === 'select' || tool === 'lasso' || tool === 'erase-area' || tool === 'sticky' || hand || space || event.button !== 0)
+      return false;
+    event.preventDefault();
+    event.stopPropagation();
+    const point = worldPoint(event.clientX, event.clientY);
+    insertion.current = point;
+    selectCard(null);
+    setContextMenu(null);
+    if (tool === 'erase') {
+      eraseAt(point);
+      return true;
+    }
+    activeCanvasElement.current = {
+      pointer: event.pointerId,
+      type: tool as ActiveCanvasElement['type'],
+      start: point,
+      points: [point],
+      targets:
+        tool === 'rectangle' || tool === 'circle' || tool === 'frame' ? alignmentTargets() : [],
+    };
+    viewport.current?.setPointerCapture(event.pointerId);
+    setDragging(true);
+    return true;
+  }
+
+  function updateCanvasElement(event: PointerEvent<HTMLDivElement>) {
+    const active = activeCanvasElement.current;
+    if (!active || active.pointer !== event.pointerId) return false;
+    const point = worldPoint(event.clientX, event.clientY);
+    queueCanvasPreview(
+      alignedCanvasElement(elementForGesture(active, point), active.targets),
+    );
+    return true;
+  }
+
+  function finishCanvasElement(event?: PointerEvent<HTMLDivElement>) {
+    const active = activeCanvasElement.current;
+    if (!active || (event && active.pointer !== event.pointerId)) return false;
+    const point = event
+      ? worldPoint(event.clientX, event.clientY)
+      : active.start;
+    const preview = alignedCanvasElement(
+      elementForGesture(active, point),
+      active.targets,
+    );
+    const element =
+      preview.element.type === 'stroke'
+        ? {
+            ...preview.element,
+            points: simplifyStroke(preview.element.points, (active.type === 'smart' ? 3 : 0.8) / camera.zoom),
+          }
+        : preview.element;
+    const bounds = boundsForCanvasElement(element);
+    const size = Math.max(
+      bounds.right - bounds.left,
+      bounds.bottom - bounds.top,
+    );
+    if (size > 8 && (!['draw', 'marker', 'smart'].includes(active.type) || active.points.length > 1)) {
+      dispatchCanvas({
+        type: 'add',
+        element: { ...element, id: crypto.randomUUID() },
+      });
+    }
+    activeCanvasElement.current = null;
+    clearCanvasPreview();
+    setAlignmentGuides([]);
+    setDragging(false);
+    return true;
+  }
+
+  function saveComment(event: SyntheticEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!commentTarget || !commentText.trim() || busy) return;
+    void run({
+      action: 'add-inspiration-comment',
+      inspiration: commentTarget,
+      text: commentText.trim(),
+    })
+      .then(() => setCommentText(''))
+      // `run` already displays the API error. Catching here prevents the
+      // browser overlay from treating a rejected request as unhandled.
+      .catch(() => {});
+  }
+
   function upload(entry: Pending) {
     queue.current = queue.current.then(async () => {
       if (!mounted.current) return;
@@ -420,17 +1234,17 @@ export default function Inspiration({
         const draft = entry.draft;
         let asset = draft.asset || '';
         if (draft.file) {
-          if (!draft.file.size) throw new Error('El archivo está vacío.');
-          const limit = (data.viewer.guest ? 20 : 500) * 1024 * 1024;
-          if (draft.file.size > limit)
-            throw new Error(
-              'El archivo supera el límite de ' +
-                (data.viewer.guest ? '20' : '500') +
-                ' MB.',
-            );
+          const validationError = inspirationFileError(draft.file);
+          if (validationError) throw new Error(validationError);
           const optimized =
             (await createImagePreview(draft.file)) || draft.file;
-          asset = await uploadWorkspaceAsset(optimized, project, share, invite);
+          asset = await uploadWorkspaceAsset(
+            optimized,
+            project,
+            share,
+            invite,
+            'inspiration',
+          );
           // Retain the uploaded asset on retry; never upload it twice.
           retryDraft = { ...draft, file: undefined, asset };
         }
@@ -443,17 +1257,32 @@ export default function Inspiration({
           note: draft.note || '',
           url: draft.url || '',
           asset,
+          sticky: Boolean(draft.sticky),
           category: draft.category || 'general',
         });
         if (!mounted.current) return;
         setPositions((current) => ({ ...current, [result.id]: entry.point }));
-        setSelected(result.id);
+        if (draft.sticky) {
+          setStickyStore((current) => ({
+            project,
+            items: {
+              ...(current.project === project ? current.items : {}),
+              [result.id]: draft.sticky!,
+            },
+          }));
+        }
+        if (draft.sequenceFrom && stickyLinksProject.current === project) {
+          setStickyLinks((current) => [...current, { from: draft.sequenceFrom!, to: result.id }].slice(-1000));
+        }
+        selectCard(result.id);
         setPending((current) => current.filter((item) => item.id !== entry.id));
         if (entry.preview) {
           URL.revokeObjectURL(entry.preview);
           urls.current.delete(entry.preview);
         }
       } catch (error) {
+        const uploadError = (error as Error).message;
+        showErrorToast(uploadError, 'No pudimos subir el archivo');
         if (mounted.current)
           setPending((current) =>
             current.map((item) =>
@@ -461,7 +1290,7 @@ export default function Inspiration({
                 ? {
                     ...entry,
                     draft: retryDraft,
-                    error: (error as Error).message,
+                    error: uploadError,
                   }
                 : item,
             ),
@@ -472,8 +1301,15 @@ export default function Inspiration({
 
   function addDrafts(drafts: Draft[], point = insertion.current) {
     if (!canEdit || !drafts.length) return;
-    setCategory('all');
-    const entries = drafts.map((draft, index): Pending => {
+    const acceptedDrafts = drafts.filter((draft) => {
+      if (!draft.file) return true;
+      const validationError = inspirationFileError(draft.file);
+      if (!validationError) return true;
+      showErrorToast(validationError, 'Archivo no aceptado');
+      return false;
+    });
+    if (!acceptedDrafts.length) return;
+    const entries = acceptedDrafts.map((draft, index): Pending => {
       const preview =
         draft.file && /^image\/(jpeg|png|webp|avif)$/.test(draft.file.type)
           ? URL.createObjectURL(draft.file)
@@ -569,6 +1405,115 @@ export default function Inspiration({
     event.preventDefault();
   }
 
+  async function copyFromMenu(id: string) {
+    const item = data.inspiration.find((entry) => entry.id === id);
+    if (!item) return;
+    const text = item.url || item.note || item.title;
+    try {
+      await navigator.clipboard.writeText(text);
+      notify('Referencia copiada.');
+    } catch {
+      notify('No pudimos copiar la referencia.');
+    } finally {
+      setContextMenu(null);
+      focusBoard();
+    }
+  }
+
+  async function pasteFromMenu(point: Point) {
+    setContextMenu(null);
+    try {
+      const clipboard = navigator.clipboard;
+      if (!clipboard) throw new Error('Clipboard no disponible');
+      const clipboardItems = await clipboard.read();
+      const files: File[] = [];
+      for (const item of clipboardItems) {
+        const imageType = item.types.find((type) =>
+          /^image\/(jpeg|png|webp|avif)$/.test(type),
+        );
+        if (!imageType) continue;
+        const blob = await item.getType(imageType);
+        files.push(
+          new File([blob], 'Imagen pegada.' + imageType.slice(6), {
+            type: imageType,
+          }),
+        );
+      }
+      if (files.length) {
+        addDrafts(
+          files.map((file) => ({
+            file,
+            title: file.name.replace(/\.[^.]+$/, '') || 'Imagen pegada',
+          })),
+          point,
+        );
+        return;
+      }
+      const text = (await clipboard.readText()).trim();
+      if (!text) {
+        notify('No hay contenido para pegar.');
+        return;
+      }
+      try {
+        const url = new URL(text);
+        if (['http:', 'https:'].includes(url.protocol)) {
+          addDrafts(
+            [{ url: url.href, title: url.hostname.replace(/^www\./, '') }],
+            point,
+          );
+          return;
+        }
+      } catch {
+        // Plain text becomes a post-it below.
+      }
+      addDrafts(
+        [
+          {
+            title: text.split('\n')[0].slice(0, 80) || 'Nota',
+            note: text.slice(0, 2000),
+          },
+        ],
+        point,
+      );
+    } catch {
+      notify('No pudimos leer el portapapeles. Usá Ctrl / ⌘ V.');
+    } finally {
+      focusBoard();
+    }
+  }
+
+  function createPostItAt(point: Point) {
+    setContextMenu(null);
+    addDrafts(
+      [
+        {
+          title: 'Post-it',
+          note: '',
+          sticky: defaultStickyMeta(stickyColor),
+        },
+      ],
+      point,
+    );
+    setTool('select');
+    setStickyPanel(null);
+  }
+  function createNextPostIt(id: string) {
+    const source = cardBounds(id);
+    const sourceMeta = stickyMetadata[id] || defaultStickyMeta(stickyColor);
+    addDrafts([{
+      title: 'Post-it', note: '', sequenceFrom: id,
+      sticky: defaultStickyMeta(sourceMeta.color),
+    }], { x: source.right + 150, y: source.top });
+    setStickyPanel(null);
+  }
+  function saveStickyText(item: WorkspaceInspiration, text: string) {
+    const original = item.note || (item.title !== 'Post-it' ? item.title : '');
+    if (text === original) return;
+    void run({ action: 'edit-inspiration', id: item.id, title: item.title,
+      note: text, url: item.url || '', sticky: true,
+      category: item.category || 'general' }).catch(() => {});
+  }
+
   function drop(event: DragEvent<HTMLDivElement>) {
     event.preventDefault();
     receive(event.dataTransfer, worldPoint(event.clientX, event.clientY));
@@ -581,7 +1526,7 @@ export default function Inspiration({
       y: (bounds?.height || 600) / 2,
     };
     setCamera((current) => {
-      const zoom = Math.min(2, Math.max(0.05, value));
+      const zoom = Math.min(4, Math.max(0.05, value));
       return {
         zoom,
         x: anchor.x - ((anchor.x - current.x) * zoom) / current.zoom,
@@ -605,7 +1550,7 @@ export default function Inspiration({
       setCamera((current) => {
         if (event.ctrlKey || event.metaKey) {
           const zoom = Math.min(
-            2,
+            4,
             Math.max(
               0.05,
               current.zoom * Math.exp(-event.deltaY * factor * 0.008),
@@ -634,8 +1579,12 @@ export default function Inspiration({
 
   function startGesture(event: PointerEvent<HTMLElement>, card?: string) {
     if (event.button !== 0 && event.button !== 1) return;
+    if (card && event.button === 0 && stickyMetadata[card]?.locked && !hand && !space) {
+      selectCard(card);
+      return;
+    }
     if (card && !canEdit && !hand && !space) {
-      setSelected(card);
+      selectCard(card);
       focusBoard();
       return;
     }
@@ -643,14 +1592,124 @@ export default function Inspiration({
     event.stopPropagation();
     focusBoard();
     const panning = !card || hand || space || event.button === 1;
+    const movingItem = card
+      ? data.inspiration.find((item) => item.id === card)
+      : undefined;
     insertion.current = worldPoint(event.clientX, event.clientY);
-    setSelected(panning ? null : card!);
+    if (panning && !hand && !space && event.button === 0 && (tool === 'select' || tool === 'lasso' || tool === 'erase-area')) {
+      const origin = worldPoint(event.clientX, event.clientY);
+      gesture.current = { kind: 'marquee', pointer: event.pointerId,
+        start: { x: event.clientX, y: event.clientY }, camera, origin,
+        additive: event.shiftKey || event.metaKey || event.ctrlKey, points: [origin] };
+      if (tool === 'lasso') setLassoPoints([origin]);
+      else setMarquee({ left: origin.x, right: origin.x, top: origin.y, bottom: origin.y });
+    } else if (panning) {
+      if (!hand && !space) selectCard(null);
+      gesture.current = {
+        kind: 'pan',
+        pointer: event.pointerId,
+        start: { x: event.clientX, y: event.clientY },
+        camera,
+      };
+    } else {
+      selectTarget('card:' + card!, event.shiftKey || event.metaKey || event.ctrlKey);
+      const cardKey = 'card:' + card!;
+      const keys = selection.includes(cardKey) ? selection : groups[cardKey]
+        ? Object.keys(groups).filter((key) => groups[key] === groups[cardKey]) : [cardKey];
+      if (canEdit && keys.length > 1 && !(event.shiftKey || event.metaKey || event.ctrlKey)) {
+        gesture.current = {
+          kind: 'multi', pointer: event.pointerId,
+          start: { x: event.clientX, y: event.clientY }, camera,
+          before: { elements: canvasElements, positions },
+          cards: keys.filter((key) => key.startsWith('card:')).map((key) => ({ id: key.slice(5), point: positionFor(key.slice(5)) })),
+          elements: canvasElements.filter((element) => keys.includes('element:' + element.id)),
+        };
+      } else {
+      gesture.current = {
+        kind: 'card',
+        before: { elements: canvasElements, positions },
+        pointer: event.pointerId,
+        start: { x: event.clientX, y: event.clientY },
+        camera,
+        card: card!,
+        point: positionFor(card!),
+        targets:
+          movingItem && isGuideItem(movingItem) ? alignmentTargets(card) : [],
+      };
+      }
+    }
+    viewport.current?.setPointerCapture(event.pointerId);
+    setDragging(true);
+  }
+
+  function startCanvasGesture(
+    event: PointerEvent<HTMLDivElement>,
+    element: CanvasElement,
+  ) {
+    if (event.button !== 0 || hand || space || !['select', 'lasso'].includes(tool)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    focusBoard();
+    insertion.current = worldPoint(event.clientX, event.clientY);
+    selectTarget('element:' + element.id, event.shiftKey || event.metaKey || event.ctrlKey);
+    if (!canEdit) return;
+    const elementKey = 'element:' + element.id;
+    const keys = selection.includes(elementKey) ? selection : groups[elementKey]
+      ? Object.keys(groups).filter((key) => groups[key] === groups[elementKey]) : [elementKey];
+    if (keys.length > 1 && !(event.shiftKey || event.metaKey || event.ctrlKey)) {
+      gesture.current = {
+        kind: 'multi', pointer: event.pointerId,
+        start: { x: event.clientX, y: event.clientY }, camera,
+        before: { elements: canvasElements, positions },
+        cards: keys.filter((key) => key.startsWith('card:')).map((key) => ({ id: key.slice(5), point: positionFor(key.slice(5)) })),
+        elements: canvasElements.filter((candidate) => keys.includes('element:' + candidate.id)),
+      };
+      viewport.current?.setPointerCapture(event.pointerId);
+      setDragging(true);
+      return;
+    }
     gesture.current = {
+      kind: 'canvas',
       pointer: event.pointerId,
       start: { x: event.clientX, y: event.clientY },
       camera,
-      card: panning ? undefined : card,
-      point: card ? positionFor(card) : undefined,
+      element,
+      before: { elements: canvasElements, positions },
+      targets: alignmentTargets(undefined, element.id),
+    };
+    viewport.current?.setPointerCapture(event.pointerId);
+    setDragging(true);
+  }
+
+  function startStickyResize(event: PointerEvent<HTMLButtonElement>, id: string) {
+    if (!canEdit || event.button !== 0 || stickyMetadata[id]?.locked) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const node = cardNodes.current.get(id);
+    const meta = stickyMetadata[id] || defaultStickyMeta();
+    gesture.current = {
+      kind: 'resize',
+      pointer: event.pointerId,
+      start: { x: event.clientX, y: event.clientY },
+      card: id,
+      size: {
+        width: node?.offsetWidth || meta.width,
+        height: node?.offsetHeight || meta.height,
+      },
+    };
+    selectCard(id);
+    viewport.current?.setPointerCapture(event.pointerId);
+    setDragging(true);
+  }
+  function startFrameResize(event: PointerEvent<HTMLButtonElement>, element: Extract<CanvasElement, { type: 'frame' }>, corner: FrameResizeGesture['corner']) {
+    if (!canEdit || event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    selectCanvasElement(element.id);
+    gesture.current = {
+      kind: 'frame-resize', pointer: event.pointerId,
+      start: { x: event.clientX, y: event.clientY },
+      element, corner, before: { elements: canvasElements, positions },
     };
     viewport.current?.setPointerCapture(event.pointerId);
     setDragging(true);
@@ -661,13 +1720,64 @@ export default function Inspiration({
     if (!active || active.pointer !== event.pointerId) return;
     const x = event.clientX - active.start.x,
       y = event.clientY - active.start.y;
-    if (active.card && active.point) {
-      const point = {
+    if (active.kind === 'frame-resize') {
+      const dx = x / camera.zoom, dy = y / camera.zoom;
+      const left = active.corner.includes('w') ? active.element.x + dx : active.element.x;
+      const top = active.corner.includes('n') ? active.element.y + dy : active.element.y;
+      const right = active.corner.includes('e') ? active.element.x + active.element.width + dx : active.element.x + active.element.width;
+      const bottom = active.corner.includes('s') ? active.element.y + active.element.height + dy : active.element.y + active.element.height;
+      const width = Math.max(80, right - left), height = Math.max(80, bottom - top);
+      queueCanvasMove({ ...active.element,
+        x: active.corner.includes('w') ? right - width : left,
+        y: active.corner.includes('n') ? bottom - height : top,
+        width, height });
+    } else if (active.kind === 'resize') {
+      updateStickyMeta(active.card, (current) => ({
+        ...current,
+        width: Math.min(800, Math.max(180, active.size.width + x / camera.zoom)),
+        height: Math.min(800, Math.max(180, active.size.height + y / camera.zoom)),
+      }));
+    } else if (active.kind === 'marquee') {
+      const point = worldPoint(event.clientX, event.clientY);
+      if (tool === 'lasso') {
+        const last = active.points.at(-1)!;
+        if (Math.hypot(point.x - last.x, point.y - last.y) > 3 / camera.zoom) {
+          active.points.push(point);
+          setLassoPoints([...active.points]);
+        }
+      } else setMarquee({ left: Math.min(active.origin.x, point.x), top: Math.min(active.origin.y, point.y),
+        right: Math.max(active.origin.x, point.x), bottom: Math.max(active.origin.y, point.y) });
+    } else if (active.kind === 'multi') {
+      const offset = { x: x / active.camera.zoom, y: y / active.camera.zoom };
+      setPositions((current) => ({ ...current, ...Object.fromEntries(active.cards.map(({ id, point }) =>
+        [id, { x: point.x + offset.x, y: point.y + offset.y }])) }));
+      const moved = new Map(active.elements.map((element) => [element.id, translateCanvasElement(element, offset)]));
+      dispatchCanvas({ type: 'replace', elements: active.before.elements.map((element) => moved.get(element.id) || element) });
+    } else if (active.kind === 'card') {
+      const rawPoint = {
         x: active.point.x + x / active.camera.zoom,
         y: active.point.y + y / active.camera.zoom,
       };
-      setPositions((current) => ({ ...current, [active.card!]: point }));
-    } else
+      const alignment = findAlignment(
+        cardBounds(active.card, rawPoint),
+        active.targets,
+        8 / active.camera.zoom,
+      );
+      setAlignmentGuides(alignment.guides);
+      const point = {
+        x: rawPoint.x + alignment.offset.x,
+        y: rawPoint.y + alignment.offset.y,
+      };
+      setPositions((current) => ({ ...current, [active.card]: point }));
+    } else if (active.kind === 'canvas') {
+      const rawElement = translateCanvasElement(active.element, {
+        x: x / active.camera.zoom,
+        y: y / active.camera.zoom,
+      });
+      const alignment = alignedCanvasElement(rawElement, active.targets);
+      queueCanvasMove(alignment.element);
+      setAlignmentGuides(alignment.guides);
+    } else if (active.kind === 'pan')
       setCamera({
         ...active.camera,
         x: active.camera.x + x,
@@ -675,20 +1785,60 @@ export default function Inspiration({
       });
   }
   function endGesture() {
+    const active = gesture.current;
+    if (active?.kind === 'marquee') {
+      if ((marquee && (marquee.right - marquee.left > 3 || marquee.bottom - marquee.top > 3)) || active.points.length > 2) {
+        const hit = (b: BoardBounds) => tool === 'lasso'
+          ? [
+              { x: b.left, y: b.top }, { x: b.right, y: b.top },
+              { x: b.left, y: b.bottom }, { x: b.right, y: b.bottom },
+              { x: (b.left + b.right) / 2, y: (b.top + b.bottom) / 2 },
+            ].some((point) => pointInPolygon(point, active.points)) ||
+            active.points.some((point) => point.x >= b.left && point.x <= b.right && point.y >= b.top && point.y <= b.bottom)
+          : !!marquee && b.left <= marquee.right && b.right >= marquee.left && b.top <= marquee.bottom && b.bottom >= marquee.top;
+        if (tool === 'erase-area') {
+          const ids = new Set(canvasElements.filter((element) => hit(boundsForCanvasElement(element))).map((element) => element.id));
+          if (ids.size) {
+            dispatchCanvas({ type: 'replace', elements: canvasElements.filter((element) => !ids.has(element.id)) });
+            dispatchCanvas({ type: 'commit', before: { elements: canvasElements, positions } });
+          }
+          setMarquee(null);
+          gesture.current = null;
+          setDragging(false);
+          return;
+        }
+        const keys = [
+          ...items.filter((item) => hit(cardBounds(item.id))).map((item) => 'card:' + item.id),
+          ...canvasElements.filter((element) => hit(boundsForCanvasElement(element))).map((element) => 'element:' + element.id),
+        ];
+        setSelection((current) => active.additive ? [...new Set([...current, ...keys])] : keys);
+        setSelected(null);
+        setSelectedCanvasElement(null);
+      } else if (!active.additive) selectCard(null);
+      setMarquee(null);
+      setLassoPoints([]);
+    }
+    if (active?.kind === 'canvas' || active?.kind === 'card' || active?.kind === 'multi' || active?.kind === 'frame-resize') {
+      if (active.kind === 'canvas' || active.kind === 'frame-resize') flushCanvasMove();
+      dispatchCanvas({ type: 'commit', before: active.before });
+    }
     gesture.current = null;
     setDragging(false);
+    setAlignmentGuides([]);
   }
 
   function fitBoard() {
-    if (!items.length) {
+    const boxes = [
+      ...items.map((item) => cardBounds(item.id)),
+      ...canvasElements.map(boundsForCanvasElement),
+    ];
+    if (!boxes.length) {
       setCamera(initialCamera);
       return;
     }
-    const points = items.map((item) => positionFor(item.id));
-    const minX = Math.min(...points.map((point) => point.x)),
-      minY = Math.min(...points.map((point) => point.y));
-    const width = Math.max(...points.map((point) => point.x)) - minX + 320;
-    const height = Math.max(...points.map((point) => point.y)) - minY + 470;
+    const { left: minX, top: minY, right, bottom } = unionBounds(boxes);
+    const width = Math.max(1, right - minX),
+      height = Math.max(1, bottom - minY);
     const bounds = viewport.current!;
     const zoom = Math.min(
       1,
@@ -708,75 +1858,84 @@ export default function Inspiration({
     focusBoard();
   }
 
-  function save(event: SyntheticEvent<HTMLFormElement>) {
-    event.preventDefault();
-    addDrafts([
-      { title: title.trim() || 'Nota', note, url, category: itemCategory },
-    ]);
-    setShowForm(false);
-    setTitle('');
-    setNote('');
-    setUrl('');
+  function deleteInspiration(id: string) {
+    if (!canEdit || busy || deleting.current) return;
+    deleting.current = true;
+    void run({ action: 'delete-inspiration', id })
+      .then(() => {
+        setSelected((current) => (current === id ? null : current));
+        setStickyLinks((current) => current.filter((link) => link.from !== id && link.to !== id));
+        setStickyStore((current) => {
+          if (current.project !== project || !current.items[id]) return current;
+          const items = { ...current.items };
+          delete items[id];
+          return { ...current, items };
+        });
+      })
+      .catch(() => {})
+      .finally(() => {
+        deleting.current = false;
+      });
   }
+
+  function deleteSelected() {
+    if (!canEdit || busy) return;
+    if (selection.length > 1) {
+      const cards = selection.filter((key) => key.startsWith('card:')).map((key) => key.slice(5));
+      const marks = new Set(selection.filter((key) => key.startsWith('element:')).map((key) => key.slice(8)));
+      if (marks.size) {
+        dispatchCanvas({ type: 'replace', elements: canvasElements.filter((element) => !marks.has(element.id)) });
+        dispatchCanvas({ type: 'commit', before: { elements: canvasElements, positions } });
+      }
+      cards.forEach((id) => void run({ action: 'delete-inspiration', id }).catch(() => {}));
+      setStickyLinks((current) => current.filter((link) => !cards.includes(link.from) && !cards.includes(link.to)));
+      setSelection([]); setSelected(null); setSelectedCanvasElement(null);
+      return;
+    }
+    if (selected) {
+      deleteInspiration(selected);
+      return;
+    }
+    if (selectedCanvasElement) {
+      dispatchCanvas({ type: 'remove', id: selectedCanvasElement });
+      setSelectedCanvasElement(null);
+    }
+  }
+
+  const selectedItem = data.inspiration.find((item) => item.id === selected);
+  const selectedSticky =
+    selectedItem &&
+    !selectedItem.asset &&
+    (!selectedItem.url || stickyMetadata[selectedItem.id])
+      ? stickyMetadata[selectedItem.id] || defaultStickyMeta()
+      : null;
+  const selectedFrame = canvasElements.find(
+    (element): element is Extract<CanvasElement, { type: 'frame' }> =>
+      element.id === selectedCanvasElement && element.type === 'frame',
+  );
+  const availableStickyIds = useMemo(
+    () => new Set(data.inspiration.map((item) => item.id)),
+    [data.inspiration],
+  );
 
   return (
     <div className="workspace-content inspiration-page">
       <section className="workspace-section inspiration-board-section">
-        <div className="workspace-section-head inspiration-board-head">
-          <div>
-            <h2>El lienzo del proyecto</h2>
-            <p className="workspace-muted">
-              Copiá una imagen, hacé clic en el lienzo y pegala con Ctrl / ⌘ V.
-              También podés soltar archivos, enlaces y texto.
-            </p>
-          </div>
-          {canEdit && (
-            <button
-              className="workspace-primary"
-              onClick={() => setShowForm(true)}
-            >
-              <Plus size={16} /> Nueva idea
-            </button>
-          )}
-        </div>
-        <div
-          className="workspace-filter-row"
-          aria-label="Categorías de referencias"
-        >
-          <button
-            aria-pressed={category === 'all'}
-            className={category === 'all' ? 'active' : ''}
-            onClick={() => setCategory('all')}
-          >
-            Todas <span>{data.inspiration.length}</span>
-          </button>
-          {Object.entries(categoryLabels).map(([key, label]) => {
-            const count = data.inspiration.filter(
-              (item) => item.category === key,
-            ).length;
-            return count ? (
-              <button
-                key={key}
-                aria-pressed={category === key}
-                className={category === key ? 'active' : ''}
-                onClick={() => setCategory(key)}
-              >
-                {label} <span>{count}</span>
-              </button>
-            ) : null;
-          })}
-        </div>
+        <div className="inspiration-command-bar"><div className="inspiration-board-title"><h1>Lienzo</h1></div></div>
         <div className="inspiration-canvas-wrap">
           <div
             className="inspiration-tools"
+            role="toolbar"
             aria-label="Herramientas del lienzo"
           >
             <button
               title="Seleccionar"
               aria-label="Seleccionar"
-              aria-pressed={!hand}
+              aria-pressed={tool === 'select' && !hand}
               onClick={() => {
                 setHand(false);
+                setTool('select');
+                setPenMenuOpen(false);
                 focusBoard();
               }}
             >
@@ -788,6 +1947,7 @@ export default function Inspiration({
               aria-pressed={hand}
               onClick={() => {
                 setHand(true);
+                setTool('select');
                 focusBoard();
               }}
             >
@@ -797,38 +1957,366 @@ export default function Inspiration({
               <>
                 <span />
                 <button
-                  title="Crear post-it"
-                  aria-label="Crear post-it"
-                  onClick={() => setShowForm(true)}
+                  title="Deshacer (Ctrl / ⌘ Z)"
+                  aria-label="Deshacer"
+                  disabled={!canvasDocument.past.length}
+                  onClick={undoCanvas}
                 >
-                  <StickyNote size={19} />
+                  <Undo2 size={18} />
                 </button>
                 <button
-                  title="Subir archivos"
-                  aria-label="Subir archivos"
-                  onClick={() => fileInput.current?.click()}
+                  title="Rehacer (Ctrl / ⌘ Shift Z)"
+                  aria-label="Rehacer"
+                  disabled={!canvasDocument.future.length}
+                  onClick={redoCanvas}
                 >
-                  <UploadCloud size={19} />
+                  <Redo2 size={18} />
+                </button>
+                <span />
+                <button
+                  title="Crear frame"
+                  aria-label="Crear frame"
+                  aria-expanded={frameMenuOpen}
+                  aria-pressed={tool === 'frame'}
+                  onClick={() => setFrameMenuOpen((open) => !open)}
+                >
+                  <Frame size={19} />
+                </button>
+                <button
+                  title="Crear rectángulo"
+                  aria-label="Crear rectángulo"
+                  aria-pressed={tool === 'rectangle'}
+                  onClick={() => chooseTool('rectangle')}
+                >
+                  <Square size={18} />
+                </button>
+                <button
+                  title="Crear círculo"
+                  aria-label="Crear círculo"
+                  aria-pressed={tool === 'circle'}
+                  onClick={() => chooseTool('circle')}
+                >
+                  <Circle size={18} />
+                </button>
+                <button
+                  title="Agregar flecha"
+                  aria-label="Agregar flecha"
+                  aria-pressed={tool === 'arrow'}
+                  onClick={() => chooseTool('arrow')}
+                >
+                  <ArrowRight size={19} />
+                </button>
+                <button
+                  title="Lápiz y dibujo"
+                  aria-label="Lápiz y dibujo"
+                  aria-expanded={penMenuOpen}
+                  aria-pressed={['draw', 'marker', 'smart', 'erase', 'erase-area', 'lasso'].includes(tool)}
+                  onClick={() => {
+                    if (!penMenuOpen && tool === 'select') setTool('draw');
+                    setPenMenuOpen((open) => !open);
+                    setHand(false);
+                    focusBoard();
+                  }}
+                >
+                  <PencilLine size={19} />
+                </button>
+                <span />
+                <button
+                  title="Crear post-it"
+                  aria-label="Crear post-it"
+                  aria-expanded={tool === 'sticky'}
+                  aria-pressed={tool === 'sticky'}
+                  onClick={() => {
+                    if (tool === 'sticky') chooseTool('select');
+                    else {
+                      chooseTool('sticky');
+                      setStickyPanel('colors');
+                    }
+                  }}
+                >
+                  <StickyNote size={19} />
                 </button>
               </>
             )}
           </div>
-          <input
-            ref={fileInput}
-            className="workspace-file-input"
-            type="file"
-            multiple
-            aria-label="Elegir archivos"
-            onChange={(event) => {
-              addDrafts(
-                Array.from(event.target.files || []).map((file) => ({
-                  file,
-                  title: file.name,
-                })),
-              );
-              event.target.value = '';
-            }}
-          />
+          {canEdit && tool === 'sticky' && (
+            <div className="inspiration-sticky-palette" role="toolbar" aria-label="Color del post-it">
+              <span>Elegí un color</span>
+              <div>
+                {stickyColors.map((color) => (
+                  <button
+                    key={color}
+                    type="button"
+                    aria-label={`Post-it ${color}`}
+                    aria-pressed={stickyColor === color}
+                    onClick={() => setStickyColor(color)}
+                    style={{ '--sticky-color': color } as CSSProperties}
+                  />
+                ))}
+              </div>
+              <small>Después hacé click en el lienzo</small>
+            </div>
+          )}
+          {canEdit && penMenuOpen && (
+            <div className="inspiration-pen-menu" role="toolbar" aria-label="Herramientas del lápiz">
+              {([
+                ['draw', 'Lápiz', PencilLine],
+                ['marker', 'Resaltador', Highlighter],
+                ['smart', 'Lápiz suavizado', Sparkles],
+                ['erase', 'Borrador de objetos', Eraser],
+                ['erase-area', 'Borrar área', Scan],
+                ['lasso', 'Selección libre', Lasso],
+              ] as const).map(([id, label, Icon]) => (
+                <button key={id} type="button" title={label} aria-label={label}
+                  aria-pressed={tool === id} onClick={() => chooseTool(id)}><Icon size={23} /></button>
+              ))}
+              <span className="inspiration-pen-divider" />
+              {[2, 4, 7].map((weight) => (
+                <button key={weight} type="button" title={`Grosor ${weight}`}
+                  aria-label={`Grosor ${weight}`} aria-pressed={strokeWeight === weight}
+                  onClick={() => setStrokeWeight(weight)}>
+                  <i className="inspiration-pen-size" style={{ width: weight, height: weight }} />
+                </button>
+              ))}
+              {['#1f2933', '#ff6570', '#29ba62'].map((color) => (
+                <button key={color} type="button" title={`Color ${color}`}
+                  aria-label={`Color ${color}`} aria-pressed={stroke === color}
+                  onClick={() => setStroke(color)}>
+                  <i className="inspiration-pen-swatch" style={{ backgroundColor: color }} />
+                </button>
+              ))}
+            </div>
+          )}
+          {canEdit && frameMenuOpen && (
+            <fieldset className="inspiration-frame-menu" aria-label="Tamaño del frame">
+              <button className="inspiration-frame-custom" onClick={() => chooseTool('frame')}>
+                <Frame size={22} /> <span>Personalizado <small>Arrastrá en el lienzo</small></span>
+              </button>
+              <div className="inspiration-frame-presets">
+                {framePresets.map((preset) => (
+                  <button key={preset.label} onClick={() => createFrame(preset.width, preset.height)}>
+                    <span className="inspiration-frame-preset-icon" style={{ aspectRatio: `${preset.width} / ${preset.height}` }} />
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
+            </fieldset>
+          )}
+          {canEdit &&
+            ['rectangle', 'circle', 'arrow'].includes(tool) && (
+              <div
+                className="inspiration-stroke-controls"
+                aria-label="Estilo de trazo"
+              >
+                <span>Trazo</span>
+                {['#566b55', '#aa674b', '#40453d'].map((color) => (
+                  <button
+                    key={color}
+                    className="inspiration-stroke-color"
+                    aria-label={'Color de trazo ' + color}
+                    aria-pressed={stroke === color}
+                    onClick={() => setStroke(color)}
+                    style={{ '--stroke-color': color } as CSSProperties}
+                  />
+                ))}
+                {[2, 4, 7].map((weight) => (
+                  <button
+                    key={weight}
+                    className="inspiration-stroke-weight"
+                    aria-label={`Grosor ${weight}`}
+                    aria-pressed={strokeWeight === weight}
+                    onClick={() => setStrokeWeight(weight)}
+                  >
+                    <i style={{ height: weight }} />
+                  </button>
+                ))}
+                <button
+                  className="inspiration-stroke-style"
+                  aria-label="Alternar trazo continuo o punteado"
+                  aria-pressed={strokeStyle === 'dashed'}
+                  onClick={() =>
+                    setStrokeStyle((current) =>
+                      current === 'solid' ? 'dashed' : 'solid',
+                    )
+                  }
+                >
+                  {strokeStyle === 'solid' ? '—' : '– –'}
+                </button>
+              </div>
+            )}
+          {(selection.length > 0 || selectedItem || selectedCanvasElement) && canEdit && (
+            <div
+              className={'inspiration-selection-actions' + (selectedSticky ? ' inspiration-sticky-toolbar' : '')}
+              role="toolbar"
+              aria-label="Acciones de selección"
+              style={selectedSticky && selectedItem ? {
+                left: Math.max(70, Math.min(viewportSize.width - 630,
+                  positionFor(selectedItem.id).x * camera.zoom + camera.x)),
+                top: Math.max(12, positionFor(selectedItem.id).y * camera.zoom + camera.y - 64),
+                right: 'auto',
+              } : undefined}
+            >
+              {selectedFrame && editingFrameTitle ? (
+                <input
+                  ref={frameTitleInput}
+                  className="inspiration-frame-title-input"
+                  aria-label="Título del frame"
+                  defaultValue={selectedFrame.title}
+                  maxLength={120}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') event.currentTarget.blur();
+                    if (event.key === 'Escape') { event.currentTarget.value = selectedFrame.title; event.currentTarget.blur(); }
+                  }}
+                  onBlur={(event) => {
+                    const title = event.currentTarget.value.trim();
+                    if (title !== selectedFrame.title)
+                      dispatchCanvas({ type: 'update', element: { ...selectedFrame, title } });
+                    setEditingFrameTitle(false);
+                  }}
+                />
+              ) : !selectedSticky ? (
+                <span>{selection.length > 1 ? `${selection.length} elementos` : selectedItem?.title || selectedFrame?.title || (selectedFrame ? 'Frame' : 'Dibujo')}</span>
+              ) : null}
+              {selection.length > 1 && !selection.every((key) => groups[key] && groups[key] === groups[selection[0]]) && (
+                <button aria-label="Agrupar selección" title="Agrupar selección (Ctrl / ⌘ G)" onClick={groupSelection}><Group size={16} /></button>
+              )}
+              {selection.some((key) => groups[key]) && (
+                <button aria-label="Desagrupar selección" title="Desagrupar selección" onClick={ungroupSelection}><Ungroup size={16} /></button>
+              )}
+              {selectedFrame && selection.length === 1 && (
+                <>
+                  <button aria-label="Editar título del frame" title="Editar título" onClick={() => setEditingFrameTitle(true)}><Pencil size={16} /></button>
+                  <label className="inspiration-frame-color" title="Color de fondo">
+                    <input type="color" aria-label="Color de fondo del frame" value={selectedFrame.fill} onChange={(event) => dispatchCanvas({ type: 'update', element: { ...selectedFrame, fill: event.target.value } })} />
+                  </label>
+                </>
+              )}
+              {selectedItem && selection.length === 1 && (
+                <>
+                  {selectedSticky && (
+                    <>
+                      <span className="inspiration-sticky-type-mark">Aa</span>
+                      <select aria-label="Tamaño de letra" value={selectedSticky.fontSize}
+                        onChange={(event) => updateStickyMeta(selectedItem.id, (current) => ({ ...current, fontSize: Number(event.target.value) }))}>
+                        {[14, 18, 24, 30, 36].map((size) => <option key={size} value={size}>{size}px</option>)}
+                      </select>
+                      <button aria-label="Negrita" title="Negrita" aria-pressed={selectedSticky.bold}
+                        onClick={() => updateStickyMeta(selectedItem.id, (current) => ({ ...current, bold: !current.bold }))}><Bold size={18} /></button>
+                      <button aria-label="Alinear texto" title="Alinear texto"
+                        onClick={() => updateStickyMeta(selectedItem.id, (current) => ({ ...current,
+                          align: current.align === 'left' ? 'center' : current.align === 'center' ? 'right' : 'left' }))}>
+                        {selectedSticky.align === 'center' ? <AlignCenter size={18} /> : selectedSticky.align === 'right' ? <AlignRight size={18} /> : <AlignLeft size={18} />}
+                      </button>
+                      <button
+                        className="inspiration-sticky-color-button"
+                        aria-label="Cambiar color"
+                        title="Cambiar color"
+                        aria-pressed={stickyPanel === 'colors'}
+                        style={{ '--sticky-color': selectedSticky.color } as CSSProperties}
+                        onClick={() => setStickyPanel((panel) => panel === 'colors' ? null : 'colors')}
+                      />
+                      <button aria-label="Agregar tag" title="Agregar tag"
+                        aria-pressed={stickyPanel === 'tags'}
+                        onClick={() => setStickyPanel((panel) => panel === 'tags' ? null : 'tags')}>
+                        <Tag size={17} />
+                      </button>
+                      <button aria-label="Agregar reacción" title="Agregar reacción"
+                        aria-pressed={stickyPanel === 'reactions'}
+                        onClick={() => setStickyPanel((panel) => panel === 'reactions' ? null : 'reactions')}>
+                        <SmilePlus size={18} />
+                      </button>
+                      <button aria-label="Adjuntar link" title="Adjuntar link" onClick={() => {
+                        setLinkDraft(selectedItem.url || '');
+                        setStickyPanel((panel) => panel === 'link' ? null : 'link');
+                      }}><Link2 size={17} /></button>
+                      <button aria-label="Crear siguiente post-it" title="Crear siguiente post-it"
+                        onClick={() => createNextPostIt(selectedItem.id)}><ArrowRight size={19} /></button>
+                      <button aria-label={selectedSticky.locked ? 'Desbloquear post-it' : 'Bloquear post-it'}
+                        title={selectedSticky.locked ? 'Desbloquear' : 'Bloquear'}
+                        onClick={() => updateStickyMeta(selectedItem.id, (current) => ({ ...current, locked: !current.locked }))}>
+                        {selectedSticky.locked ? <LockKeyhole size={18} /> : <UnlockKeyhole size={18} />}
+                      </button>
+                    </>
+                  )}
+                </>
+              )}
+              <button
+                aria-label="Eliminar selección"
+                title="Eliminar selección"
+                onClick={deleteSelected}
+              >
+                <Trash2 size={16} />
+              </button>
+              <button
+                aria-label="Cerrar selección"
+                onClick={() => {
+                  selectCard(null);
+                  focusBoard();
+                }}
+              >
+                <X size={16} />
+              </button>
+            </div>
+          )}
+          {selectedItem && selectedSticky && stickyPanel && (
+            <div className="inspiration-sticky-inspector" aria-label="Opciones del post-it"
+              style={{ left: Math.max(70, Math.min(viewportSize.width - 280,
+                positionFor(selectedItem.id).x * camera.zoom + camera.x)),
+                top: Math.max(54, positionFor(selectedItem.id).y * camera.zoom + camera.y - 12),
+                right: 'auto' }}>
+              {stickyPanel === 'colors' && (
+                <div className="inspiration-sticky-inspector-colors">
+                  {stickyColors.map((color) => (
+                    <button key={color} type="button" aria-label={`Color ${color}`}
+                      aria-pressed={selectedSticky.color === color}
+                      style={{ '--sticky-color': color } as CSSProperties}
+                      onClick={() => updateStickyMeta(selectedItem.id, (current) => ({ ...current, color }))} />
+                  ))}
+                </div>
+              )}
+              {stickyPanel === 'tags' && (
+                <form onSubmit={(event) => {
+                  event.preventDefault();
+                  const tag = tagDraft.trim().slice(0, 24);
+                  if (!tag) return;
+                  updateStickyMeta(selectedItem.id, (current) => ({
+                    ...current,
+                    tags: [...new Set([...current.tags, tag])].slice(0, 5),
+                  }));
+                  setTagDraft('');
+                }}>
+                  <input value={tagDraft} maxLength={24} aria-label="Nuevo tag"
+                    placeholder="Escribí un tag" onChange={(event) => setTagDraft(event.target.value)} />
+                  <button type="submit">Agregar</button>
+                </form>
+              )}
+              {stickyPanel === 'reactions' && (
+                <div className="inspiration-sticky-reaction-picker">
+                  {['👍', '❤️', '🎉', '👀', '💡', '✅'].map((emoji) => (
+                    <button key={emoji} type="button" aria-label={`Reaccionar ${emoji}`}
+                      onClick={() => updateStickyMeta(selectedItem.id, (current) => ({
+                        ...current,
+                        reactions: { ...current.reactions, [emoji]: (current.reactions[emoji] || 0) + 1 },
+                      }))}>{emoji}</button>
+                  ))}
+                </div>
+              )}
+              {stickyPanel === 'link' && (
+                <form onSubmit={(event) => {
+                  event.preventDefault();
+                  const url = linkDraft.trim();
+                  if (url && !safeReferenceUrl(url)) { notify('Usá un enlace http o https válido.'); return; }
+                  void run({ action: 'edit-inspiration', id: selectedItem.id,
+                    title: selectedItem.title, note: selectedItem.note || '',
+                    url, category: selectedItem.category || 'general' }).then(() => setStickyPanel(null)).catch(() => {});
+                }}>
+                  <input ref={stickyLinkInput} type="url" aria-label="Enlace del post-it" placeholder="https://…"
+                    value={linkDraft} onChange={(event) => setLinkDraft(event.target.value)} />
+                  <button type="submit">Guardar</button>
+                </form>
+              )}
+            </div>
+          )}
           {/* The canvas is a keyboard-operated application, not a document region. */}
           {/* oxlint-disable jsx-a11y/no-noninteractive-element-interactions, jsx-a11y/no-noninteractive-tabindex */}
           <div
@@ -836,20 +2324,78 @@ export default function Inspiration({
             className={
               'inspiration-board-shell free-canvas' +
               (hand || space ? ' hand-tool' : '') +
+              (['draw', 'marker', 'smart'].includes(tool) && !hand && !space ? ' draw-tool' : '') +
+              (tool === 'sticky' && !hand && !space ? ' sticky-tool' : '') +
+              (tool === 'frame' && !hand && !space ? ' shape-tool' : '') +
+              (['erase', 'erase-area'].includes(tool) && !hand && !space ? ' erase-tool' : '') +
+              ((tool === 'rectangle' ||
+                tool === 'circle' ||
+                tool === 'arrow') &&
+              !hand &&
+              !space
+                ? ' shape-tool'
+                : '') +
               (dragging ? ' is-dragging' : '')
             }
             tabIndex={0}
+            data-reference-count={data.inspiration.length}
             role="application"
-            aria-label="Lienzo de inspiración. Pegá imágenes con Control o Command V. Espacio y arrastrar para desplazarte."
+            aria-label="Lienzo de inspiración. Seleccioná y arrastrá tarjetas, figuras, flechas o trazos para moverlos. Pegá imágenes con Control o Command V. Espacio y arrastrar para desplazarte."
             onPaste={paste}
             onCopy={copy}
             onDragOver={(event) => event.preventDefault()}
             onDrop={drop}
             onPointerDown={(event) => {
               const target = event.target as HTMLElement;
+              if (target.closest('.inspiration-context-menu')) return;
+              setContextMenu(null);
               const card = target.closest<HTMLElement>('[data-card]');
-              if (!card) startGesture(event);
-              else if (
+              if (
+                tool === 'sticky' &&
+                canEdit &&
+                !hand &&
+                !space &&
+                event.button === 0 &&
+                !card
+              ) {
+                event.preventDefault();
+                event.stopPropagation();
+                createPostItAt(worldPoint(event.clientX, event.clientY));
+                return;
+              }
+              if (tool === 'erase' && canEdit) {
+                event.preventDefault();
+                event.stopPropagation();
+                eraseAtPointer(event);
+                viewport.current?.setPointerCapture(event.pointerId);
+                return;
+              }
+              if (tool === 'erase-area' && !card && canEdit) {
+                startGesture(event);
+                return;
+              }
+              const drawingTool =
+                tool !== 'select' &&
+                tool !== 'sticky' &&
+                tool !== 'erase' &&
+                tool !== 'erase-area' &&
+                tool !== 'lasso' &&
+                !hand &&
+                !space &&
+                event.button === 0 &&
+                !target.closest('button, a, input, textarea, select');
+              if (drawingTool) {
+                beginCanvasElement(event);
+                return;
+              }
+              if (!card) {
+                const element =
+                  (tool === 'select' || tool === 'lasso') && !hand && !space
+                    ? markAt(worldPoint(event.clientX, event.clientY))
+                    : undefined;
+                if (element) startCanvasGesture(event, element);
+                else if (!beginCanvasElement(event)) startGesture(event);
+              } else if (
                 card.dataset.card &&
                 (hand ||
                   space ||
@@ -861,13 +2407,61 @@ export default function Inspiration({
                 startGesture(event, card.dataset.card);
               }
             }}
-            onPointerMove={moveGesture}
-            onPointerUp={endGesture}
-            onPointerCancel={endGesture}
-            onLostPointerCapture={endGesture}
-            onBlur={() => {
-              setSpace(false);
+            onDoubleClick={(event) => {
+              const target = event.target as HTMLElement;
+              if (target.closest('[data-card], button, input, textarea')) return;
+              const element = markAt(worldPoint(event.clientX, event.clientY));
+              if (element?.type === 'frame') {
+                selectCanvasElement(element.id);
+              }
+            }}
+            onPointerMove={(event) => {
+              if (tool === 'erase' && event.buttons === 1 && !gesture.current && !activeCanvasElement.current)
+                eraseAtPointer(event);
+              if (!updateCanvasElement(event)) moveGesture(event);
+            }}
+            onPointerUp={(event) => {
+              if (!finishCanvasElement(event)) endGesture();
+            }}
+            onPointerCancel={() => {
+              activeCanvasElement.current = null;
+              clearCanvasPreview();
               endGesture();
+            }}
+            onLostPointerCapture={() => {
+              activeCanvasElement.current = null;
+              clearCanvasPreview();
+              endGesture();
+            }}
+            onContextMenu={(event) => {
+              const target = event.target as HTMLElement;
+              if (target.closest('.inspiration-context-menu')) return;
+              event.preventDefault();
+              const card = target.closest<HTMLElement>('[data-card]');
+              const id = card?.dataset.card;
+              const point = worldPoint(event.clientX, event.clientY);
+              insertion.current = point;
+              if (id) selectCard(id);
+              else selectCanvasElement(markAt(point)?.id || null);
+              setContextMenu({
+                x: Math.min(event.clientX, window.innerWidth - 190),
+                y: Math.min(event.clientY, window.innerHeight - 150),
+                point,
+                card: id,
+                isPostIt: Boolean(card?.classList.contains('post-it')),
+              });
+            }}
+            onBlur={(event) => {
+              if (
+                event.relatedTarget instanceof Node &&
+                event.currentTarget.contains(event.relatedTarget)
+              )
+                return;
+              setSpace(false);
+              activeCanvasElement.current = null;
+              clearCanvasPreview();
+              endGesture();
+              setContextMenu(null);
             }}
             onKeyDown={(event) => {
               if (
@@ -875,41 +2469,184 @@ export default function Inspiration({
                 event.target !== event.currentTarget
               )
                 return;
+              if (
+                (event.metaKey || event.ctrlKey) &&
+                event.key.toLowerCase() === 'z'
+              ) {
+                event.preventDefault();
+                if (event.shiftKey) redoCanvas();
+                else undoCanvas();
+                return;
+              }
+              if (
+                (event.metaKey || event.ctrlKey) &&
+                event.key.toLowerCase() === 'y'
+              ) {
+                event.preventDefault();
+                redoCanvas();
+                return;
+              }
+              if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'g') {
+                event.preventDefault();
+                if (event.shiftKey) ungroupSelection(); else groupSelection();
+                return;
+              }
+              if (!event.metaKey && !event.ctrlKey && !event.altKey) {
+                const key = event.key.toLowerCase();
+                if (key === 'v') chooseTool('select');
+                if (key === 'h') {
+                  setHand(true);
+                  setTool('select');
+                }
+                if (key === '1') fitBoard();
+                if (canEdit && key === 'n') {
+                  event.preventDefault();
+                  chooseTool('sticky');
+                  setStickyPanel('colors');
+                }
+                if (canEdit && key === 'p') chooseTool('draw');
+                if (canEdit && key === 'r') chooseTool('rectangle');
+                if (canEdit && key === 'o') chooseTool('circle');
+              }
               if (event.code === 'Space') {
                 event.preventDefault();
                 setSpace(true);
               }
-              if (event.key === 'Escape') setSelected(null);
-              if (event.key.startsWith('Arrow') && selected && canEdit) {
+              if (event.key === 'Escape') {
+                activeCanvasElement.current = null;
+                clearCanvasPreview();
+                endGesture();
+                chooseTool('select');
+                selectCard(null);
+                setContextMenu(null);
+              }
+              if (event.key === 'Delete' || event.key === 'Backspace') {
                 event.preventDefault();
-                const previous = positionFor(selected),
-                  delta = event.shiftKey ? 40 : 10;
-                setPositions((current) => ({
-                  ...current,
-                  [selected]: {
-                    x:
-                      previous.x +
-                      (event.key === 'ArrowRight'
-                        ? delta
-                        : event.key === 'ArrowLeft'
-                          ? -delta
-                          : 0),
-                    y:
-                      previous.y +
-                      (event.key === 'ArrowDown'
-                        ? delta
-                        : event.key === 'ArrowUp'
-                          ? -delta
-                          : 0),
-                  },
-                }));
+                deleteSelected();
+              }
+              if (
+                event.key.startsWith('Arrow') &&
+                (selected || selectedCanvasElement || selection.length) &&
+                canEdit
+              ) {
+                event.preventDefault();
+                const delta = event.shiftKey ? 40 : 10;
+                const offset = {
+                  x:
+                    event.key === 'ArrowRight'
+                      ? delta
+                      : event.key === 'ArrowLeft'
+                        ? -delta
+                        : 0,
+                  y:
+                    event.key === 'ArrowDown'
+                      ? delta
+                      : event.key === 'ArrowUp'
+                        ? -delta
+                        : 0,
+                };
+                if (selection.length > 1) {
+                  const cards = selection.filter((key) => key.startsWith('card:')).map((key) => key.slice(5));
+                  const marks = new Set(selection.filter((key) => key.startsWith('element:')).map((key) => key.slice(8)));
+                  const before = { elements: canvasElements, positions };
+                  if (cards.length) setPositions((current) => ({ ...current,
+                    ...Object.fromEntries(cards.map((id) => {
+                      const point = positionFor(id);
+                      return [id, { x: point.x + offset.x, y: point.y + offset.y }];
+                    })),
+                  }));
+                  if (marks.size) dispatchCanvas({ type: 'replace', elements: canvasElements.map((element) =>
+                    marks.has(element.id) ? translateCanvasElement(element, offset) : element) });
+                  dispatchCanvas({ type: 'commit', before });
+                } else if (selected) {
+                  const previous = positionFor(selected);
+                  setPositions(
+                    (current) => ({
+                      ...current,
+                      [selected]: {
+                        x: previous.x + offset.x,
+                        y: previous.y + offset.y,
+                      },
+                    }),
+                    true,
+                  );
+                } else if (selectedCanvasElement) {
+                  const element = canvasElements.find(
+                    (candidate) => candidate.id === selectedCanvasElement,
+                  );
+                  if (element) {
+                    dispatchCanvas({
+                      type: 'replace',
+                      elements: canvasElements.map((candidate) =>
+                        candidate.id === element.id
+                          ? translateCanvasElement(element, offset)
+                          : candidate,
+                      ),
+                    });
+                    dispatchCanvas({
+                      type: 'commit',
+                      before: { elements: canvasElements, positions },
+                    });
+                  }
+                }
               }
             }}
             onKeyUp={(event) => {
               if (event.code === 'Space') setSpace(false);
             }}
-            style={{ backgroundPosition: camera.x + 'px ' + camera.y + 'px' }}
+            style={{
+              backgroundPosition: camera.x + 'px ' + camera.y + 'px',
+              '--sticky-cursor': stickyCursor(stickyColor),
+            } as CSSProperties}
           >
+            {contextMenu && (
+              <div
+                className="inspiration-context-menu"
+                role="menu"
+                aria-label="Acciones del lienzo"
+                style={{ left: contextMenu.x, top: contextMenu.y }}
+              >
+                {contextMenu.card && (
+                  <button
+                    role="menuitem"
+                    onClick={() => void copyFromMenu(contextMenu.card!)}
+                  >
+                    Copiar
+                  </button>
+                )}
+                {canEdit && (
+                  <button
+                    role="menuitem"
+                    onClick={() => void pasteFromMenu(contextMenu.point)}
+                  >
+                    Pegar
+                  </button>
+                )}
+                {canEdit && !contextMenu.isPostIt && (
+                  <button
+                    role="menuitem"
+                    onClick={() => createPostItAt(contextMenu.point)}
+                  >
+                    Crear post-it
+                  </button>
+                )}
+              </div>
+            )}
+            <InspirationCanvas
+              index={sceneIndex}
+              camera={camera}
+              size={viewportSize}
+              draft={canvasDraft}
+              guides={alignmentGuides}
+              selected={selectedCanvasMarks}
+            />
+            {lassoPoints.length > 1 && (
+              <svg className="inspiration-lasso-preview" aria-hidden="true"
+                width={viewportSize.width} height={viewportSize.height}>
+                <polyline points={lassoPoints.map((point) =>
+                  `${point.x * camera.zoom + camera.x},${point.y * camera.zoom + camera.y}`).join(' ')} />
+              </svg>
+            )}
             <div
               className="inspiration-world"
               style={{
@@ -923,39 +2660,101 @@ export default function Inspiration({
                   ')',
               }}
             >
-              {items.map((item, index) => {
+              <svg className="inspiration-sequence-links" aria-hidden="true">
+                <defs><marker id="inspiration-sequence-arrow" viewBox="0 0 10 10"
+                  refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+                  <path d="M 0 0 L 10 5 L 0 10 z" fill="#858c88" />
+                </marker></defs>
+                {[
+                  ...stickyLinks.map((link) => ({ ...link, point: null as Point | null })),
+                  ...pending.filter((entry) => entry.draft.sequenceFrom).map((entry) => ({
+                    from: entry.draft.sequenceFrom!, to: entry.id, point: entry.point as Point | null,
+                  })),
+                ].filter((link) => availableStickyIds.has(link.from) &&
+                  (link.point || availableStickyIds.has(link.to)))
+                  .map((link) => {
+                    const from = positionFor(link.from);
+                    const fromMeta = stickyMetadata[link.from] || defaultStickyMeta();
+                    const to = link.point || positionFor(link.to);
+                    return <line key={link.from + ':' + link.to}
+                      x1={from.x + fromMeta.width + 8} y1={from.y + fromMeta.height / 2}
+                      x2={to.x - 13} y2={to.y + (stickyMetadata[link.to]?.height || 240) / 2}
+                      stroke="#858c88" strokeWidth="2" markerEnd="url(#inspiration-sequence-arrow)" />;
+                  })}
+              </svg>
+              {selectedFrame && canEdit && (
+                <div className="inspiration-frame-resize-box" style={{
+                  left: selectedFrame.x, top: selectedFrame.y,
+                  width: selectedFrame.width, height: selectedFrame.height,
+                }}>
+                  {(['nw', 'ne', 'sw', 'se'] as const).map((corner) => (
+                    <button key={corner} type="button"
+                      className={'inspiration-frame-resize-handle ' + corner}
+                      aria-label={'Redimensionar frame ' + corner}
+                      onPointerDown={(event) => startFrameResize(event, selectedFrame, corner)} />
+                  ))}
+                </div>
+              )}
+              {marquee && <div className="inspiration-marquee" style={{
+                left: marquee.left, top: marquee.top,
+                width: marquee.right - marquee.left,
+                height: marquee.bottom - marquee.top,
+              }} />}
+              {visibleItems.map(({ item, order: index }) => {
                 const point = positionFor(item.id),
                   asset = item.asset ? assetMap.get(item.asset) : undefined;
-                const isNote = !item.asset && !item.url;
+                const stickyMeta = stickyMetadata[item.id];
+                const isNote = !item.asset && (!item.url || Boolean(stickyMeta));
+                const noteMeta = isNote
+                  ? stickyMeta || defaultStickyMeta(stickyColors[index % 3])
+                  : null;
                 const isPhoto =
                   asset && /^image\/(jpeg|png|webp|avif)$/.test(asset.mime);
                 return (
                   <article
                     data-card={item.id}
+                    ref={(node) => {
+                      if (node) cardNodes.current.set(item.id, node);
+                      else cardNodes.current.delete(item.id);
+                    }}
                     key={item.id}
                     className={
                       'inspiration-card inspiration-board-card ' +
                       (isPhoto ? 'inspiration-photo-card ' : '') +
                       (isNote ? 'post-it post-it-' + (index % 3) : '') +
-                      (selected === item.id ? ' selected' : '')
+                      (selection.includes('card:' + item.id) ? ' selected' : '')
                     }
-                    style={{ left: point.x, top: point.y }}
+                    style={{
+                      left: point.x,
+                      top: point.y,
+                      ...(noteMeta
+                        ? {
+                            width: noteMeta.width,
+                            height: noteMeta.height,
+                            '--sticky-color': noteMeta.color,
+                            '--sticky-ink': noteMeta.color === '#303030' ? '#ffffff' : '#252525',
+                          }
+                        : {}),
+                    } as CSSProperties}
                   >
                     {isPhoto ? (
                       <PhotoFrame
                         item={item}
                         asset={asset}
-                          project={project}
-                          share={share}
-                          invite={invite}
+                        project={project}
+                        share={share}
+                        invite={invite}
                         selected={selected === item.id}
-                        canEdit={canEdit}
-                        busy={busy}
-                        run={run}
+                        commentCount={commentsByItem.get(item.id)?.length || 0}
                         onDrag={startGesture}
                         onSelect={(id) => {
-                          setSelected(id);
+                          if (!selection.includes('card:' + id)) selectTarget('card:' + id);
                           focusBoard();
+                        }}
+                        onComments={() => {
+                          setCommentTarget(item.id);
+                          setCommentText('');
+                          selectCard(item.id);
                         }}
                       />
                     ) : (
@@ -968,15 +2767,21 @@ export default function Inspiration({
                             startGesture(event, item.id)
                           }
                           onClick={() => {
-                            setSelected(item.id);
+                            if (!selection.includes('card:' + item.id)) selectTarget('card:' + item.id);
                             focusBoard();
                           }}
                         >
                           <GripHorizontal size={19} />
-                          <span>
-                            {isNote ? 'Post-it' : asset ? 'Archivo' : 'Enlace'}
-                          </span>
                         </button>
+                        <CommentBubble
+                          count={commentsByItem.get(item.id)?.length || 0}
+                          title={item.title}
+                          onClick={() => {
+                            setCommentTarget(item.id);
+                            setCommentText('');
+                            selectCard(item.id);
+                          }}
+                        />
                         {asset ? (
                           <Media
                             key={asset.id}
@@ -985,7 +2790,7 @@ export default function Inspiration({
                             share={share}
                             invite={invite}
                           />
-                        ) : item.url ? (
+                        ) : item.url && !isNote ? (
                           <div
                             className={
                               'inspiration-card-visual visual-' + (index % 5)
@@ -994,32 +2799,62 @@ export default function Inspiration({
                             <div className="inspiration-link-art">
                               <Link2 size={26} />
                               <span>
-                                {new URL(item.url).hostname.replace(
-                                  /^www\./,
-                                  '',
-                                )}
+                                {new URL(
+                                  safeReferenceUrl(item.url) ||
+                                    'https://enlace.invalid',
+                                ).hostname.replace(/^www\./, '')}
                               </span>
                             </div>
                           </div>
                         ) : null}
                         <div className="inspiration-card-body">
-                          <div className="inspiration-card-meta">
-                            <span>
-                              {categoryLabels[item.category] || 'General'}
-                            </span>
-                            <span>{shortDate(item.created)}</span>
-                          </div>
-                          <h3>{item.title}</h3>
-                          {item.note && (
-                            <p className="inspiration-note-text">{item.note}</p>
+                          {!isNote && (
+                            <div className="inspiration-card-meta">
+                              <span>{shortDate(item.created)}</span>
+                            </div>
                           )}
-                          {item.url && (
+                          {!isNote && <h3>{item.title}</h3>}
+                          {isNote ? (
+                            <div className="inspiration-note-text"
+                              role="textbox"
+                              tabIndex={0}
+                              aria-label="Texto del post-it"
+                              aria-multiline="true"
+                              contentEditable={canEdit && !noteMeta?.locked}
+                              suppressContentEditableWarning
+                              data-placeholder="Escribí aquí…"
+                              style={{ fontSize: noteMeta?.fontSize,
+                                fontWeight: noteMeta?.bold ? 700 : 400, textAlign: noteMeta?.align }}
+                              onPointerDown={(event) => event.stopPropagation()}
+                              onFocus={() => selectCard(item.id)}
+                              onKeyDown={(event) => {
+                                if (event.key === 'Escape' || ((event.metaKey || event.ctrlKey) && event.key === 'Enter'))
+                                  event.currentTarget.blur();
+                              }}
+                              onBlur={(event) => saveStickyText(item, event.currentTarget.innerText.replace(/\u00a0/g, ' '))}>
+                              {item.note || (item.title !== 'Post-it' ? item.title : '')}
+                            </div>
+                          ) : item.note ? (
+                            <p className="inspiration-note-text">{item.note}</p>
+                          ) : null}
+                          {noteMeta && noteMeta.tags.length > 0 && (
+                            <div className="inspiration-sticky-tags" aria-label="Tags">
+                              {noteMeta.tags.map((tag) => (
+                                <button key={tag} type="button" title="Quitar tag"
+                                  onClick={() => updateStickyMeta(item.id, (current) => ({
+                                    ...current,
+                                    tags: current.tags.filter((value) => value !== tag),
+                                  }))}>#{tag}</button>
+                              ))}
+                            </div>
+                          )}
+                          {safeReferenceUrl(item.url) && (
                             <a
-                              href={item.url}
+                              href={safeReferenceUrl(item.url) || undefined}
                               target="_blank"
                               rel="noopener noreferrer"
                             >
-                              Abrir referencia <ArrowUpRight size={15} />
+                              Abrir enlace <ArrowUpRight size={15} />
                             </a>
                           )}
                           {asset && (
@@ -1032,16 +2867,28 @@ export default function Inspiration({
                               <ArrowUpRight size={15} />
                             </a>
                           )}
-                          <div className="inspiration-card-footer">
-                            <span>Por {item.author}</span>
-                            <CardControls
-                              item={item}
-                              canEdit={canEdit}
-                              busy={busy}
-                              run={run}
-                            />
-                          </div>
+                          {!isNote && (
+                            <div className="inspiration-card-footer">
+                              <span>Por {item.author}</span>
+                            </div>
+                          )}
+                          {noteMeta && Object.keys(noteMeta.reactions).length > 0 && (
+                            <div className="inspiration-sticky-reactions" aria-label="Reacciones">
+                              {Object.entries(noteMeta.reactions).map(([emoji, count]) => (
+                                <button key={emoji} type="button" aria-label={`${emoji} ${count}`}
+                                  onClick={() => updateStickyMeta(item.id, (current) => ({
+                                    ...current,
+                                    reactions: { ...current.reactions, [emoji]: (current.reactions[emoji] || 0) + 1 },
+                                  }))}>{emoji} <span>{count}</span></button>
+                              ))}
+                            </div>
+                          )}
                         </div>
+                        {noteMeta && canEdit && (
+                          <button className="inspiration-sticky-resize" type="button"
+                            aria-label="Redimensionar post-it"
+                            onPointerDown={(event) => startStickyResize(event, item.id)} />
+                        )}
                       </>
                     )}
                   </article>
@@ -1053,9 +2900,21 @@ export default function Inspiration({
                   key={entry.id}
                   className={
                     'inspiration-card inspiration-board-card inspiration-pending' +
-                    (entry.preview ? ' inspiration-pending-photo' : '')
+                    (entry.preview ? ' inspiration-pending-photo' : '') +
+                    (entry.draft.sticky ? ' post-it inspiration-pending-sticky' : '')
                   }
-                  style={{ left: entry.point.x, top: entry.point.y }}
+                  style={{
+                    left: entry.point.x,
+                    top: entry.point.y,
+                    ...(entry.draft.sticky
+                      ? {
+                          width: entry.draft.sticky.width,
+                          height: entry.draft.sticky.height,
+                          '--sticky-color': entry.draft.sticky.color,
+                          '--sticky-ink': entry.draft.sticky.color === '#303030' ? '#ffffff' : '#252525',
+                        }
+                      : {}),
+                  } as CSSProperties}
                 >
                   {entry.preview && (
                     <Image
@@ -1067,57 +2926,95 @@ export default function Inspiration({
                       draggable={false}
                     />
                   )}
-                  <div className="inspiration-card-body">
-                    <h3>{entry.draft.title}</h3>
-                    <output>
-                      {entry.error || (
+                  {(!entry.preview || entry.error) && (
+                    <div className="inspiration-card-body">
+                      {!entry.preview && <h3>{entry.draft.sticky ? 'Escribí una idea…' : entry.draft.title}</h3>}
+                      {entry.error && (
                         <>
-                          <LoaderCircle
-                            size={16}
-                            className="inspiration-spin"
-                          />{' '}
-                          Preparando y guardando…
+                          <output>{entry.error}</output>
+                          <button
+                            className="workspace-secondary"
+                            onClick={() => {
+                              setPending((current) =>
+                                current.map((item) =>
+                                  item.id === entry.id
+                                    ? { ...item, error: undefined }
+                                    : item,
+                                ),
+                              );
+                              upload(entry);
+                            }}
+                          >
+                            Reintentar
+                          </button>
                         </>
                       )}
-                    </output>
-                    {entry.error && (
-                      <button
-                        className="workspace-secondary"
-                        onClick={() => {
-                          setPending((current) =>
-                            current.map((item) =>
-                              item.id === entry.id
-                                ? { ...item, error: undefined }
-                                : item,
-                            ),
-                          );
-                          upload(entry);
-                        }}
-                      >
-                        Reintentar
-                      </button>
-                    )}
-                  </div>
+                    </div>
+                  )}
                 </article>
               ))}
             </div>
-            {!items.length && !pending.length && (
+            {!items.length && !pending.length && !canvasElements.length && (
               <div className="inspiration-canvas-empty">
                 <ImagePlus size={32} />
-                <strong>Un lugar para todas tus ideas</strong>
+                <strong>
+                  {'El proyecto empieza con una idea'}
+                </strong>
                 <p>
                   {canEdit
-                    ? 'Hacé clic acá y pegá una imagen con Ctrl / ⌘ V, arrastrá archivos o creá un post-it.'
-                    : 'Las referencias del proyecto aparecerán acá.'}
+                    ? 'Arrastrá imágenes, pegá un enlace o anotá lo que querés explorar.'
+                    : 'El lienzo aparecerá acá.'}
                 </p>
               </div>
             )}
           </div>
           {/* oxlint-enable jsx-a11y/no-noninteractive-element-interactions, jsx-a11y/no-noninteractive-tabindex */}
           <div className="inspiration-canvas-footer">
-            <span>
-              Espacio + arrastrar para mover · Ctrl / ⌘ + rueda para zoom
-            </span>
+            <div className="inspiration-board-state">
+              <output
+                className={storageError ? 'storage-error' : ''}
+              >
+                {storageError
+                  ? 'No se pudo guardar la distribución'
+                  : dragging
+                    ? 'Organizando…'
+                    : 'Distribución en este navegador'}
+              </output>
+              <button
+                aria-label="Ayuda del lienzo"
+                aria-expanded={help}
+                onClick={() => setHelp((value) => !value)}
+              >
+                <Keyboard size={16} />
+                <span>Atajos y guardado</span>
+              </button>
+            </div>
+            {help && (
+              <aside className="inspiration-help">
+                <strong>Tu mesa de trabajo</strong>
+                <p>
+                  Los post-its y los comentarios se guardan en el proyecto.
+                  La distribución y los dibujos se guardan solo en este
+                  navegador.
+                </p>
+                <dl>
+                  <dt>Seleccionar / mover</dt>
+                  <dd>V / H</dd>
+                  <dt>Nota / lápiz</dt>
+                  <dd>N / P</dd>
+                  <dt>Desplazar</dt>
+                  <dd>Espacio + arrastrar</dd>
+                  <dt>Deshacer / rehacer</dt>
+                  <dd>⌘ / Ctrl Z · Shift Z</dd>
+                  <dt>Ver todo</dt>
+                  <dd>1</dd>
+                </dl>
+                <p>
+                  Deshacer recupera dibujos y movimientos. La edición y
+                  eliminación de post-its se guardan en el proyecto.
+                </p>
+              </aside>
+            )}
             <div className="inspiration-zoom">
               <button
                 aria-label="Alejar"
@@ -1135,7 +3032,7 @@ export default function Inspiration({
                 <Plus size={16} />
               </button>
               <button
-                aria-label="Ver todas las referencias"
+                aria-label="Ver todo el lienzo"
                 title="Ver todo"
                 onClick={fitBoard}
               >
@@ -1145,92 +3042,89 @@ export default function Inspiration({
           </div>
         </div>
       </section>
-      {showForm && (
+      {commentTarget && commentItem && (
         <dialog
           className="workspace-modal-backdrop inspiration-dialog"
-          aria-label="Nueva idea"
+          aria-label={'Comentarios de ' + commentItem.title}
           ref={(node) => {
             if (node && !node.open) node.showModal();
           }}
           onCancel={() => {
-            setShowForm(false);
+            setCommentTarget(null);
+            setCommentText('');
             focusBoard();
           }}
         >
           <button
             type="button"
             className="workspace-backdrop-dismiss"
-            aria-label="Cerrar ventana"
+            aria-label="Cerrar comentarios"
             onClick={() => {
-              setShowForm(false);
+              setCommentTarget(null);
+              setCommentText('');
               focusBoard();
             }}
           />
-          <form className="workspace-modal inspiration-form" onSubmit={save}>
-            <p className="workspace-eyebrow">SUMAR AL LIENZO</p>
-            <h2>Una nueva idea</h2>
-            <label>
-              Título
-              <input
-                required
-                maxLength={160}
-                value={title}
-                onChange={(event) => setTitle(event.target.value)}
-                placeholder="Ej. Materiales cálidos"
-              />
-            </label>
-            <label>
-              Nota
-              <textarea
-                rows={5}
-                maxLength={2000}
-                value={note}
-                onChange={(event) => setNote(event.target.value)}
-                placeholder="Escribí tu idea…"
-              />
-            </label>
-            <label>
-              Enlace (opcional)
-              <input
-                type="url"
-                maxLength={2000}
-                value={url}
-                onChange={(event) => setUrl(event.target.value)}
-                placeholder="https://..."
-              />
-            </label>
-            <label>
-              Categoría
-              <select
-                value={itemCategory}
-                onChange={(event) => setItemCategory(event.target.value)}
-              >
-                {Object.entries(categoryLabels).map(([key, label]) => (
-                  <option key={key} value={key}>
-                    {label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <div className="workspace-modal-actions">
-              <button
-                type="button"
-                className="workspace-secondary"
-                onClick={() => {
-                  setShowForm(false);
-                  focusBoard();
-                }}
-              >
-                Cancelar
-              </button>
-              <button
-                className="workspace-primary"
-                disabled={!canEdit || (!note.trim() && !url.trim())}
-              >
-                Agregar al lienzo
-              </button>
+          <section
+            className="workspace-modal inspiration-comments"
+            aria-live="polite"
+          >
+            <p className="workspace-eyebrow">CONVERSACIÓN SOBRE LA IDEA</p>
+            <div className="inspiration-comments-title">
+              <h2>{commentItem.title}</h2>
+              <span>
+                <MessageCircle size={16} /> {selectedComments.length}
+              </span>
             </div>
-          </form>
+            <div className="inspiration-comment-list">
+              {selectedComments.length ? (
+                selectedComments.map((comment) => (
+                  <article key={comment.id}>
+                    <strong>{comment.author}</strong>
+                    <time>{shortDate(comment.created)}</time>
+                    <p>{comment.text}</p>
+                  </article>
+                ))
+              ) : (
+                <p className="workspace-muted">
+                  Todavía no hay comentarios sobre esta idea.
+                </p>
+              )}
+            </div>
+            {canEdit && (
+              <form className="inspiration-comment-form" onSubmit={saveComment}>
+                <label>
+                  Nuevo comentario
+                  <textarea
+                    rows={3}
+                    maxLength={2000}
+                    value={commentText}
+                    onChange={(event) => setCommentText(event.target.value)}
+                    placeholder="Dejá una observación para el equipo…"
+                  />
+                </label>
+                <div className="workspace-modal-actions">
+                  <button
+                    type="button"
+                    className="workspace-secondary"
+                    onClick={() => {
+                      setCommentTarget(null);
+                      setCommentText('');
+                      focusBoard();
+                    }}
+                  >
+                    Cerrar
+                  </button>
+                  <button
+                    className="workspace-primary"
+                    disabled={busy || !commentText.trim()}
+                  >
+                    Comentar
+                  </button>
+                </div>
+              </form>
+            )}
+          </section>
         </dialog>
       )}
     </div>

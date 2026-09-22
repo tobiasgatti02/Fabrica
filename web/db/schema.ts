@@ -115,7 +115,9 @@ export const studioTasks = pgTable(
       .references(() => studioProjects.id),
     title: text('title').notNull(),
     status: text('status').notNull().default('todo'),
+    startDate: text('start_date'),
     dueDate: text('due_date'),
+    clientVisible: integer('client_visible').notNull().default(0),
     assignee: text('assignee'),
     created: bigint('created', { mode: 'number' }).notNull(),
   },
@@ -190,6 +192,26 @@ export const studioInspiration = pgTable(
     created: bigint('created', { mode: 'number' }).notNull(),
   },
   (table) => [index('studio_inspiration_project').on(table.project)],
+);
+
+export const studioInspirationComments = pgTable(
+  'studio_inspiration_comments',
+  {
+    id: text('id').primaryKey(),
+    project: text('project')
+      .notNull()
+      .references(() => studioProjects.id),
+    inspiration: text('inspiration')
+      .notNull()
+      .references(() => studioInspiration.id),
+    author: text('author').notNull(),
+    text: text('text').notNull(),
+    created: bigint('created', { mode: 'number' }).notNull(),
+  },
+  (table) => [
+    index('studio_inspiration_comments_project').on(table.project),
+    index('studio_inspiration_comments_inspiration').on(table.inspiration),
+  ],
 );
 
 export const studioProposals = pgTable(

@@ -4,12 +4,15 @@ import { randomToken, sha256, validRequestOrigin } from '@/features/auth/core';
 import { getFabricaUser } from '@/features/auth/server';
 import { getDb } from '@/db';
 import { createStarterProject } from '@/features/studio/server/seed';
+import { safeReferenceUrl } from '@/features/workspace/inspiration-scene';
+import { INSPIRATION_FILE_LIMIT } from '@/features/files/validation';
 import {
   studioAssets,
   studioAssetUploads,
   studioBudgetItems,
   studioClients,
   studioInspiration,
+  studioInspirationComments,
   studioProjects,
   studioProposalFeedback,
   studioProposalOptions,
@@ -142,6 +145,11 @@ const url = (value: unknown) => {
   }
 };
 function fail(error: unknown) {
+  if ((error as Error).message === 'INSPIRATION_FILE_LIMIT')
+    return json(
+      { error: 'Cada archivo de Inspiración puede pesar hasta 20 MB.' },
+      413,
+    );
   const code = Number((error as Error).message);
   if ([400, 401, 403, 404, 409, 413].includes(code)) {
     return json(
@@ -446,6 +454,7 @@ export async function GET(request: Request) {
     const [
       tasks,
       inspiration,
+      inspirationComments,
       allProposals,
       allOptions,
       allFeedback,
@@ -467,6 +476,13 @@ export async function GET(request: Request) {
             .from(studioInspiration)
             .where(eq(studioInspiration.project, ctx.project.id))
             .orderBy(asc(studioInspiration.created))
+        : Promise.resolve([]),
+      inspirationView
+        ? db
+            .select()
+            .from(studioInspirationComments)
+            .where(eq(studioInspirationComments.project, ctx.project.id))
+            .orderBy(asc(studioInspirationComments.created))
         : Promise.resolve([]),
       proposalsView
         ? db
@@ -553,6 +569,7 @@ export async function GET(request: Request) {
     const projectStats: Record<string, { total: number; done: number }> =
       Object.fromEntries(projectIds.map((id) => [id, { total: 0, done: 0 }]));
     for (const task of tasks) {
+      if (ctx.guest && task.clientVisible !== 1) continue;
       projectStats[task.project].total++;
       if (task.status === 'done') projectStats[task.project].done++;
     }
@@ -566,14 +583,26 @@ export async function GET(request: Request) {
         permissions: ctx.permissions,
         external: ctx.external,
       },
-      project: ctx.accountOwner
-        ? ctx.project
-        : { ...ctx.project, share: undefined },
+      project:
+        ctx.canEdit && !ctx.external
+          ? ctx.project
+          : { ...ctx.project, share: undefined },
       projects: ctx.projects.map((item) => ({ ...item, share: undefined })),
-      tasks: ctx.guest ? [] : tasks,
+      tasks: ctx.guest
+        ? tasks
+            .filter(
+              (item) =>
+                item.project === ctx.project.id && item.clientVisible === 1,
+            )
+            .map(({ assignee: _assignee, ...item }) => ({
+              ...item,
+              assignee: null,
+            }))
+        : tasks,
       budgetItems,
       projectStats,
       inspiration,
+      inspirationComments,
       proposals: visibleProposals,
       options,
       feedback: allFeedback
@@ -668,7 +697,9 @@ export async function POST(request: Request) {
       'save-budget-item': 'panel',
       'delete-budget-item': 'panel',
       'add-inspiration': 'inspiracion',
+      'add-inspiration-comment': 'inspiracion',
       'update-inspiration': 'inspiracion',
+      'edit-inspiration': 'inspiracion',
       'delete-inspiration': 'inspiracion',
       'delete-asset': 'inspiracion',
       'begin-asset': 'inspiracion',
@@ -691,10 +722,18 @@ export async function POST(request: Request) {
       throw new Error('403');
     if (action === 'add-inspiration') {
       const asset = string(body.asset);
-      if (asset) await assetInProject(db, asset, project.id);
+      if (asset) {
+        const uploadedAsset = await assetInProject(db, asset, project.id);
+        if (uploadedAsset.size > INSPIRATION_FILE_LIMIT)
+          throw new Error('INSPIRATION_FILE_LIMIT');
+      }
       const title = required(body.title, 160);
-      const link = url(body.url);
-      if (!asset && !link && !string(body.note)) throw new Error('400');
+      const rawUrl = string(body.url, 2000);
+      const link = rawUrl ? safeReferenceUrl(rawUrl) : '';
+      if (link === null) throw new Error('400');
+      // Empty post-its are valid: the editor is opened directly on the card.
+      if (!asset && !link && !string(body.note) && body.sticky !== true)
+        throw new Error('400');
       const id = crypto.randomUUID();
       await db.insert(studioInspiration).values({
         id,
@@ -706,6 +745,66 @@ export async function POST(request: Request) {
         category: choice(body.category || 'general', categories),
         status: 'idea',
         author: ctx.name,
+        created: Date.now(),
+      });
+      return json({ ok: true, id }, 201);
+    }
+    if (action === 'edit-inspiration') {
+      const id = required(body.id);
+      const [item] = await db
+        .select({ asset: studioInspiration.asset })
+        .from(studioInspiration)
+        .where(
+          and(
+            eq(studioInspiration.id, id),
+            eq(studioInspiration.project, project.id),
+          ),
+        )
+        .limit(1);
+      if (!item) throw new Error('404');
+      const title = required(body.title, 160);
+      const note = string(body.note, 2000);
+      const rawUrl = string(body.url, 2000);
+      const link = rawUrl ? safeReferenceUrl(rawUrl) : '';
+      if (link === null || (!item.asset && !link && !note && body.sticky !== true))
+        throw new Error('400');
+      await db
+        .update(studioInspiration)
+        .set({
+          title,
+          note,
+          url: link,
+          category: choice(body.category, categories),
+        })
+        .where(
+          and(
+            eq(studioInspiration.id, id),
+            eq(studioInspiration.project, project.id),
+          ),
+        );
+      return json({ ok: true });
+    }
+    if (action === 'add-inspiration-comment') {
+      const inspiration = required(body.inspiration);
+      const text = required(body.text, 2000);
+      const [item] = await db
+        .select({ id: studioInspiration.id })
+        .from(studioInspiration)
+        .where(
+          and(
+            eq(studioInspiration.id, inspiration),
+            eq(studioInspiration.project, project.id),
+          ),
+        )
+        .limit(1);
+      if (!item) throw new Error('404');
+      const id = crypto.randomUUID();
+      await db.insert(studioInspirationComments).values({
+        id,
+        project: project.id,
+        inspiration,
+        author: ctx.name,
+        text,
         created: Date.now(),
       });
       return json({ ok: true, id }, 201);
@@ -809,14 +908,18 @@ export async function POST(request: Request) {
         (!Number.isInteger(progress) || progress < 0 || progress > 100)
       )
         throw new Error('400');
+      const startDate = date(body.startDate);
+      const dueDate = date(body.dueDate);
+      if (startDate && dueDate && startDate > dueDate)
+        throw new Error('La fecha de inicio debe ser anterior a la entrega.');
       await db
         .update(studioProjects)
         .set({
           stage: choice(body.stage, stages),
           progress,
           description: string(body.description, 2000),
-          startDate: date(body.startDate),
-          dueDate: date(body.dueDate),
+          startDate,
+          dueDate,
         })
         .where(eq(studioProjects.id, project.id));
     } else if (action === 'save-task') {
@@ -824,9 +927,17 @@ export async function POST(request: Request) {
       const values = {
         title: required(body.title, 180),
         status: choice(body.status || 'todo', taskStates),
+        startDate: date(body.startDate),
         dueDate: date(body.dueDate),
+        clientVisible: body.clientVisible ? 1 : 0,
         assignee: string(body.assignee) || null,
       };
+      if (
+        values.startDate &&
+        values.dueDate &&
+        values.startDate > values.dueDate
+      )
+        throw new Error('La fecha de inicio debe ser anterior a la entrega.');
       if (id) {
         const [existing] = await db
           .select({ id: studioTasks.id })
@@ -920,6 +1031,14 @@ export async function POST(request: Request) {
           ),
         )
         .limit(1);
+      await db
+        .delete(studioInspirationComments)
+        .where(
+          and(
+            eq(studioInspirationComments.inspiration, required(body.id)),
+            eq(studioInspirationComments.project, project.id),
+          ),
+        );
       await db
         .delete(studioInspiration)
         .where(
@@ -1017,6 +1136,8 @@ export async function POST(request: Request) {
       const size = Number(body.size);
       const name = required(body.name, 240);
       if (!Number.isSafeInteger(size) || size < 1) throw new Error('400');
+      if (body.scope === 'inspiration' && size > INSPIRATION_FILE_LIMIT)
+        throw new Error('INSPIRATION_FILE_LIMIT');
       if (size > MAX_ASSET) throw new Error('413');
       const mime = string(body.mime, 120) || 'application/octet-stream';
       if (
@@ -1236,7 +1357,7 @@ async function assetInProject(
   project: string,
 ) {
   const [asset] = await db
-    .select({ id: studioAssets.id })
+    .select({ id: studioAssets.id, size: studioAssets.size })
     .from(studioAssets)
     .where(and(eq(studioAssets.id, id), eq(studioAssets.project, project)))
     .limit(1);

@@ -1585,7 +1585,12 @@
 }
 .import-error {
   color: #922f22;
+  background: #fae9e5;
+  border-left: 3px solid #b84432;
+  padding: 11px 13px;
   font-size: 14px;
+  font-weight: 700;
+  line-height: 1.5;
 }
 .import-actions {
   display: flex;

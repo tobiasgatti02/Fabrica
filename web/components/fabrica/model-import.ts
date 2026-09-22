@@ -1,17 +1,8 @@
 import * as THREE from 'three';
+import { fileExtension, modelFormats } from '@/features/files/validation';
 
-export const viewFormats = [
-  'glb',
-  'gltf',
-  'dae',
-  'obj',
-  'fbx',
-  'stl',
-  'ply',
-  '3ds',
-];
-export const extension = (name: string) =>
-  name.split('.').pop()?.toLowerCase() || '';
+export const viewFormats: string[] = [...modelFormats];
+export const extension = fileExtension;
 
 export type ModelUpAxis = 'auto' | 'x' | 'y' | 'z';
 
@@ -143,10 +134,10 @@ export async function loadModel(
     case 'gltf': {
       const [{ GLTFLoader }, { DRACOLoader }, { MeshoptDecoder }] =
         await Promise.all([
-        import('three/examples/jsm/loaders/GLTFLoader.js'),
-        import('three/examples/jsm/loaders/DRACOLoader.js'),
-        import('three/examples/jsm/libs/meshopt_decoder.module.js'),
-      ]);
+          import('three/examples/jsm/loaders/GLTFLoader.js'),
+          import('three/examples/jsm/loaders/DRACOLoader.js'),
+          import('three/examples/jsm/libs/meshopt_decoder.module.js'),
+        ]);
       const draco = new DRACOLoader().setDecoderPath('/draco/');
       try {
         object = (

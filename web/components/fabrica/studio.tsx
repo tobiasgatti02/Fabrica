@@ -90,7 +90,11 @@ import {
 import { StudioAuthPanel } from './studio-auth-panel';
 import { StudioTourTrigger } from './studio-tour';
 import { StudioAreaNav } from './studio-area-nav';
-import { StudioAccount, StudioHeader, StudioProjectSwitcher } from './studio-header';
+import {
+  StudioAccount,
+  StudioHeader,
+  StudioProjectSwitcher,
+} from './studio-header';
 import { advanceOrbitTarget } from './scene/navigation';
 
 type Stage = 0 | 1 | 2 | 3;
@@ -142,6 +146,7 @@ type Account = {
   name: string;
   email: string;
   provider: 'chatgpt' | 'google' | 'fabrica';
+  created?: number;
 };
 
 function AccountSettings({
@@ -182,6 +187,16 @@ function AccountSettings({
       <div className="account-settings-heading">
         <h3>Configuración</h3>
         <p>Actualizá los datos con los que accedés a Fabrica.</p>
+        {typeof account.created === 'number' && (
+          <p>
+            Cuenta creada el{' '}
+            {new Intl.DateTimeFormat('es-AR', {
+              dateStyle: 'long',
+              timeZone: 'America/Argentina/Buenos_Aires',
+            }).format(account.created)}
+            .
+          </p>
+        )}
       </div>
       <form
         className="account-settings-card"
@@ -1643,7 +1658,7 @@ export default function Studio({
     }
   };
   const shareUrl = (token: string) =>
-    `${location.origin}/estudio?share=${encodeURIComponent(token)}`;
+    `${location.origin}/estudio/panel?share=${encodeURIComponent(token)}`;
   const createShare = async (copy = false) => {
     if (saving) return;
     setSaving(true);
@@ -2159,44 +2174,60 @@ export default function Studio({
                 ? [
                     ...clientGroups,
                     ...(unassignedProjects.length
-                      ? [{
-                          id: 'unassigned',
-                          name: 'Sin cliente asignado',
-                          projects: unassignedProjects,
-                          unassigned: true,
-                        }]
+                      ? [
+                          {
+                            id: 'unassigned',
+                            name: 'Sin cliente asignado',
+                            projects: unassignedProjects,
+                            unassigned: true,
+                          },
+                        ]
                       : []),
                   ]
                 : []
             }
-            menuTitle={professional ? 'Contactos y proyectos' : 'Mis revisiones'}
+            menuTitle={
+              professional ? 'Contactos y proyectos' : 'Mis revisiones'
+            }
             menuCount={professional ? clients.length : projects.length}
             emptyMessage="Agregá un cliente para empezar a organizar tu cartera."
             onSelect={(id) => void switchProject(id)}
-            actions={professional && accountOwner ? (close) => (
-              <>
-                <button type="button" onClick={() => {
-                  close();
-                  setClientsDialogOpen(true);
-                }}>
-                  <UsersRound /> Ver clientes
-                </button>
-                <button type="button" onClick={() => {
-                  close();
-                  setNewProjectClient(activeClient?.id || '');
-                  setProjectDialogOpen(true);
-                }}>
-                  <FolderPlus /> Nuevo proyecto
-                </button>
-              </>
-            ) : undefined}
+            actions={
+              professional && accountOwner
+                ? (close) => (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          close();
+                          setClientsDialogOpen(true);
+                        }}
+                      >
+                        <UsersRound /> Ver clientes
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          close();
+                          setNewProjectClient(activeClient?.id || '');
+                          setProjectDialogOpen(true);
+                        }}
+                      >
+                        <FolderPlus /> Nuevo proyecto
+                      </button>
+                    </>
+                  )
+                : undefined
+            }
           />
         }
         actions={
           <>
-            {professional && accountOwner && !dataLoading && !storageError && activeProject && (
-              <StudioTourTrigger />
-            )}
+            {professional &&
+              accountOwner &&
+              !dataLoading &&
+              !storageError &&
+              activeProject && <StudioTourTrigger />}
             {professional && canEdit && (
               <>
                 <Button
@@ -2224,25 +2255,14 @@ export default function Studio({
                 </Button>
               </>
             )}
-            {professional ? (
+            {!professional && !signedIn && sharedToken && (
               <Button
                 variant="outline"
-                className="studio-share"
-                onClick={() => setShareDialogOpen(true)}
-                disabled={!activeProject}
+                className="studio-share guest-account"
+                onClick={() => setAccountOpen(true)}
               >
-                <Share2 /> Compartir
+                <UserPlus /> Crear cuenta
               </Button>
-            ) : (
-              !signedIn && sharedToken && (
-                <Button
-                  variant="outline"
-                  className="studio-share guest-account"
-                  onClick={() => setAccountOpen(true)}
-                >
-                  <UserPlus /> Crear cuenta
-                </Button>
-              )
             )}
           </>
         }
@@ -2258,6 +2278,17 @@ export default function Studio({
         area="modelo"
         project={activeProject}
         share={sharedToken}
+        action={
+          professional && activeProject ? (
+            <button
+              type="button"
+              className="studio-nav-share"
+              onClick={() => setShareDialogOpen(true)}
+            >
+              <Share2 aria-hidden="true" /> Compartir
+            </button>
+          ) : undefined
+        }
         showTeam={accessMode === 'professional'}
       />
 

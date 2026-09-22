@@ -10,6 +10,12 @@ import {
 } from '@/components/ui/dialog';
 import { extension, viewFormats } from './model-import';
 import { studioRequest } from '@/features/studio/api';
+import {
+  isModelFormat,
+  modelFileAccept,
+  modelFilesError,
+} from '@/features/files/validation';
+import { showErrorToast } from '@/lib/notifications';
 import type { StoredFile, StoredProject } from '@/features/studio/domain';
 export type {
   StoredFile,
@@ -44,29 +50,61 @@ export function ImportDialog({
   const cancelled = useRef(false);
   const currentUpload = useRef<string | null>(null);
   const pick = (list: File[]) => {
+    if (!list.length) {
+      setFiles([]);
+      setPrimary('');
+      setTitle('');
+      setError('');
+      setProgress(0);
+      return;
+    }
+    const validationError = modelFilesError(list);
+    if (validationError) {
+      setFiles([]);
+      setPrimary('');
+      setTitle('');
+      setProgress(0);
+      setError(validationError);
+      showErrorToast(validationError, 'Archivo no aceptado');
+      return;
+    }
     setFiles(list);
-    setPrimary(
-      list.find((file) => viewFormats.includes(extension(file.name)))?.name ||
-        list[0]?.name ||
-        '',
+    setPrimary(list.find((file) => isModelFormat(file.name))?.name || '');
+    setTitle(
+      list
+        .find((file) => isModelFormat(file.name))
+        ?.name.replace(/\.[^.]+$/, '') || '',
     );
-    setTitle(list[0]?.name.replace(/\.[^.]+$/, '') || '');
     setError('');
     setProgress(0);
   };
   const total = files.reduce((sum, file) => sum + file.size, 0);
   const save = async () => {
     if (!files.length || !title.trim()) return;
+    const validationError = modelFilesError(files);
+    if (validationError) {
+      setError(validationError);
+      showErrorToast(validationError, 'Archivo no aceptado');
+      return;
+    }
     if (
       files.length > 200 ||
       files.some((f) => !f.size || f.size > 5 * 1024 ** 3)
     ) {
       setError('Elegí hasta 200 archivos, de hasta 5 GB cada uno.');
+      showErrorToast(
+        'Elegí hasta 200 archivos, de hasta 5 GB cada uno.',
+        'No pudimos importar los archivos',
+      );
       return;
     }
     if (new Set(files.map((f) => f.name)).size !== files.length) {
       setError(
         'Hay nombres repetidos. Importá un paquete con nombres únicos o exportá como GLB.',
+      );
+      showErrorToast(
+        'Hay nombres repetidos. Importá un paquete con nombres únicos o exportá como GLB.',
+        'No pudimos importar los archivos',
       );
       return;
     }
@@ -144,7 +182,9 @@ export function ImportDialog({
       pick([]);
       onOpenChange(false);
     } catch (error) {
-      setError((error as Error).message);
+      const message = (error as Error).message;
+      setError(message);
+      showErrorToast(message, 'No pudimos importar los archivos');
       if (currentUpload.current)
         await studioRequest(
           { action: 'abort', id: currentUpload.current },
@@ -183,6 +223,7 @@ export function ImportDialog({
           <input
             type="file"
             multiple
+            accept={modelFileAccept}
             disabled={busy}
             onChange={(event) => pick(Array.from(event.target.files || []))}
             aria-label="Seleccionar modelos y texturas"
@@ -224,9 +265,11 @@ export function ImportDialog({
                 disabled={busy}
                 onChange={(event) => setPrimary(event.target.value)}
               >
-                {files.map((file) => (
-                  <option key={file.name}>{file.name}</option>
-                ))}
+                {files
+                  .filter((file) => viewFormats.includes(extension(file.name)))
+                  .map((file) => (
+                    <option key={file.name}>{file.name}</option>
+                  ))}
               </select>
             </label>
             <label>

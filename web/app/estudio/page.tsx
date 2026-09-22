@@ -37,6 +37,7 @@ export default async function StudioPage({
               name: user.displayName,
               email: user.email,
               provider: user.provider,
+              created: user.created,
             }
           : null
       }
