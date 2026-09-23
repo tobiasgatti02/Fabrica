@@ -27,7 +27,7 @@ export async function POST(request: Request) {
   if (!resourceId || !(await verifyWebhook(request, resourceId)))
     return Response.json({ error: 'invalid_signature' }, { status: 401 });
 
-  const topic = url.searchParams.get('type') || url.searchParams.get('topic') || payload?.type || 'unknown';
+  const topic = payload?.type || url.searchParams.get('type') || url.searchParams.get('topic') || 'unknown';
   if (topic !== 'subscription_preapproval' && topic !== 'subscription_authorized_payment')
     return Response.json({ ok: true });
 

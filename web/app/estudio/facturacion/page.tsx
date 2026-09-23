@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import Script from 'next/script';
+import Link from 'next/link';
 import { BillingCardForm } from '@/components/billing/card-form';
 
 type BillingData = {
@@ -29,6 +30,7 @@ export default function BillingPage() {
   const [sdkReady, setSdkReady] = useState(false);
   const [selectedPlan, setSelectedPlan] = useState<Plan | null>(null);
   const [changingPlan, setChangingPlan] = useState(false);
+  const [now] = useState(() => Date.now());
   const [message, setMessage] = useState('');
   const [loadError, setLoadError] = useState('');
   const refreshStatus = useCallback(() => {
@@ -53,9 +55,9 @@ export default function BillingPage() {
       }),
     ]).catch((error: Error) => setLoadError(error.message));
   }, []);
-  if (loadError) return <main className="billing-page"><p className="billing-alert">{loadError}</p><a href="/estudio">Ir al estudio</a></main>;
+  if (loadError) return <main className="billing-page"><p className="billing-alert">{loadError}</p><Link href="/estudio">Ir al estudio</Link></main>;
   if (!status) return <main className="billing-page"><p>Cargando facturación...</p></main>;
-  const days = Math.max(0, Math.ceil((status.trialEnds - Date.now()) / 86400000));
+  const days = Math.max(0, Math.ceil((status.trialEnds - now) / 86400000));
   return <main className="billing-page">
     <Script src="https://sdk.mercadopago.com/js/v2" strategy="afterInteractive" onReady={() => setSdkReady(true)} />
     <header><p className="workspace-eyebrow">FACTURACIÓN</p><h1>Planes y membresía</h1><p>Estado real de tu estudio, límites y cobros.</p></header>
@@ -106,6 +108,6 @@ export default function BillingPage() {
       setMessage(response.ok ? 'La cancelación fue solicitada.' : result.error || 'No se pudo cancelar la suscripción.');
       if (response.ok) refreshStatus();
     }}>Cancelar al final del período</button>}
-    {message && <p role="status">{message}</p>}
+    {message && <output>{message}</output>}
   </main>;
 }
