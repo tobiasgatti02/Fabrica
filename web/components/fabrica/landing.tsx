@@ -2,7 +2,6 @@
 
 import dynamic from 'next/dynamic';
 import Image from 'next/image';
-import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowUpRight, ArrowDown } from 'lucide-react';
 import { gsap } from 'gsap';
@@ -66,7 +65,7 @@ export default function Landing() {
       <a href="#vision" aria-label="Fabrica, volver al inicio" onClick={e => { e.preventDefault(); goTo(0); }}><Wordmark /></a>
       <span className="header-caption">Un espacio para imaginar juntos.</span>
       <nav aria-label="Navegación principal">
-        <Link className="header-cta" href="/estudio">Entrar al estudio <ArrowUpRight size={17} /></Link>
+        <a className="header-cta" href="/estudio">Entrar al estudio <ArrowUpRight size={17} /></a>
       </nav>
     </header>
 
@@ -93,7 +92,7 @@ export default function Landing() {
         <footer id="interior" className={`interior-footer ${inside ? 'is-visible' : ''}`} aria-hidden={!inside} inert={!inside}>
           <div className="interior-top"><span className="eyebrow">06 / Bienvenido a Casa Patio</span><span>Estar · Una nueva perspectiva</span></div>
           <div className="interior-content"><p className="eyebrow">De imaginarlo a habitarlo</p><h2>Las ideas merecen<br /><em>ser habitadas.</em></h2><p>Presentá un espacio. Compartí cada mirada.<br />Dale lugar a la próxima versión.</p>
-            <div className="interior-actions"><Link className="solid-link" href="/estudio">Abrir Casa Patio <ArrowUpRight size={18} /></Link><a href="#para-estudios">Conocer Fabrica <ArrowDown size={17} /></a></div>
+            <div className="interior-actions"><a className="solid-link" href="/estudio">Abrir Casa Patio <ArrowUpRight size={18} /></a><a href="#para-estudios">Conocer Fabrica <ArrowDown size={17} /></a></div>
           </div>
 
         </footer>
@@ -115,10 +114,10 @@ export default function Landing() {
           <div><span>02</span><h3>Decidí con contexto</h3><p>Comentarios anclados al espacio, medidas y referencias reunidos en el mismo proyecto.</p></div>
           <div><span>03</span><h3>Avanzá con claridad</h3><p>Versiones ordenadas y enlaces privados para revisar cada cambio con clientes y equipo.</p></div>
         </div>
-        <Link className="studio-open" href="/estudio">Explorar Casa Patio <ArrowUpRight size={17} /></Link>
+        <a className="studio-open" href="/estudio">Explorar Casa Patio <ArrowUpRight size={17} /></a>
         <p className="demo-note">Entrá a un proyecto de muestra y conocé la experiencia antes de crear el tuyo.</p>
       </div>
-      <div className="studio-footer"><Wordmark /><span>Diseñar es imaginar. Construirlo, conversar.</span><Link href="/estudio">Entrar al proyecto <ArrowUpRight size={16} /></Link></div>
+      <div className="studio-footer"><Wordmark /><span>Diseñar es imaginar. Construirlo, conversar.</span><a href="/estudio">Entrar al proyecto <ArrowUpRight size={16} /></a></div>
     </section>
   </main>;
 }
