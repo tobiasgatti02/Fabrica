@@ -18,6 +18,7 @@ import {
   studioProposalFeedback,
   studioProposalOptions,
   studioProposals,
+  studioSessions,
   studioTasks,
   studioTeamMembers,
 } from '@/db/schema';
@@ -176,7 +177,7 @@ function fail(error: unknown) {
   );
 }
 
-async function context(request: Request) {
+export async function context(request: Request) {
   const db = database();
   const params = new URL(request.url).searchParams;
   const share = params.get('share');
@@ -429,7 +430,11 @@ export async function GET(request: Request) {
           'Content-Type': image ? asset.mime : 'application/octet-stream',
           'Content-Disposition': `${image ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(asset.name)}`,
           'Content-Length': String(file.size),
-          'Cache-Control': 'private, max-age=60',
+          // Membership can be revoked at any moment. Keeping protected bytes in
+          // the browser cache would let a removed member reopen them until the
+          // cache entry expires, even though every new request is denied.
+          'Cache-Control': 'private, no-store, max-age=0',
+          Pragma: 'no-cache',
           'X-Content-Type-Options': 'nosniff',
         },
       });
@@ -487,7 +492,9 @@ export async function GET(request: Request) {
             .orderBy(asc(studioInspirationComments.created))
         : Promise.resolve([]),
       inspirationView
-        ? db.select().from(studioWorktables)
+        ? db
+            .select()
+            .from(studioWorktables)
             .where(eq(studioWorktables.project, ctx.project.id))
             .orderBy(asc(studioWorktables.created))
         : Promise.resolve([]),
@@ -590,10 +597,9 @@ export async function GET(request: Request) {
         permissions: ctx.permissions,
         external: ctx.external,
       },
-      project:
-        ctx.canEdit && !ctx.external
-          ? ctx.project
-          : { ...ctx.project, share: undefined },
+      project: ctx.accountOwner
+        ? ctx.project
+        : { ...ctx.project, share: undefined },
       projects: ctx.projects.map((item) => ({ ...item, share: undefined })),
       tasks: ctx.guest
         ? tasks
@@ -733,8 +739,17 @@ export async function POST(request: Request) {
     if (action === 'create-worktable') {
       const id = crypto.randomUUID();
       await db.insert(studioWorktables).values({
-        id, project: project.id, title: required(body.title, 100),
-        template: choice(body.template, ['blank', 'facade', 'interior', 'inspiration', 'renders', 'plans']),
+        id,
+        project: project.id,
+        title: required(body.title, 100),
+        template: choice(body.template, [
+          'blank',
+          'facade',
+          'interior',
+          'inspiration',
+          'renders',
+          'plans',
+        ]),
         created: Date.now(),
       });
       return json({ ok: true, id }, 201);
@@ -742,8 +757,16 @@ export async function POST(request: Request) {
     if (action === 'add-inspiration') {
       const worktable = string(body.worktable);
       if (worktable) {
-        const [board] = await db.select({ id: studioWorktables.id }).from(studioWorktables)
-          .where(and(eq(studioWorktables.id, worktable), eq(studioWorktables.project, project.id))).limit(1);
+        const [board] = await db
+          .select({ id: studioWorktables.id })
+          .from(studioWorktables)
+          .where(
+            and(
+              eq(studioWorktables.id, worktable),
+              eq(studioWorktables.project, project.id),
+            ),
+          )
+          .limit(1);
         if (!board) throw new Error('404');
       }
       const asset = string(body.asset);
@@ -792,7 +815,10 @@ export async function POST(request: Request) {
       const note = string(body.note, 2000);
       const rawUrl = string(body.url, 2000);
       const link = rawUrl ? safeReferenceUrl(rawUrl) : '';
-      if (link === null || (!item.asset && !link && !note && body.sticky !== true))
+      if (
+        link === null ||
+        (!item.asset && !link && !note && body.sticky !== true)
+      )
         throw new Error('400');
       await db
         .update(studioInspiration)
@@ -1049,16 +1075,33 @@ export async function POST(request: Request) {
     } else if (action === 'replace-inspiration-image') {
       const id = required(body.id);
       const asset = await assetInProject(db, required(body.asset), project.id);
-      if (asset.size > INSPIRATION_FILE_LIMIT || !/^image\/(jpeg|png|webp|avif)$/.test(asset.mime))
+      if (
+        asset.size > INSPIRATION_FILE_LIMIT ||
+        !/^image\/(jpeg|png|webp|avif)$/.test(asset.mime)
+      )
         throw new Error('400');
-      const [item] = await db.select({ asset: studioInspiration.asset })
+      const [item] = await db
+        .select({ asset: studioInspiration.asset })
         .from(studioInspiration)
-        .where(and(eq(studioInspiration.id, id), eq(studioInspiration.project, project.id)))
+        .where(
+          and(
+            eq(studioInspiration.id, id),
+            eq(studioInspiration.project, project.id),
+          ),
+        )
         .limit(1);
       if (!item?.asset) throw new Error('404');
-      await db.update(studioInspiration).set({ asset: asset.id })
-        .where(and(eq(studioInspiration.id, id), eq(studioInspiration.project, project.id)));
-      if (item.asset !== asset.id) await removeUnusedAsset(db, item.asset, project.id);
+      await db
+        .update(studioInspiration)
+        .set({ asset: asset.id })
+        .where(
+          and(
+            eq(studioInspiration.id, id),
+            eq(studioInspiration.project, project.id),
+          ),
+        );
+      if (item.asset !== asset.id)
+        await removeUnusedAsset(db, item.asset, project.id);
     } else if (action === 'delete-inspiration') {
       const [item] = await db
         .select({ asset: studioInspiration.asset })
@@ -1276,14 +1319,57 @@ export async function POST(request: Request) {
       return json({ invite: token }, 201);
     } else if (action === 'remove-member') {
       if (!ctx.accountOwner) throw new Error('403');
-      await db
-        .delete(studioTeamMembers)
+      const id = required(body.id);
+      const [member] = await db
+        .select({
+          user: studioTeamMembers.user,
+          email: studioTeamMembers.email,
+        })
+        .from(studioTeamMembers)
         .where(
           and(
-            eq(studioTeamMembers.id, required(body.id)),
+            eq(studioTeamMembers.id, id),
             eq(studioTeamMembers.owner, ctx.userId),
           ),
-        );
+        )
+        .limit(1);
+      if (!member) throw new Error('404');
+      const samePerson = member.user
+        ? eq(studioTeamMembers.user, member.user)
+        : and(
+            isNull(studioTeamMembers.user),
+            eq(studioTeamMembers.email, member.email),
+          );
+      const memberships = await db
+        .select({ project: studioTeamMembers.project })
+        .from(studioTeamMembers)
+        .where(and(eq(studioTeamMembers.owner, ctx.userId), samePerson));
+      await db
+        .delete(studioTeamMembers)
+        .where(and(eq(studioTeamMembers.owner, ctx.userId), samePerson));
+      // Local login cookies are server-side sessions. Removing them makes an
+      // already-issued cookie unusable immediately; federated identities are
+      // still denied because project membership is checked on every request.
+      if (member?.user?.startsWith('fabrica:')) {
+        await db
+          .delete(studioSessions)
+          .where(eq(studioSessions.user, member.user.slice('fabrica:'.length)));
+      }
+      // Team members may have seen a client-facing share URL before this
+      // restriction existed. Rotate every affected token so a saved URL cannot
+      // become a back door after membership and sessions are revoked.
+      const hasStudioWideAccess = memberships.some((item) => !item.project);
+      const affectedProjects = hasStudioWideAccess
+        ? ctx.projects
+        : ctx.projects.filter((item) =>
+            memberships.some((membership) => membership.project === item.id),
+          );
+      for (const affectedProject of affectedProjects) {
+        await db
+          .update(studioProjects)
+          .set({ share: randomToken() })
+          .where(eq(studioProjects.id, affectedProject.id));
+      }
     } else if (action === 'renew-invite') {
       if (!ctx.accountOwner) throw new Error('403');
       const [member] = await db
@@ -1341,6 +1427,74 @@ export async function POST(request: Request) {
         .update(studioTeamMembers)
         .set({ permissions: JSON.stringify(permissions) })
         .where(eq(studioTeamMembers.id, id));
+    } else if (action === 'update-member') {
+      if (!ctx.accountOwner) throw new Error('403');
+      const id = required(body.id);
+      const [member] = await db
+        .select()
+        .from(studioTeamMembers)
+        .where(
+          and(
+            eq(studioTeamMembers.id, id),
+            eq(studioTeamMembers.owner, ctx.userId),
+          ),
+        )
+        .limit(1);
+      if (!member) throw new Error('404');
+      const email = required(body.email, 254).toLowerCase();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error('400');
+      const role = choice(body.role, roles);
+      const scopedProject = string(body.project);
+      if (
+        scopedProject &&
+        !ctx.projects.some((item) => item.id === scopedProject)
+      )
+        throw new Error('400');
+      const raw = body.permissions;
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw))
+        throw new Error('400');
+      const permissions = Object.fromEntries(
+        areaKeys.map((key) => [
+          key,
+          choice((raw as Record<string, unknown>)[key], [
+            'none',
+            'view',
+            'edit',
+          ]),
+        ]),
+      );
+      const identityChanged =
+        email !== member.email ||
+        (role === 'external') !== (member.role === 'external');
+      let token = '';
+      let inviteHash = member.inviteHash;
+      let inviteExpires = member.inviteExpires;
+      if (identityChanged) {
+        token = randomToken();
+        inviteHash = await sha256(token);
+        inviteExpires = Date.now() + 30 * 86400_000;
+        if (member.user?.startsWith('fabrica:')) {
+          await db
+            .delete(studioSessions)
+            .where(
+              eq(studioSessions.user, member.user.slice('fabrica:'.length)),
+            );
+        }
+      }
+      await db
+        .update(studioTeamMembers)
+        .set({
+          name: string(body.name, 120),
+          email,
+          role,
+          project: scopedProject || null,
+          permissions: JSON.stringify(permissions),
+          inviteHash,
+          inviteExpires,
+          ...(identityChanged ? { user: null, accepted: null } : {}),
+        })
+        .where(eq(studioTeamMembers.id, id));
+      return json({ ok: true, ...(token ? { invite: token } : {}) });
     } else throw new Error('400');
     return json({ ok: true });
   } catch (error) {
@@ -1396,7 +1550,11 @@ async function assetInProject(
   project: string,
 ) {
   const [asset] = await db
-    .select({ id: studioAssets.id, size: studioAssets.size, mime: studioAssets.mime })
+    .select({
+      id: studioAssets.id,
+      size: studioAssets.size,
+      mime: studioAssets.mime,
+    })
     .from(studioAssets)
     .where(and(eq(studioAssets.id, id), eq(studioAssets.project, project)))
     .limit(1);

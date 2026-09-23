@@ -307,7 +307,7 @@ export default function Workspace({
           !error &&
           !share &&
           !data.viewer.external &&
-          data.viewer.canEdit ? (
+          data.viewer.accountOwner ? (
             <WorkspaceShareControl
               key={data.project.id}
               project={data.project}

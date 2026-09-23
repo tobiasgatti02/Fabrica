@@ -96,7 +96,12 @@ import {
   StudioProjectSwitcher,
 } from './studio-header';
 import { advanceOrbitTarget } from './scene/navigation';
-import { useStudioPresence, type PresenceCamera, type PresencePeer, type PresencePoint } from '@/features/studio/presence';
+import {
+  useStudioPresence,
+  type PresenceCamera,
+  type PresencePeer,
+  type PresencePoint,
+} from '@/features/studio/presence';
 
 type Stage = 0 | 1 | 2 | 3;
 type Version = string;
@@ -470,7 +475,9 @@ function HouseScene({
   const [pins, setPins] = useState<
     Array<ReferencePoint & { x: number; y: number; visible: boolean }>
   >([]);
-  const [peerPins, setPeerPins] = useState<Array<PresencePeer & { x: number; y: number }>>([]);
+  const [peerPins, setPeerPins] = useState<
+    Array<PresencePeer & { x: number; y: number }>
+  >([]);
 
   useEffect(() => {
     state.current = {
@@ -935,14 +942,17 @@ function HouseScene({
     };
     let lastPointerMove = 0;
     const onPointerMove = (event: PointerEvent) => {
-      if (event.pointerType === 'touch' || Date.now() - lastPointerMove < 100) return;
+      if (event.pointerType === 'touch' || Date.now() - lastPointerMove < 100)
+        return;
       lastPointerMove = Date.now();
       const hit = pickSurface(event);
       if (!hit) {
         state.current.onCursorChange(null);
         return;
       }
-      const local = (state.current.imported || model).worldToLocal(hit.point.clone());
+      const local = (state.current.imported || model).worldToLocal(
+        hit.point.clone(),
+      );
       state.current.onCursorChange(local.toArray() as PresencePoint);
     };
     const onPointerLeave = () => state.current.onCursorChange(null);
@@ -1016,12 +1026,16 @@ function HouseScene({
       camera.updateProjectionMatrix();
     };
 
+    let resizeFrame = 0;
     const resize = () => {
-      const width = container.clientWidth;
-      const height = container.clientHeight;
-      renderer.setSize(width, height, false);
-      camera.aspect = width / Math.max(height, 1);
-      camera.updateProjectionMatrix();
+      cancelAnimationFrame(resizeFrame);
+      resizeFrame = requestAnimationFrame(() => {
+        const width = container.clientWidth;
+        const height = container.clientHeight;
+        renderer.setSize(width, height, false);
+        camera.aspect = width / Math.max(height, 1);
+        camera.updateProjectionMatrix();
+      });
     };
     const observer = new ResizeObserver(resize);
     observer.observe(container);
@@ -1157,8 +1171,15 @@ function HouseScene({
       }
       if (current.followCamera) {
         transitioning = false;
-        camera.position.lerp(new THREE.Vector3(...current.followCamera.position), 0.18);
-        controls.target.lerp(new THREE.Vector3(...current.followCamera.target), 0.18);
+        controls.autoRotate = false;
+        camera.position.lerp(
+          new THREE.Vector3(...current.followCamera.position),
+          0.18,
+        );
+        controls.target.lerp(
+          new THREE.Vector3(...current.followCamera.target),
+          0.18,
+        );
       }
       controls.enabled = !current.followCamera;
       controls.mouseButtons.LEFT =
@@ -1196,15 +1217,33 @@ function HouseScene({
           anchorWorld.set(...peer.cursor);
           (current.imported || model).localToWorld(anchorWorld);
           projected.copy(anchorWorld).project(camera);
-          if (projected.z <= -1 || projected.z >= 1 || Math.abs(projected.x) > 1 || Math.abs(projected.y) > 1) return [];
-          return [{ ...peer, x: (projected.x * 0.5 + 0.5) * container.clientWidth, y: (-projected.y * 0.5 + 0.5) * container.clientHeight }];
+          if (
+            projected.z <= -1 ||
+            projected.z >= 1 ||
+            Math.abs(projected.x) > 1 ||
+            Math.abs(projected.y) > 1
+          )
+            return [];
+          return [
+            {
+              ...peer,
+              x: (projected.x * 0.5 + 0.5) * container.clientWidth,
+              y: (-projected.y * 0.5 + 0.5) * container.clientHeight,
+            },
+          ];
         });
-        setPeerPins((previous) => previous.length === nextPeerPins.length && previous.every((peer, index) =>
-          peer.id === nextPeerPins[index].id &&
-          peer.name === nextPeerPins[index].name &&
-          Math.abs(peer.x - nextPeerPins[index].x) < 0.6 &&
-          Math.abs(peer.y - nextPeerPins[index].y) < 0.6
-        ) ? previous : nextPeerPins);
+        setPeerPins((previous) =>
+          previous.length === nextPeerPins.length &&
+          previous.every(
+            (peer, index) =>
+              peer.id === nextPeerPins[index].id &&
+              peer.name === nextPeerPins[index].name &&
+              Math.abs(peer.x - nextPeerPins[index].x) < 0.6 &&
+              Math.abs(peer.y - nextPeerPins[index].y) < 0.6,
+          )
+            ? previous
+            : nextPeerPins,
+        );
         const projectedPoints = [...current.referencePoints];
         if (
           current.selection &&
@@ -1263,6 +1302,7 @@ function HouseScene({
     return () => {
       cancelAnimationFrame(frame);
       observer.disconnect();
+      cancelAnimationFrame(resizeFrame);
       renderer.domElement.removeEventListener('dblclick', onDoubleClick);
       renderer.domElement.removeEventListener('pointermove', onPointerMove);
       renderer.domElement.removeEventListener('pointerleave', onPointerLeave);
@@ -1289,8 +1329,14 @@ function HouseScene({
   return (
     <div ref={host} className="studio-canvas" aria-label="Modelo 3D navegable">
       {peerPins.map((peer) => (
-        <div key={peer.id} className="studio-peer-cursor" style={{ left: peer.x, top: peer.y }} aria-label={`${peer.name} señala esta parte del modelo`}>
-          <MousePointer2 aria-hidden="true" /><span>{peer.name}</span>
+        <div
+          key={peer.id}
+          className="studio-peer-cursor"
+          style={{ left: peer.x, top: peer.y }}
+          aria-label={`${peer.name} señala esta parte del modelo`}
+        >
+          <MousePointer2 aria-hidden="true" />
+          <span>{peer.name}</span>
         </div>
       ))}
       {pins.map(
@@ -2189,9 +2235,6 @@ export default function Studio({
     cameraSnapshot,
   );
   const followedPeer = presence.peers.find((peer) => peer.id === followPeerId);
-  useEffect(() => {
-    if (followPeerId && !followedPeer) setFollowPeerId(null);
-  }, [followPeerId, followedPeer]);
   const selectedObject = objectCatalog.find(
     (item) => item.key === selection?.objectKey,
   );
@@ -2349,7 +2392,7 @@ export default function Studio({
         project={activeProject}
         share={sharedToken}
         action={
-          professional && activeProject ? (
+          professional && accountOwner && activeProject ? (
             <button
               type="button"
               className="studio-nav-share"
@@ -2493,30 +2536,61 @@ export default function Studio({
                 }}
                 peers={presence.peers}
                 followCamera={followedPeer?.camera || null}
-                onCursorChange={(point) => { presence.cursor.current = point; }}
+                onCursorChange={(point) => {
+                  presence.cursor.current = point;
+                }}
               />
             )}
           {activeVersion && (
-            <div className="studio-presence" aria-label="Personas en esta entrega">
+            <div
+              className="studio-presence"
+              aria-label="Personas en esta entrega"
+            >
               <div className="studio-presence-heading">
                 <UsersRound aria-hidden="true" />
-                <span>{presence.visible ? `${presence.peers.length + 1} en esta entrega` : 'Presencia oculta'}</span>
-                <button type="button" onClick={() => {
-                  presence.setVisible((value) => !value);
-                  setFollowPeerId(null);
-                }} aria-pressed={!presence.visible}>
+                <span>
+                  {!presence.visible
+                    ? 'Presencia oculta'
+                    : presence.connected
+                      ? `${presence.peers.length + 1} en esta entrega`
+                      : 'Conectando presencia…'}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    presence.setVisible((value) => !value);
+                    setFollowPeerId(null);
+                  }}
+                  aria-pressed={!presence.visible}
+                >
                   {presence.visible ? 'Ocultarme' : 'Mostrarme'}
                 </button>
               </div>
-              {presence.visible && presence.peers.map((peer) => (
-                <div className="studio-presence-person" key={peer.id}>
-                  <span className="studio-presence-dot" />
-                  <span title={peer.role}>{peer.name}{peer.role === 'Cliente' ? ' · Cliente' : ''}</span>
-                  {peer.camera && <button type="button" aria-pressed={followPeerId === peer.id} onClick={() => setFollowPeerId((current) => current === peer.id ? null : peer.id)}>
-                    {followPeerId === peer.id ? 'Dejar de seguir' : 'Seguir cámara'}
-                  </button>}
-                </div>
-              ))}
+              {presence.visible &&
+                presence.peers.map((peer) => (
+                  <div className="studio-presence-person" key={peer.id}>
+                    <span className="studio-presence-dot" />
+                    <span title={peer.role}>
+                      {peer.name}
+                      {peer.role === 'Cliente' ? ' · Cliente' : ''}
+                    </span>
+                    {peer.camera && (
+                      <button
+                        type="button"
+                        aria-pressed={followPeerId === peer.id}
+                        onClick={() =>
+                          setFollowPeerId((current) =>
+                            current === peer.id ? null : peer.id,
+                          )
+                        }
+                      >
+                        {followPeerId === peer.id
+                          ? 'Dejar de seguir'
+                          : 'Seguir cámara'}
+                      </button>
+                    )}
+                  </div>
+                ))}
             </div>
           )}
           {accessMode && !activeVersion && !modelBusy && (
@@ -3428,8 +3502,8 @@ export default function Studio({
               )}
               <p className="role-note">
                 {sharedToken
-                    ? 'El modo cliente sólo se habilita desde un enlace privado de revisión.'
-                    : 'El acceso sin enlace privado corresponde siempre al espacio profesional.'}
+                  ? 'El modo cliente sólo se habilita desde un enlace privado de revisión.'
+                  : 'El acceso sin enlace privado corresponde siempre al espacio profesional.'}
               </p>
               <a className="role-back" href="/">
                 Volver a Fabrica

@@ -16,19 +16,23 @@ export function useStudioPresence(
   share: string,
   enabled: boolean,
   camera: React.RefObject<PresenceCamera>,
+  invite = '',
 ) {
   const [visible, setVisible] = useState(true);
   const [peers, setPeers] = useState<PresencePeer[]>([]);
+  const [connected, setConnected] = useState(false);
   const cursor = useRef<PresencePoint | null>(null);
 
   useEffect(() => {
     if (!enabled || !visible || !project || !version) {
-      setPeers([]);
       return;
     }
     const query = new URLSearchParams({ version });
     if (share) query.set('share', share);
-    else query.set('project', project);
+    else {
+      query.set('project', project);
+      if (invite) query.set('invite', invite);
+    }
     const url = `/api/studio/presence?${query}`;
     let stopped = false;
     let timer = 0;
@@ -51,6 +55,7 @@ export function useStudioPresence(
       if (document.visibilityState !== 'visible') {
         leave();
         setPeers([]);
+        setConnected(false);
         timer = window.setTimeout(tick, 1000);
         return;
       }
@@ -72,11 +77,15 @@ export function useStudioPresence(
           lastPayload = payload;
           lastSent = Date.now();
         }
-        setPeers(data.peers);
+        setPeers((previous) => JSON.stringify(previous) === JSON.stringify(data.peers) ? previous : data.peers);
+        setConnected(true);
       } catch {
         if (stopped) return;
-        session = null;
+        leave();
         setPeers([]);
+        setConnected(false);
+        timer = window.setTimeout(tick, 3000);
+        return;
       }
       timer = window.setTimeout(tick, 500);
     };
@@ -86,8 +95,9 @@ export function useStudioPresence(
       window.clearTimeout(timer);
       leave();
       setPeers([]);
+      setConnected(false);
     };
-  }, [project, version, share, enabled, visible, camera]);
+  }, [project, version, share, invite, enabled, visible, camera]);
 
-  return { visible, setVisible, peers, cursor };
+  return { visible, setVisible, connected: enabled && visible && connected, peers: enabled && visible && project && version ? peers : [], cursor };
 }

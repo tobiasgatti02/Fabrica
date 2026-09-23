@@ -1,8 +1,9 @@
 import { env } from 'cloudflare:workers';
 import { and, eq, gt, lt, ne } from 'drizzle-orm';
 import { getDb } from '@/db';
-import { studioPresence, studioVersions } from '@/db/schema';
-import { context } from '../route';
+import { studioPresence, studioVersions, studioWorktables } from '@/db/schema';
+import { context as studioContext } from '../route';
+import { context as workspaceContext } from '../../workspace/route';
 
 const TTL = 12000;
 type Point = [number, number, number];
@@ -28,10 +29,33 @@ async function hash(value: string) {
 }
 
 async function room(request: Request) {
-  const access = await context(request);
-  const version = new URL(request.url).searchParams.get('version') || '';
+  const params = new URL(request.url).searchParams;
+  const version = params.get('version') || '';
   if (!version) throw new Error('404');
   const database = getDb(env.DATABASE_URL);
+  if (version.startsWith('board:')) {
+    const access = await workspaceContext(request);
+    if (access.permissions.inspiracion === 'none') throw new Error('403');
+    const board = version.slice('board:'.length);
+    if (!board || board.length > 100) throw new Error('404');
+    if (board !== 'default') {
+      const [worktable] = await database.select({ id: studioWorktables.id })
+        .from(studioWorktables)
+        .where(and(eq(studioWorktables.id, board), eq(studioWorktables.project, access.project.id)))
+        .limit(1);
+      if (!worktable) throw new Error('404');
+    }
+    return {
+      access: {
+        project: access.project,
+        identity: { displayName: access.name, provider: access.guest ? 'guest' : 'member' },
+        accountOwner: access.accountOwner,
+      },
+      version,
+      database,
+    };
+  }
+  const access = await studioContext(request);
   const [delivery] = await database.select({ published: studioVersions.published })
     .from(studioVersions)
     .where(and(eq(studioVersions.id, version), eq(studioVersions.project, access.project.id)))
@@ -41,7 +65,8 @@ async function room(request: Request) {
 }
 
 function failure(error: unknown) {
-  const status = error instanceof Error && error.message === '401' ? 401 : 404;
+  const code = error instanceof Error ? error.message : '';
+  const status = code === '401' ? 401 : code === '403' ? 403 : code === '404' ? 404 : 500;
   return Response.json({ error: 'Acceso a la presencia no disponible.' }, { status, headers: { 'Cache-Control': 'no-store' } });
 }
 

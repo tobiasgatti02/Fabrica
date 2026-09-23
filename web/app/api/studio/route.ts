@@ -17,6 +17,36 @@ import { createStarterProject } from '@/features/studio/server/seed';
 
 const PART = 8 * 1024 * 1024;
 const MAX_FILE = 5 * 1024 ** 3;
+type ModelPermission = 'none' | 'view' | 'edit';
+const modelPermission = (value: unknown, role: string): ModelPermission => {
+  const fallback = role === 'architect' ? 'edit' : 'view';
+  if (typeof value !== 'string') return fallback;
+  try {
+    const parsed = JSON.parse(value) as { modelo?: unknown };
+    return parsed.modelo === 'none' ||
+      parsed.modelo === 'view' ||
+      parsed.modelo === 'edit'
+      ? parsed.modelo
+      : fallback;
+  } catch {
+    return fallback;
+  }
+};
+const strongestModelPermission = (
+  memberships: { permissions: unknown; role: string }[],
+): ModelPermission =>
+  memberships.some(
+    (membership) =>
+      modelPermission(membership.permissions, membership.role) === 'edit',
+  )
+    ? 'edit'
+    : memberships.some(
+          (membership) =>
+            modelPermission(membership.permissions, membership.role) ===
+            'view',
+        )
+      ? 'view'
+      : 'none';
 type StudioBody = {
   action?: unknown;
   text?: unknown;
@@ -146,7 +176,11 @@ export async function context(request: Request) {
     .where(eq(studioProjects.owner, identity.userId))
     .orderBy(asc(studioProjects.created));
   let teamRole = '';
-  let teamMemberships: { project: string | null; role: string }[] = [];
+  let teamMemberships: {
+    project: string | null;
+    role: string;
+    permissions: string;
+  }[] = [];
   if (!projects.length || (requestedProject && !projects.some((item) => item.id === requestedProject))) {
     const memberships = await database
       .select()
@@ -166,11 +200,13 @@ export async function context(request: Request) {
         .from(studioProjects)
         .where(eq(studioProjects.owner, studioOwner))
         .orderBy(asc(studioProjects.created));
-      projects = sameStudio.some((item) => !item.project)
-        ? allProjects
-        : allProjects.filter((item) =>
-            sameStudio.some((membership) => membership.project === item.id),
-          );
+      projects = allProjects.filter((item) => {
+        const applicable = sameStudio.filter(
+          (membership) =>
+            !membership.project || membership.project === item.id,
+        );
+        return strongestModelPermission(applicable) !== 'none';
+      });
       teamRole = 'viewer';
     }
   }
@@ -213,7 +249,11 @@ export async function context(request: Request) {
         : 'viewer';
   }
   const ownsProjects = project.owner === identity.userId;
-  const canEdit = ownsProjects || Boolean(teamRole && teamRole !== 'viewer');
+  const applicableMemberships = teamMemberships.filter(
+    (item) => !item.project || item.project === project.id,
+  );
+  const canEdit =
+    ownsProjects || strongestModelPermission(applicableMemberships) === 'edit';
   if (!canEdit) {
     return { project, projects, clients: [], identity, owner: false, accountOwner: false };
   }
@@ -372,9 +412,10 @@ export async function GET(request: Request) {
       comments,
       measurements,
       plans,
-      share: owner && project.shareEnabled ? project.share : null,
-      shareEnabled: owner ? Boolean(project.shareEnabled) : true,
-      shareExpires: owner ? project.shareExpires : 0,
+      share:
+        accountOwner && project.shareEnabled ? project.share : null,
+      shareEnabled: accountOwner ? Boolean(project.shareEnabled) : false,
+      shareExpires: accountOwner ? project.shareExpires : 0,
       owner,
       accountOwner,
       viewer: {
@@ -601,6 +642,7 @@ export async function POST(request: Request) {
         201,
       );
     } else if (body.action === 'share') {
+      if (!accountOwner) throw new Error('403');
       const days = Number(body.days);
       if (![7, 30, 90].includes(days)) throw new Error('400');
       const token = randomToken();
@@ -611,6 +653,7 @@ export async function POST(request: Request) {
         .where(eq(studioProjects.id, project.id));
       return json({ share: token, shareEnabled: true, shareExpires: expires });
     } else if (body.action === 'revoke-share') {
+      if (!accountOwner) throw new Error('403');
       await database
         .update(studioProjects)
         .set({
@@ -714,7 +757,9 @@ export async function POST(request: Request) {
         typeof body.name !== 'string' ||
         !body.name.trim() ||
         body.name.length > 150 ||
-        !['auto', 'x', 'y', 'z'].includes(String(body.upAxis || 'auto'))
+        (body.upAxis !== undefined &&
+          (typeof body.upAxis !== 'string' ||
+            !['auto', 'x', 'y', 'z'].includes(body.upAxis)))
       ) {
         throw new Error('400');
       }
@@ -756,7 +801,7 @@ export async function POST(request: Request) {
         settings: JSON.stringify({
           hiddenObjects: [],
           palette: 'warm',
-          upAxis: body.upAxis || 'auto',
+          upAxis: typeof body.upAxis === 'string' ? body.upAxis : 'auto',
         }),
         unit: 'm',
         published: 0,

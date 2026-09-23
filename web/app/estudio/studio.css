@@ -112,6 +112,12 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+@media (max-width: 700px) {
+  .studio-presence {
+    top: 66px;
+    right: 10px;
+  }
+}
 .canvas-help {
   position: absolute;
   left: 50%;

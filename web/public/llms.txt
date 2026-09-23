@@ -1,0 +1,14 @@
+# Fabrica
+
+> Fabrica es un estudio virtual en español para profesionales de arquitectura, ingeniería civil e interiorismo y sus clientes.
+
+Sitio oficial: https://f4brica.app/
+Sitemap: https://f4brica.app/sitemap.xml
+
+## Contenido público
+
+- [Inicio](https://f4brica.app/): propuesta de valor, recorrido visual de Casa Patio y acceso al estudio.
+
+## Producto
+
+Fabrica permite presentar proyectos de arquitectura en 3D, compartir entregas versionadas y mantener conversaciones vinculadas a puntos del espacio. El área `/estudio` es una aplicación privada o compartida mediante invitación y no debe indexarse.
