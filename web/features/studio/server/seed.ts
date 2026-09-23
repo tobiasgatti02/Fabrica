@@ -1,5 +1,6 @@
 import { getDb } from '@/db';
 import { studioProjects } from '@/db/schema';
+import { ensureBillingAccount } from '@/features/billing/server';
 
 type Database = ReturnType<typeof getDb>;
 
@@ -10,6 +11,7 @@ export async function createStarterProject(
   name = 'Mi primer proyecto',
   existingProjectId?: string,
 ) {
+  await ensureBillingAccount(database, owner);
   const project = {
     id: existingProjectId || crypto.randomUUID(),
     owner,

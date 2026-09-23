@@ -8,13 +8,13 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
-        default: 'bg-primary text-primary-foreground hover:bg-primary/80',
+        default: 'bg-[var(--action-primary)] text-[var(--action-primary-text)] hover:bg-[var(--action-primary-hover)] active:bg-[var(--action-primary-pressed)]',
         outline:
-          'border-border bg-background hover:bg-muted hover:text-foreground aria-expanded:bg-muted aria-expanded:text-foreground dark:border-input dark:bg-input/30 dark:hover:bg-input/50',
+          'border-[var(--action-border)] bg-[var(--action-secondary)] text-[var(--action-secondary-text)] hover:border-[var(--action-secondary-text)] hover:bg-[var(--action-secondary-hover)] active:bg-[var(--action-secondary-pressed)] aria-expanded:bg-[var(--action-secondary-hover)]',
         secondary:
-          'bg-secondary text-secondary-foreground hover:bg-[color-mix(in_oklch,var(--secondary),var(--foreground)_5%)] aria-expanded:bg-secondary aria-expanded:text-secondary-foreground',
+          'border-[var(--action-border)] bg-[var(--action-secondary)] text-[var(--action-secondary-text)] hover:border-[var(--action-secondary-text)] hover:bg-[var(--action-secondary-hover)] active:bg-[var(--action-secondary-pressed)] aria-expanded:bg-[var(--action-secondary-hover)]',
         ghost:
-          'hover:bg-muted hover:text-foreground aria-expanded:bg-muted aria-expanded:text-foreground dark:hover:bg-muted/50',
+          'hover:bg-[var(--action-secondary-hover)] active:bg-[var(--action-secondary-pressed)] aria-expanded:bg-[var(--action-secondary-hover)]',
         destructive:
           'bg-destructive/10 text-destructive hover:bg-destructive/20 focus-visible:border-destructive/40 focus-visible:ring-destructive/20 dark:bg-destructive/20 dark:hover:bg-destructive/30 dark:focus-visible:ring-destructive/40',
         link: 'text-primary underline-offset-4 hover:underline',

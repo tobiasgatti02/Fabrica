@@ -2,6 +2,7 @@
 
 import dynamic from 'next/dynamic';
 import Image from 'next/image';
+import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowUpRight, ArrowDown } from 'lucide-react';
 import { gsap } from 'gsap';
@@ -63,9 +64,11 @@ export default function Landing() {
     <a className="skip-link" href="#interior" onClick={e => { e.preventDefault(); goTo(1); }}>Saltar recorrido e ir al interior</a>
     <header className="site-header">
       <a href="#vision" aria-label="Fabrica, volver al inicio" onClick={e => { e.preventDefault(); goTo(0); }}><Wordmark /></a>
-      <span className="header-caption">Un espacio para imaginar juntos.</span>
+      <span className="header-caption">Un espacio propio para tu estudio.</span>
       <nav aria-label="Navegación principal">
-        <a className="header-cta" href="/estudio">Entrar al estudio <ArrowUpRight size={17} /></a>
+        <a className="header-nav-link" href="#para-estudios">El estudio</a>
+        <a className="header-nav-link" href="#precios">Precios</a>
+        <Link className="header-cta action-button action-button--primary" href="/estudio">Entrar al estudio <ArrowUpRight size={17} /></Link>
       </nav>
     </header>
 
@@ -82,17 +85,17 @@ export default function Landing() {
         <div className="story-copy" style={{ opacity: progress > .80 ? Math.max(0, 1 - (progress - .80) / .06) : 1 }} aria-hidden={progress > .86} inert={progress > .86}>
           <div key={chapter} className={`chapter-copy ${reduced ? 'no-motion' : ''}`}>
             <p className="eyebrow"><span>{chapters[chapter].number} /</span> {chapters[chapter].label}</p>
-            {chapter === 0 ? <h2>Todo empieza<br /><em>con una idea.</em></h2> : <h2>{chapters[chapter].title[0]}<br /><em>{chapters[chapter].title[1]}</em></h2>}
+            {chapter === 0 ? <h2>Tu estudio.<br /><em>En su mejor lugar.</em></h2> : <h2>{chapters[chapter].title[0]}<br /><em>{chapters[chapter].title[1]}</em></h2>}
             <p className="chapter-description">{chapters[chapter].text}</p>
-            {chapter === 0 && <button className="round-link" onClick={() => goTo(.18)}><span className="round-icon"><ArrowDown size={20} /></span>Deslizá para darle forma</button>}
+            {chapter === 0 && <button className="round-link action-button action-button--secondary" onClick={() => goTo(.18)}><span className="round-icon"><ArrowDown size={20} /></span>Conocé el estudio</button>}
           </div>
         </div>
         {failed && <output className="loading-label">Recorrido en imágenes · Deslizá para avanzar</output>}
 
         <footer id="interior" className={`interior-footer ${inside ? 'is-visible' : ''}`} aria-hidden={!inside} inert={!inside}>
           <div className="interior-top"><span className="eyebrow">06 / Bienvenido a Casa Patio</span><span>Estar · Una nueva perspectiva</span></div>
-          <div className="interior-content"><p className="eyebrow">De imaginarlo a habitarlo</p><h2>Las ideas merecen<br /><em>ser habitadas.</em></h2><p>Presentá un espacio. Compartí cada mirada.<br />Dale lugar a la próxima versión.</p>
-            <div className="interior-actions"><a className="solid-link" href="/estudio">Abrir Casa Patio <ArrowUpRight size={18} /></a><a href="#para-estudios">Conocer Fabrica <ArrowDown size={17} /></a></div>
+          <div className="interior-content"><p className="eyebrow">Fabrica / Tu estudio online</p><h2>Tu trabajo,<br /><em>en contexto.</em></h2><p>Presentá cada proyecto con claridad.<br />Invitá a tus clientes a recorrerlo y decidir.</p>
+            <div className="interior-actions"><Link className="solid-link action-button action-button--primary" href="/estudio">Entrar al estudio <ArrowUpRight size={18} /></Link><a className="action-button action-button--secondary" href="#para-estudios">Ver cómo funciona <ArrowDown size={17} /></a></div>
           </div>
 
         </footer>
@@ -106,18 +109,27 @@ export default function Landing() {
       </div>
     </section>
     <section id="para-estudios" className="studio-section" aria-labelledby="para-estudios-title">
-      <div className="studio-heading"><p className="eyebrow">Fabrica / Para tu estudio</p><h2 id="para-estudios-title">El proyecto cambia.<br /><em>La conversación sigue.</em></h2></div>
+      <div className="studio-heading"><p className="eyebrow">Fabrica / El estudio</p><h2 id="para-estudios-title">Todo tu estudio.<br /><em>En un mismo lugar.</em></h2></div>
       <div className="studio-description">
-        <p>Mostrá el proyecto como se vive, ordená cada entrega y convertí el feedback del cliente en decisiones claras.</p>
+        <p>Un espacio de trabajo para presentar proyectos, compartir avances y tomar decisiones con tus clientes.</p>
         <div className="studio-benefits">
-          <div><span>01</span><h3>Presentá mejor</h3><p>Recorridos 3D y vistas guardadas para que cada propuesta se entienda sin explicar de más.</p></div>
-          <div><span>02</span><h3>Decidí con contexto</h3><p>Comentarios anclados al espacio, medidas y referencias reunidos en el mismo proyecto.</p></div>
-          <div><span>03</span><h3>Avanzá con claridad</h3><p>Versiones ordenadas y enlaces privados para revisar cada cambio con clientes y equipo.</p></div>
+          <div><span>01</span><h3>Proyectos</h3><p>Modelos, referencias y material de trabajo reunidos por proyecto.</p></div>
+          <div><span>02</span><h3>Entregas</h3><p>Publicá versiones y mantené a mano lo que cambió.</p></div>
+          <div><span>03</span><h3>Conversaciones</h3><p>Comentarios sobre el espacio, con su contexto y su historial.</p></div>
         </div>
-        <a className="studio-open" href="/estudio">Explorar Casa Patio <ArrowUpRight size={17} /></a>
-        <p className="demo-note">Entrá a un proyecto de muestra y conocé la experiencia antes de crear el tuyo.</p>
+        <Link className="studio-open action-button action-button--primary" href="/estudio">Conocer el estudio <ArrowUpRight size={17} /></Link>
+        <p className="demo-note">Podés explorar Casa Patio, un proyecto de muestra.</p>
       </div>
-      <div className="studio-footer"><Wordmark /><span>Diseñar es imaginar. Construirlo, conversar.</span><a href="/estudio">Entrar al proyecto <ArrowUpRight size={16} /></a></div>
+      <section id="precios" className="pricing-section" aria-labelledby="pricing-title">
+        <div><p className="eyebrow">Fabrica / Precios</p><h2 id="pricing-title">Planes para tu estudio.<br /><em>En preparación.</em></h2></div>
+        <div className="pricing-card">
+          <span className="pricing-status">Precios en preparación</span>
+          <p>Estamos definiendo los planes y precios de Fabrica.</p>
+          <Link className="pricing-link action-button action-button--secondary" href="/estudio">Explorar Fabrica <ArrowUpRight size={17} /></Link>
+          <small>Publicaremos las condiciones antes de habilitar contrataciones.</small>
+        </div>
+      </section>
+      <div className="studio-footer"><Wordmark /><span>Un espacio propio para cada proyecto.</span><Link className="action-button action-button--secondary" href="/estudio">Entrar al estudio <ArrowUpRight size={16} /></Link></div>
     </section>
   </main>;
 }

@@ -6,6 +6,7 @@ import { getDb } from '@/db';
 import { createStarterProject } from '@/features/studio/server/seed';
 import { safeReferenceUrl } from '@/features/workspace/inspiration-scene';
 import { INSPIRATION_FILE_LIMIT } from '@/features/files/validation';
+import { assertBillingAllowance } from '@/features/billing/server';
 import {
   studioAssets,
   studioAssetUploads,
@@ -147,6 +148,11 @@ const url = (value: unknown) => {
   }
 };
 function fail(error: unknown) {
+  const billingError = (error as Error).message;
+  if (billingError === 'billing_read_only')
+    return json({ error: 'Tu plan está en modo lectura. Cambiá de plan para continuar.' }, 403);
+  if (billingError.startsWith('billing_limit_'))
+    return json({ error: 'Alcanzaste el límite de tu plan. Cambiá de plan para continuar.' }, 409);
   if ((error as Error).message === 'INSPIRATION_FILE_LIMIT')
     return json(
       { error: 'Cada archivo de la mesa de trabajo puede pesar hasta 20 MB.' },
@@ -680,6 +686,7 @@ export async function POST(request: Request) {
       if (invite.accepted) throw new Error('409');
       if (invite.email.toLowerCase() !== user.email.toLowerCase())
         throw new Error('403');
+      await assertBillingAllowance(db, invite.owner, 'professionals');
       await db
         .update(studioTeamMembers)
         .set({
@@ -910,6 +917,7 @@ export async function POST(request: Request) {
       throw new Error('403');
     if (action === 'create-client') {
       if (!ctx.accountOwner) throw new Error('403');
+      await assertBillingAllowance(db, ctx.userId, 'clients');
       const email = string(body.email, 254).toLowerCase();
       if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
         throw new Error('400');
@@ -924,6 +932,7 @@ export async function POST(request: Request) {
       return json({ client: id }, 201);
     } else if (action === 'create-project') {
       if (!ctx.accountOwner) throw new Error('403');
+      await assertBillingAllowance(db, ctx.userId, 'projects');
       const clientId = string(body.client) || null;
       if (clientId) {
         const [client] = await db
@@ -1218,6 +1227,7 @@ export async function POST(request: Request) {
       const size = Number(body.size);
       const name = required(body.name, 240);
       if (!Number.isSafeInteger(size) || size < 1) throw new Error('400');
+      if (ctx.accountOwner) await assertBillingAllowance(db, ctx.userId, 'storageBytes', size);
       if (body.scope === 'inspiration' && size > INSPIRATION_FILE_LIMIT)
         throw new Error('INSPIRATION_FILE_LIMIT');
       if (size > MAX_ASSET) throw new Error('413');

@@ -47,3 +47,54 @@ a{color:inherit;text-decoration:none}button,input,textarea{font:inherit}button{c
 .hero-ghost{color:#8c8d82a8;text-shadow:0 1px 0 #ffffff80}
 
 @media(max-width:759px) and (max-height:700px){.story-copy{top:92px}.chapter-copy h2{font-size:54px}.chapter-description{max-width:250px;font-size:13px}.round-link{margin-top:0}.interior-content{top:13%}.interior-content h2{font-size:51px;margin-bottom:18px}.interior-actions{margin-top:16px}.interior-hotspots{bottom:155px}.interior-content .eyebrow{margin-bottom:12px}}
+
+/* A quieter, studio-first close with transparent early-stage pricing. */
+.fabrica-experience h1,.fabrica-experience h2{font-family:var(--font-display-fabrica),var(--font-sans-fabrica),sans-serif;font-weight:300;letter-spacing:-.04em}
+.site-header{border-color:#30332b18}
+.header-nav-link{font-size:13px;color:#5e6057;padding:10px 0;transition:color .2s}
+.header-nav-link:hover{color:var(--rust)}
+.studio-section{padding-top:112px;gap:52px 8%;background:#30352d}
+.studio-heading h2{font-size:clamp(42px,4.7vw,68px);line-height:1.06}
+.studio-description>p{font-size:17px;max-width:500px;color:#d8d9ce}
+.studio-benefits{margin-top:38px}
+.studio-benefits>div{grid-template-columns:34px .8fr 1.5fr;gap:16px;padding:18px 0}
+.studio-benefits h3{font-size:15px}
+.studio-benefits p{font-size:13px;color:#c0c2b8}
+.studio-open{margin-top:22px;padding:12px 0;background:none;color:#eeece3;border-bottom:1px solid #eeece380}
+.studio-open:hover svg{transform:translate(3px,-3px)}
+.pricing-section{grid-column:1/-1;display:grid;grid-template-columns:1fr 1fr;gap:8%;align-items:start;border-top:1px solid #e7e5d92a;padding:52px 0 32px;margin-top:8px}
+.pricing-section h2{font-size:clamp(38px,4vw,58px);line-height:1.08;margin:0}
+.pricing-section h2 em{color:#b7b79e}
+.pricing-card{max-width:480px;padding:0 0 0 24px;border-left:1px solid #e7e5d940}
+.pricing-status{display:inline-block;text-transform:uppercase;letter-spacing:.11em;font-size:10px;color:#c2c3b8;margin-bottom:15px}
+.pricing-card>p{font-family:var(--font-serif-fabrica),Georgia,serif;font-size:26px;line-height:1.25;max-width:390px;margin:0 0 20px;color:#f0eee5}
+.pricing-link{display:inline-flex;align-items:center;gap:18px;padding-bottom:7px;border-bottom:1px solid #e7e5d980;font-size:13px}
+.pricing-card small{display:block;margin-top:15px;color:#aeb3a3;font-size:11px;line-height:1.5}
+.studio-footer{margin-top:10px;padding:28px 0}
+@media(max-width:759px){
+  .site-header{gap:16px}
+  .header-nav-link{display:none}
+  .studio-section{padding:66px 7% 0;gap:24px}
+  .studio-heading h2{font-size:46px}
+  .studio-benefits>div{grid-template-columns:24px 1fr;gap:8px 12px;padding:16px 0}
+  .studio-benefits p{grid-column:2}
+  .pricing-section{grid-template-columns:1fr;gap:24px;padding:32px 0 22px;margin-top:8px}
+  .pricing-section h2{font-size:42px}
+  .pricing-card{padding-left:18px}
+  .pricing-card>p{font-size:23px}
+}
+
+/* Slightly smaller, lighter display headlines. */
+.chapter-copy h2{font-size:clamp(64px,7.2vw,112px)}
+.interior-content h2{font-size:clamp(60px,6.3vw,96px)}
+.studio-heading h2{font-size:clamp(40px,4.5vw,64px)}
+.pricing-section h2{font-size:clamp(36px,3.8vw,54px)}
+@media(max-width:1000px){.chapter-copy h2{font-size:clamp(58px,7.6vw,82px)}}
+@media(max-width:759px){
+  .chapter-copy h2{font-size:clamp(52px,10.5vw,79px)}
+  .interior-content h2{font-size:clamp(50px,10vw,75px)}
+  .studio-heading h2{font-size:44px}
+  .pricing-section h2{font-size:40px}
+}
+@media(max-height:650px) and (max-width:759px){.chapter-copy h2{font-size:42px}.interior-content h2{font-size:40px}}
+@media(max-width:759px) and (max-height:700px){.chapter-copy h2{font-size:51px}.interior-content h2{font-size:48px}}

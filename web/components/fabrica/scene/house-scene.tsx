@@ -8,6 +8,7 @@ import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLigh
 RectAreaLightUniformsLib.init();
 import { range } from '../timeline';
 import { advanceProgress, assemblyPose, cameraPose, constructionProgress } from './camera-path';
+import BlueprintGrid from './blueprint-grid';
 
 const Interior = lazy(() => import('./interior'));
 const EXTERIOR = '/models/casa-patio-exterior.glb';
@@ -161,6 +162,7 @@ function Scene({ controller, onReady, onProgress }: Omit<Props, 'onError'>) {
     <hemisphereLight args={['#e8eef4', '#a49175', .28]} />
     <directionalLight position={[-7, 11, 8]} intensity={3.2} color="#fff0d9" castShadow shadow-mapSize={size.width < 760 ? [1024, 1024] : [2048, 2048]} shadow-camera-left={-11} shadow-camera-right={11} shadow-camera-top={10} shadow-camera-bottom={-9} shadow-camera-near={.5} shadow-camera-far={40} shadow-normalBias={.022} shadow-bias={-.00008} shadow-radius={3} />
     <Model controller={actual} />
+    <BlueprintGrid controller={actual} />
     <FirstFrameReady onReady={onReady} />
     {interiorReady && <Suspense fallback={null}><Interior controller={actual} onReady={markInteriorLoaded} /></Suspense>}
     {interiorReady && <>

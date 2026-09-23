@@ -49,6 +49,7 @@ export const studioClients = pgTable(
     name: text('name').notNull(),
     email: text('email').notNull().default(''),
     created: bigint('created', { mode: 'number' }).notNull(),
+    archived: bigint('archived', { mode: 'number' }),
   },
   (table) => [
     index('studio_clients_owner').on(table.owner),
@@ -74,6 +75,7 @@ export const studioProjects = pgTable(
     startDate: text('start_date'),
     dueDate: text('due_date'),
     created: bigint('created', { mode: 'number' }).notNull().default(0),
+    archived: bigint('archived', { mode: 'number' }),
   },
   (table) => [
     index('studio_projects_owner').on(table.owner),
@@ -408,4 +410,116 @@ export const studioUploads = pgTable('studio_uploads', {
   name: text('name').notNull(),
   size: bigint('size', { mode: 'number' }).notNull(),
   completed: integer('completed').notNull().default(0),
+});
+
+// Billing belongs to a studio identity, not to an email or a session. Existing
+// project ownership remains keyed by owner while the studio model is adopted.
+export const billingStudios = pgTable('billing_studios', {
+  id: text('id').primaryKey(),
+  owner: text('owner').notNull().unique(),
+  created: bigint('created', { mode: 'number' }).notNull(),
+});
+
+export const billingPriceVersions = pgTable(
+  'billing_price_versions',
+  {
+    id: text('id').primaryKey(),
+    plan: text('plan').notNull(),
+    version: integer('version').notNull(),
+    active: integer('active').notNull().default(0),
+    currency: text('currency').notNull().default('ARS'),
+    amountCents: bigint('amount_cents', { mode: 'number' }).notNull(),
+    projectLimit: integer('project_limit').notNull(),
+    storageLimitBytes: bigint('storage_limit_bytes', { mode: 'number' }).notNull(),
+    professionalLimit: integer('professional_limit').notNull(),
+    clientLimit: integer('client_limit'),
+    teamPermissions: integer('team_permissions').notNull().default(0),
+    advancedAdmin: integer('advanced_admin').notNull().default(0),
+    prioritySupport: integer('priority_support').notNull().default(0),
+    effectiveFrom: bigint('effective_from', { mode: 'number' }).notNull(),
+    created: bigint('created', { mode: 'number' }).notNull(),
+  },
+  (table) => [
+    uniqueIndex('billing_price_plan_version_unique').on(table.plan, table.version),
+    index('billing_price_active').on(table.plan, table.active),
+  ],
+);
+
+export const billingAccounts = pgTable('billing_accounts', {
+  id: text('id').primaryKey(),
+  studio: text('studio').notNull().unique().references(() => billingStudios.id),
+  provider: text('provider').notNull().default('mercadopago'),
+  state: text('state').notNull().default('trialing'),
+  plan: text('plan').notNull().default('prueba'),
+  priceVersion: text('price_version').references(() => billingPriceVersions.id),
+  trialStarted: bigint('trial_started', { mode: 'number' }).notNull(),
+  trialEnds: bigint('trial_ends', { mode: 'number' }).notNull(),
+  graceEnds: bigint('grace_ends', { mode: 'number' }),
+  paidThrough: bigint('paid_through', { mode: 'number' }),
+  cancelAt: bigint('cancel_at', { mode: 'number' }),
+  created: bigint('created', { mode: 'number' }).notNull(),
+  updated: bigint('updated', { mode: 'number' }).notNull(),
+});
+
+export const billingSubscriptions = pgTable(
+  'billing_subscriptions',
+  {
+    id: text('id').primaryKey(),
+    account: text('account').notNull().references(() => billingAccounts.id),
+    provider: text('provider').notNull().default('mercadopago'),
+    externalId: text('external_id').unique(),
+    externalReference: text('external_reference').notNull().unique(),
+    priceVersion: text('price_version').notNull().references(() => billingPriceVersions.id),
+    providerStatus: text('provider_status'),
+    state: text('state').notNull().default('pending'),
+    currency: text('currency').notNull().default('ARS'),
+    amountCents: bigint('amount_cents', { mode: 'number' }).notNull(),
+    checkoutUrl: text('checkout_url'),
+    currentPeriodStart: bigint('current_period_start', { mode: 'number' }),
+    currentPeriodEnd: bigint('current_period_end', { mode: 'number' }),
+    nextChargeAt: bigint('next_charge_at', { mode: 'number' }),
+    cancelAt: bigint('cancel_at', { mode: 'number' }),
+    created: bigint('created', { mode: 'number' }).notNull(),
+    updated: bigint('updated', { mode: 'number' }).notNull(),
+  },
+  (table) => [index('billing_subscription_account').on(table.account)],
+);
+
+export const billingCharges = pgTable('billing_charges', {
+  id: text('id').primaryKey(),
+  subscription: text('subscription').notNull().references(() => billingSubscriptions.id),
+  provider: text('provider').notNull().default('mercadopago'),
+  externalId: text('external_id').notNull().unique(),
+  providerStatus: text('provider_status').notNull(),
+  amountCents: bigint('amount_cents', { mode: 'number' }).notNull(),
+  currency: text('currency').notNull(),
+  periodStart: bigint('period_start', { mode: 'number' }),
+  periodEnd: bigint('period_end', { mode: 'number' }),
+  occurredAt: bigint('occurred_at', { mode: 'number' }).notNull(),
+  created: bigint('created', { mode: 'number' }).notNull(),
+});
+
+export const billingWebhookEvents = pgTable('billing_webhook_events', {
+  id: text('id').primaryKey(),
+  provider: text('provider').notNull().default('mercadopago'),
+  externalKey: text('external_key').notNull().unique(),
+  topic: text('topic').notNull(),
+  resourceId: text('resource_id').notNull(),
+  payload: text('payload').notNull(),
+  receivedAt: bigint('received_at', { mode: 'number' }).notNull(),
+  processedAt: bigint('processed_at', { mode: 'number' }),
+  outcome: text('outcome'),
+});
+
+export const billingChanges = pgTable('billing_changes', {
+  id: text('id').primaryKey(),
+  account: text('account').notNull().references(() => billingAccounts.id),
+  subscription: text('subscription').references(() => billingSubscriptions.id),
+  action: text('action').notNull(),
+  fromState: text('from_state'),
+  toState: text('to_state'),
+  fromPlan: text('from_plan'),
+  toPlan: text('to_plan'),
+  reason: text('reason'),
+  created: bigint('created', { mode: 'number' }).notNull(),
 });

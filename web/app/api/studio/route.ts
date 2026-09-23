@@ -14,6 +14,7 @@ import {
   studioVersions,
 } from '@/db/schema';
 import { createStarterProject } from '@/features/studio/server/seed';
+import { assertBillingAllowance } from '@/features/billing/server';
 
 const PART = 8 * 1024 * 1024;
 const MAX_FILE = 5 * 1024 ** 3;
@@ -561,6 +562,7 @@ export async function POST(request: Request) {
     if (!owner) throw new Error('403');
     if (body.action === 'create-client') {
       if (!accountOwner) throw new Error('403');
+      await assertBillingAllowance(database, identity.userId, 'clients');
       if (
         typeof body.name !== 'string' ||
         !body.name.trim() ||
@@ -595,6 +597,7 @@ export async function POST(request: Request) {
       );
     } else if (body.action === 'create-project') {
       if (!accountOwner) throw new Error('403');
+      await assertBillingAllowance(database, identity.userId, 'projects');
       if (
         typeof body.name !== 'string' ||
         !body.name.trim() ||
@@ -686,6 +689,8 @@ export async function POST(request: Request) {
         throw new Error('400');
       }
       if (body.size > MAX_FILE) throw new Error('413');
+      if (accountOwner)
+        await assertBillingAllowance(database, identity.userId, 'storageBytes', body.size);
       const id = crypto.randomUUID();
       const key = `${project.id}/${id}`;
       const upload = await env.FILES.createMultipartUpload(key);
