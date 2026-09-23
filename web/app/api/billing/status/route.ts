@@ -1,5 +1,5 @@
 import { desc, eq } from 'drizzle-orm';
-import { billingAccounts, billingCharges, billingSubscriptions } from '@/db/schema';
+import { billingAccounts, billingCharges, billingPriceVersions, billingSubscriptions } from '@/db/schema';
 import { getBillingStatus } from '@/features/billing/server';
 import { reconcilePendingSubscription } from '@/features/billing/reconcile';
 import { billingFailure, billingJson, requireBillingOwner } from '@/features/billing/http';
@@ -27,6 +27,8 @@ export async function GET(request: Request) {
     const [subscription] = await db.select().from(billingSubscriptions)
       .where(eq(billingSubscriptions.account, account.id))
       .orderBy(desc(billingSubscriptions.created)).limit(1);
+    const [subscriptionPrice] = subscription ? await db.select({ plan: billingPriceVersions.plan })
+      .from(billingPriceVersions).where(eq(billingPriceVersions.id, subscription.priceVersion)).limit(1) : [];
     const [charge] = subscription ? await db.select().from(billingCharges)
       .where(eq(billingCharges.subscription, subscription.id))
       .orderBy(desc(billingCharges.occurredAt)).limit(1) : [];
@@ -40,6 +42,7 @@ export async function GET(request: Request) {
         nextChargeAt: subscription.nextChargeAt,
         amountCents: subscription.amountCents, currency: subscription.currency,
         created: subscription.created,
+        plan: subscriptionPrice?.plan || null,
       } : null,
       lastCharge: charge ? {
         status: charge.providerStatus, amountCents: charge.amountCents,
