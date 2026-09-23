@@ -18,7 +18,9 @@
 .billing-cancel { color: #8d3c2c; }
 .billing-checkout { max-width: 600px; margin: 32px 0; padding: 24px; border: 1px solid color-mix(in srgb, currentColor 16%, transparent); background: white; }
 .billing-card-form { display: grid; gap: 14px; margin-top: 18px; }
-.billing-card-form label, .billing-card-form > div { display: grid; gap: 6px; font-size: .9rem; }
+.billing-card-form label, .billing-card-form fieldset { display: grid; gap: 6px; font-size: .9rem; }
+.billing-card-form fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
+.billing-card-form legend { padding: 0 0 6px; }
 .billing-card-form input, .billing-card-form select, .billing-card-field { width: 100%; min-height: 42px; padding: 9px 11px; border: 1px solid #aaa; background: #fff; color: #211f1b; border-radius: 4px; }
 .billing-card-field iframe { width: 100%; height: 100%; }
 .billing-card-form button, .billing-checkout > button { width: fit-content; padding: 10px 14px; border: 1px solid currentColor; background: transparent; cursor: pointer; }

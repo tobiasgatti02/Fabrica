@@ -83,9 +83,9 @@ export function BillingCardForm({ plan, amountCents, publicKey, onComplete }: {
   return <form id="billing-card-form" className="billing-card-form">
     <h3>Datos de pago</h3>
     <p>Los datos de la tarjeta se procesan en los campos seguros de Mercado Pago.</p>
-    <div>Número de tarjeta<div id="billing-card-number" className="billing-card-field" role="group" aria-label="Número de tarjeta" /></div>
-    <div>Vencimiento<div id="billing-card-expiry" className="billing-card-field" role="group" aria-label="Vencimiento" /></div>
-    <div>Código de seguridad<div id="billing-card-cvv" className="billing-card-field" role="group" aria-label="Código de seguridad" /></div>
+    <fieldset><legend>Número de tarjeta</legend><div id="billing-card-number" className="billing-card-field" /></fieldset>
+    <fieldset><legend>Vencimiento</legend><div id="billing-card-expiry" className="billing-card-field" /></fieldset>
+    <fieldset><legend>Código de seguridad</legend><div id="billing-card-cvv" className="billing-card-field" /></fieldset>
     <label>Nombre del titular<input id="billing-card-name" autoComplete="cc-name" required /></label>
     <label>Banco emisor<select id="billing-card-issuer" aria-label="Banco emisor" /></label>
     <label>Cuotas<select id="billing-card-installments" aria-label="Cuotas" /></label>
