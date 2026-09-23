@@ -1213,7 +1213,7 @@ function HouseScene({
 
       if (tick % 2 === 0) {
         const nextPeerPins = current.peers.flatMap((peer) => {
-          if (!peer.cursor) return [];
+          if (!peer.cursor || !Array.isArray(peer.cursor)) return [];
           anchorWorld.set(...peer.cursor);
           (current.imported || model).localToWorld(anchorWorld);
           projected.copy(anchorWorld).project(camera);

@@ -53,6 +53,7 @@ import {
   StickyNote,
   Type,
   Undo2,
+  UsersRound,
 } from 'lucide-react';
 import { InspirationCanvas } from './inspiration-canvas';
 import { ImageEditor } from './image-editor';
@@ -96,6 +97,7 @@ import {
 } from '@/features/workspace/inspiration-board';
 import { inspirationFileError } from '@/features/files/validation';
 import { showErrorToast } from '@/lib/notifications';
+import { useStudioPresence, type PresenceCamera, type PresenceCursor } from '@/features/studio/presence';
 
 type Camera = Point & { zoom: number };
 const worktableTemplates = [
@@ -766,6 +768,22 @@ function WorktableCanvas({
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
   const [positionsReady, setPositionsReady] = useState(false);
   const [camera, setCamera] = useState<Camera>(initialCamera);
+  const presenceCamera = useRef<PresenceCamera>({ position: [initialCamera.x, initialCamera.y, initialCamera.zoom], target: [0, 0, 0] });
+  const presence = useStudioPresence(project, `board:${boardId || 'default'}`, share, true, presenceCamera, invite);
+  const [followPeerId, setFollowPeerId] = useState<string | null>(null);
+  const followedPeer = presence.peers.find((peer) => peer.id === followPeerId);
+  useEffect(() => {
+    presenceCamera.current = { position: [camera.x, camera.y, camera.zoom], target: [0, 0, 0] };
+  }, [camera]);
+  useEffect(() => {
+    const position = followedPeer?.camera?.position;
+    if (!position) return;
+    const frame = requestAnimationFrame(() => setCamera((current) => {
+      const next = { x: position[0], y: position[1], zoom: Math.min(4, Math.max(0.05, position[2])) };
+      return Math.abs(current.x - next.x) < 0.01 && Math.abs(current.y - next.y) < 0.01 && Math.abs(current.zoom - next.zoom) < 0.001 ? current : next;
+    }));
+    return () => cancelAnimationFrame(frame);
+  }, [followedPeer?.camera]);
   const [hand, setHand] = useState(false);
   const [space, setSpace] = useState(false);
   const [dragging, setDragging] = useState(false);
@@ -1118,6 +1136,15 @@ function WorktableCanvas({
       x: (clientX - bounds.left - camera.x) / camera.zoom,
       y: (clientY - bounds.top - camera.y) / camera.zoom,
     };
+  }
+
+  function peerPoint(cursor: PresenceCursor): Point {
+    if (Array.isArray(cursor)) return { x: cursor[0], y: cursor[1] };
+    if (cursor.card && data.inspiration.some((item) => item.id === cursor.card)) {
+      const card = positionFor(cursor.card);
+      return { x: card.x + (cursor.dx || 0), y: card.y + (cursor.dy || 0) };
+    }
+    return { x: cursor.x, y: cursor.y };
   }
 
   function focusBoard() {
@@ -1922,6 +1949,7 @@ function WorktableCanvas({
   }
 
   function zoomAt(value: number, point?: Point) {
+    setFollowPeerId(null);
     const bounds = viewport.current?.getBoundingClientRect();
     const anchor = point || {
       x: (bounds?.width || 900) / 2,
@@ -1942,6 +1970,7 @@ function WorktableCanvas({
     const wheel = (event: WheelEvent) => {
       if (editableTarget(event.target)) return;
       event.preventDefault();
+      setFollowPeerId(null);
       const bounds = node.getBoundingClientRect();
       const factor =
         event.deltaMode === 1
@@ -1981,6 +2010,7 @@ function WorktableCanvas({
 
   function startGesture(event: PointerEvent<HTMLElement>, card?: string) {
     if (event.button !== 0 && event.button !== 1) return;
+    setFollowPeerId(null);
     if (
       card &&
       event.button === 0 &&
@@ -2511,6 +2541,24 @@ function WorktableCanvas({
         <div className="inspiration-command-bar">
           <div className="inspiration-board-title">
             <h1>{board?.title || 'Mesa principal'}</h1>
+          </div>
+          <div className="inspiration-presence" aria-label="Personas en esta mesa">
+            <div className="inspiration-presence-heading">
+              <UsersRound size={15} aria-hidden="true" />
+              <span>{!presence.visible ? 'Presencia oculta' : presence.connected ? `${presence.peers.length + 1} en esta mesa` : 'Conectando presencia…'}</span>
+              <button type="button" aria-pressed={!presence.visible} onClick={() => { presence.setVisible((value) => !value); setFollowPeerId(null); }}>
+                {presence.visible ? 'Ocultarme' : 'Mostrarme'}
+              </button>
+            </div>
+            {presence.visible && presence.peers.map((peer) => (
+              <div className="inspiration-presence-person" key={peer.id}>
+                <span className="inspiration-presence-dot" />
+                <span title={peer.role}>{peer.name}{peer.role === 'Cliente' ? ' · Cliente' : ''}</span>
+                {peer.camera && <button type="button" aria-pressed={followPeerId === peer.id} onClick={() => setFollowPeerId((current) => current === peer.id ? null : peer.id)}>
+                  {followPeerId === peer.id ? 'Dejar de seguir' : 'Seguir vista'}
+                </button>}
+              </div>
+            ))}
           </div>
         </div>
         <div className="inspiration-canvas-wrap">
@@ -3337,6 +3385,17 @@ function WorktableCanvas({
               }
             }}
             onPointerMove={(event) => {
+              if (event.pointerType !== 'touch') {
+                const bounds = event.currentTarget.getBoundingClientRect();
+                if (event.clientX >= bounds.left && event.clientX <= bounds.right && event.clientY >= bounds.top && event.clientY <= bounds.bottom) {
+                  const point = worldPoint(event.clientX, event.clientY);
+                  const card = (event.target as HTMLElement).closest<HTMLElement>('[data-card]')?.dataset.card;
+                  const origin = card && data.inspiration.some((item) => item.id === card) ? positionFor(card) : null;
+                  presence.cursor.current = origin && card
+                    ? { x: point.x, y: point.y, card, dx: point.x - origin.x, dy: point.y - origin.y }
+                    : { x: point.x, y: point.y };
+                } else presence.cursor.current = null;
+              }
               if (
                 tool === 'erase' &&
                 event.buttons === 1 &&
@@ -3346,6 +3405,7 @@ function WorktableCanvas({
                 eraseAtPointer(event);
               if (!updateCanvasElement(event)) moveGesture(event);
             }}
+            onPointerLeave={() => { presence.cursor.current = null; }}
             onPointerUp={(event) => {
               if (!finishCanvasElement(event)) endGesture();
             }}
@@ -3602,6 +3662,14 @@ function WorktableCanvas({
               selected={selectedCanvasMarks}
               editingId={textEditor?.id}
             />
+            {presence.peers.map((peer) => {
+              if (!peer.cursor) return null;
+              const point = peerPoint(peer.cursor);
+              return <div key={peer.id} className="inspiration-peer-cursor" aria-label={`${peer.name} señala esta parte de la mesa`}
+                style={{ left: point.x * camera.zoom + camera.x, top: point.y * camera.zoom + camera.y }}>
+                <MousePointer2 size={20} aria-hidden="true" /><span>{peer.name}</span>
+              </div>;
+            })}
             {textEditor && (
               <textarea
                 ref={textInput}

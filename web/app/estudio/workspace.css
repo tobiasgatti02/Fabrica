@@ -3490,6 +3490,74 @@
   gap: 20px;
   padding: 4px 0 14px;
 }
+.inspiration-presence {
+  min-width: 190px;
+  max-width: min(320px, 100%);
+  max-height: 140px;
+  overflow: auto;
+  padding: 5px 8px;
+  border: 1px solid #dfe3d8;
+  border-radius: 7px;
+  background: #fffffce8;
+  color: #374631;
+  font-size: 11px;
+}
+.inspiration-presence-heading,
+.inspiration-presence-person {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+}
+.inspiration-presence-heading button,
+.inspiration-presence-person button {
+  margin-left: auto;
+  padding: 2px 4px;
+  border-radius: 3px;
+  color: #42563b;
+  text-decoration: underline;
+  white-space: nowrap;
+}
+.inspiration-presence-heading button:hover,
+.inspiration-presence-person button:hover {
+  background: #e8ebdf;
+}
+.inspiration-presence-dot {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+  background: #718454;
+}
+.inspiration-presence-person > span:nth-child(2) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.inspiration-peer-cursor {
+  position: absolute;
+  z-index: 30;
+  display: flex;
+  align-items: flex-start;
+  gap: 2px;
+  color: #fdfcf6;
+  pointer-events: none;
+  transform: translate(-3px, -3px);
+  filter: drop-shadow(0 2px 4px #17201699);
+}
+.inspiration-peer-cursor svg {
+  fill: #657a4d;
+  stroke: white;
+  stroke-width: 1.5;
+}
+.inspiration-peer-cursor span {
+  margin-top: 14px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  background: #394b32;
+  font-size: 11px;
+  white-space: nowrap;
+}
 .inspiration-board-title {
   display: flex;
   align-items: baseline;
@@ -4203,6 +4271,7 @@
   .inspiration-command-bar {
     align-items: flex-start;
     gap: 10px;
+    flex-wrap: wrap;
   }
   .inspiration-board-title {
     display: block;

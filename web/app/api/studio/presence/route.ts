@@ -15,6 +15,17 @@ function point(value: unknown): Point | null {
     ? value as Point : null;
 }
 
+function boardCursor(value: unknown) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const candidate = value as Record<string, unknown>;
+  const xy = point([candidate.x, candidate.y, 0]);
+  if (!xy) return null;
+  if (candidate.card == null) return { x: xy[0], y: xy[1] };
+  const delta = point([candidate.dx, candidate.dy, 0]);
+  if (!delta || typeof candidate.card !== 'string' || candidate.card.length > 100) return null;
+  return { x: xy[0], y: xy[1], card: candidate.card, dx: delta[0], dy: delta[1] };
+}
+
 function camera(value: unknown): Viewpoint | null {
   if (!value || typeof value !== 'object') return null;
   const candidate = value as Record<string, unknown>;
@@ -106,7 +117,7 @@ export async function POST(request: Request) {
     const { access, version, database } = await room(request);
     const body = await request.json() as Record<string, unknown>;
     const now = Date.now();
-    const cursor = body.cursor === null ? null : point(body.cursor);
+    const cursor = body.cursor === null ? null : version.startsWith('board:') ? boardCursor(body.cursor) : point(body.cursor);
     const viewpoint = body.camera === null ? null : camera(body.camera);
     if ((body.cursor != null && !cursor) || (body.camera != null && !viewpoint))
       return Response.json({ error: 'Posición inválida.' }, { status: 400 });

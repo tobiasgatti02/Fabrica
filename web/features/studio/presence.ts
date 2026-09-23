@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 
 export type PresencePoint = [number, number, number];
+export type BoardPresenceCursor = { x: number; y: number; card?: string; dx?: number; dy?: number };
+export type PresenceCursor = PresencePoint | BoardPresenceCursor;
 export type PresenceCamera = { position: PresencePoint; target: PresencePoint };
 export type PresencePeer = {
   id: string;
   name: string;
   role: string;
-  cursor: PresencePoint | null;
+  cursor: PresenceCursor | null;
   camera: PresenceCamera | null;
 };
 
@@ -21,7 +23,7 @@ export function useStudioPresence(
   const [visible, setVisible] = useState(true);
   const [peers, setPeers] = useState<PresencePeer[]>([]);
   const [connected, setConnected] = useState(false);
-  const cursor = useRef<PresencePoint | null>(null);
+  const cursor = useRef<PresenceCursor | null>(null);
 
   useEffect(() => {
     if (!enabled || !visible || !project || !version) {
