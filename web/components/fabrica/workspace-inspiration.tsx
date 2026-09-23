@@ -1140,7 +1140,7 @@ function WorktableCanvas({
 
   function peerPoint(cursor: PresenceCursor): Point {
     if (Array.isArray(cursor)) return { x: cursor[0], y: cursor[1] };
-    if (cursor.card && data.inspiration.some((item) => item.id === cursor.card)) {
+    if (cursor.card && defaults[cursor.card]) {
       const card = positionFor(cursor.card);
       return { x: card.x + (cursor.dx || 0), y: card.y + (cursor.dy || 0) };
     }
@@ -3390,7 +3390,7 @@ function WorktableCanvas({
                 if (event.clientX >= bounds.left && event.clientX <= bounds.right && event.clientY >= bounds.top && event.clientY <= bounds.bottom) {
                   const point = worldPoint(event.clientX, event.clientY);
                   const card = (event.target as HTMLElement).closest<HTMLElement>('[data-card]')?.dataset.card;
-                  const origin = card && data.inspiration.some((item) => item.id === card) ? positionFor(card) : null;
+                  const origin = card && defaults[card] ? positionFor(card) : null;
                   presence.cursor.current = origin && card
                     ? { x: point.x, y: point.y, card, dx: point.x - origin.x, dy: point.y - origin.y }
                     : { x: point.x, y: point.y };
