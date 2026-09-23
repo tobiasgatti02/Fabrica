@@ -43,9 +43,10 @@ export async function POST(request: Request) {
     const [subscription] = await db.select().from(billingSubscriptions)
       .where(eq(billingSubscriptions.externalId, externalSubscriptionId)).limit(1);
     if (!subscription) {
-      await db.update(billingWebhookEvents).set({ processedAt: Date.now(), outcome: 'unknown_subscription' })
-        .where(eq(billingWebhookEvents.externalKey, externalKey));
-      return Response.json({ ok: true });
+      // The provider may notify us before subscribe has committed the local row.
+      // A real resource must be retried; the dashboard's fictitious ID returns 404.
+      await getSubscription(externalSubscriptionId);
+      return Response.json({ error: 'subscription_not_ready' }, { status: 503 });
     }
     const provider = await getSubscription(externalSubscriptionId);
     const providerStatus = String(provider.status || 'pending');
