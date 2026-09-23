@@ -31,14 +31,13 @@ export async function POST(request: Request) {
       email: body.payerEmail,
       externalReference,
       cardTokenId: body.cardTokenId,
-      notificationUrl: `${env.APP_BASE_URL}/api/billing/webhooks/mercadopago`,
       backUrl: `${env.APP_BASE_URL}/estudio/facturacion`,
       idempotencyKey: externalReference,
     });
     if (typeof subscription.id !== 'string' || !subscription.id) throw new Error('billing_provider_invalid_response');
     await db.insert(billingSubscriptions).values({
       id: subscriptionId, account: status.account.id, externalId: subscription.id,
-      externalReference, priceVersion: price.id, providerStatus: String(subscription.status || 'pending'),
+      externalReference, priceVersion: price.id, providerStatus: typeof subscription.status === 'string' ? subscription.status : 'pending',
       state: 'pending', currency: price.currency, amountCents: price.amountCents,
       created: Date.now(), updated: Date.now(),
     });

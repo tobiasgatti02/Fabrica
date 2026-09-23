@@ -25,11 +25,11 @@ export function BillingCardForm({ plan, amountCents, publicKey, onComplete }: {
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    if (!window.MercadoPago) {
-      setError('No se pudo cargar el formulario seguro de Mercado Pago. Recargá la página.');
-      return;
-    }
     let disposed = false;
+    if (!window.MercadoPago) {
+      queueMicrotask(() => { if (!disposed) setError('No se pudo cargar el formulario seguro de Mercado Pago. Recargá la página.'); });
+      return () => { disposed = true; };
+    }
     let submitting = false;
     const mp = new window.MercadoPago(publicKey, { locale: 'es-AR' });
     const cardForm = mp.cardForm({
@@ -65,8 +65,8 @@ export function BillingCardForm({ plan, amountCents, publicKey, onComplete }: {
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ plan, cardTokenId: token, payerEmail: cardholderEmail }),
             });
-            const result = await response.json() as { error?: string; providerStatus?: string };
-            if (!response.ok) throw new Error(result.error || 'No se pudo crear la suscripción.');
+            const result = await response.json() as { error?: string; providerStatus?: string; providerCodes?: string[] };
+            if (!response.ok) throw new Error(`${result.error || 'No se pudo crear la suscripción.'}${result.providerCodes?.length ? ` (${result.providerCodes.join(', ')})` : ''}`);
             onComplete(`Suscripción enviada a Mercado Pago (${result.providerStatus || 'pendiente'}). Estamos verificando el pago.`);
           } catch (caught) {
             if (!disposed) setError(caught instanceof Error ? caught.message : 'No se pudo crear la suscripción.');
@@ -83,13 +83,13 @@ export function BillingCardForm({ plan, amountCents, publicKey, onComplete }: {
   return <form id="billing-card-form" className="billing-card-form">
     <h3>Datos de pago</h3>
     <p>Los datos de la tarjeta se procesan en los campos seguros de Mercado Pago.</p>
-    <label>Número de tarjeta<div id="billing-card-number" className="billing-card-field" /></label>
-    <label>Vencimiento<div id="billing-card-expiry" className="billing-card-field" /></label>
-    <label>Código de seguridad<div id="billing-card-cvv" className="billing-card-field" /></label>
+    <div>Número de tarjeta<div id="billing-card-number" className="billing-card-field" role="group" aria-label="Número de tarjeta" /></div>
+    <div>Vencimiento<div id="billing-card-expiry" className="billing-card-field" role="group" aria-label="Vencimiento" /></div>
+    <div>Código de seguridad<div id="billing-card-cvv" className="billing-card-field" role="group" aria-label="Código de seguridad" /></div>
     <label>Nombre del titular<input id="billing-card-name" autoComplete="cc-name" required /></label>
-    <label>Banco emisor<select id="billing-card-issuer" /></label>
-    <label>Cuotas<select id="billing-card-installments" /></label>
-    <label>Tipo de documento<select id="billing-card-document-type" /></label>
+    <label>Banco emisor<select id="billing-card-issuer" aria-label="Banco emisor" /></label>
+    <label>Cuotas<select id="billing-card-installments" aria-label="Cuotas" /></label>
+    <label>Tipo de documento<select id="billing-card-document-type" aria-label="Tipo de documento" /></label>
     <label>Número de documento<input id="billing-card-document-number" required /></label>
     <label>Correo del comprador<input id="billing-card-email" type="email" required /></label>
     {error && <p role="alert" className="billing-alert">{error}</p>}

@@ -5,9 +5,18 @@ const API = 'https://api.mercadopago.com';
 type ProviderResponse = Record<string, unknown>;
 
 export class MercadoPagoRequestError extends Error {
-  constructor(public readonly status: number) {
+  constructor(public readonly status: number, public readonly codes: string[]) {
     super(`billing_provider_http_${status}`);
   }
+}
+
+function providerErrorCodes(body: ProviderResponse) {
+  const values = [body.error, ...(
+    Array.isArray(body.cause) ? body.cause.map((cause: unknown) =>
+      cause && typeof cause === 'object' ? (cause as Record<string, unknown>).code : null) : []
+  )];
+  return values.filter((value): value is string =>
+    typeof value === 'string' && /^[a-zA-Z0-9_.-]{1,80}$/.test(value));
 }
 
 function accessToken() {
@@ -29,8 +38,9 @@ async function request(path: string, init: RequestInit = {}, idempotencyKey?: st
   const response = await fetch(`${API}${path}`, { ...init, headers, signal: AbortSignal.timeout(8_000) });
   const body = (await response.json().catch(() => ({}))) as ProviderResponse;
   if (!response.ok) {
-    console.error('Mercado Pago request failed', response.status);
-    throw new MercadoPagoRequestError(response.status);
+    const codes = providerErrorCodes(body);
+    console.error('Mercado Pago request failed', response.status, codes.join(','));
+    throw new MercadoPagoRequestError(response.status, codes);
   }
   return body;
 }
@@ -69,7 +79,6 @@ export function createSubscription(input: {
   email: string;
   externalReference: string;
   cardTokenId: string;
-  notificationUrl: string;
   backUrl: string;
   idempotencyKey: string;
 }) {
@@ -82,7 +91,6 @@ export function createSubscription(input: {
       card_token_id: input.cardTokenId,
       status: 'authorized',
       back_url: input.backUrl,
-      notification_url: input.notificationUrl,
     }),
   }, input.idempotencyKey);
 }

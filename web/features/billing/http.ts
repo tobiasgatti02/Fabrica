@@ -3,6 +3,7 @@ import { eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { studioProjects } from '@/db/schema';
 import { getFabricaUser } from '@/features/auth/server';
+import { MercadoPagoRequestError } from './mercadopago';
 
 export const billingDb = () => getDb(env.DATABASE_URL);
 
@@ -27,6 +28,12 @@ export function billingFailure(error: unknown) {
   const code = Number((error as Error)?.message);
   if (code === 401) return billingJson({ error: 'Iniciá sesión para continuar.' }, 401);
   if (code === 403) return billingJson({ error: 'Solo quien administra el estudio puede ver su facturación.' }, 403);
+  if (error instanceof MercadoPagoRequestError && error.status === 400) {
+    return billingJson({
+      error: 'Mercado Pago rechazó la suscripción. Revisá los datos del comprador y la tarjeta de prueba.',
+      ...(env.MERCADOPAGO_TEST_MODE === 'true' && error.codes.length ? { providerCodes: error.codes } : {}),
+    }, 422);
+  }
   console.error('Billing request failed', error instanceof Error ? error.name : 'unknown');
   return billingJson({ error: 'No pudimos consultar la facturación.' }, 503);
 }
