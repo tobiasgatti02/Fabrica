@@ -22,7 +22,7 @@ export async function POST(request: Request) {
   if (topic !== 'subscription_preapproval' && topic !== 'subscription_authorized_payment')
     return Response.json({ ok: true });
 
-  const externalKey = `${topic}:${resourceId}:${payload?.action || ''}`;
+  const externalKey = `${topic}:${resourceId}:${request.headers.get('x-request-id')}`;
   const db = billingDb();
   const [seen] = await db.select().from(billingWebhookEvents)
     .where(eq(billingWebhookEvents.externalKey, externalKey)).limit(1);
