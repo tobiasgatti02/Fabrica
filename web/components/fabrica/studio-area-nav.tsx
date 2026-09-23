@@ -9,7 +9,7 @@ import type {
 
 const areas = [
   { id: 'panel', label: 'Panel', icon: LayoutDashboard },
-  { id: 'inspiracion', label: 'Inspiración', icon: Lightbulb },
+  { id: 'inspiracion', label: 'Mesa de trabajo', icon: Lightbulb },
   { id: 'modelo', label: 'Modelo 3D', icon: Box },
   { id: 'equipo', label: 'Equipo', icon: UsersRound },
 ] as const;

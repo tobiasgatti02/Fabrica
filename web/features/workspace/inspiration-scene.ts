@@ -76,7 +76,7 @@ export function parseElements(value: unknown): CanvasElement[] {
         endX: item.endX,
         endY: item.endY,
       };
-    } else if (item.type === 'rectangle' || item.type === 'circle' || item.type === 'frame') {
+    } else if (item.type === 'rectangle' || item.type === 'circle' || item.type === 'frame' || item.type === 'text') {
       if (
         !validPoint({ x: item.x, y: item.y }) ||
         !finiteCoordinate(item.width) ||
@@ -89,6 +89,7 @@ export function parseElements(value: unknown): CanvasElement[] {
         typeof item.title !== 'string' || item.title.length > 120 ||
         !/^#[0-9a-f]{6}$/i.test(item.fill)
       )) return [];
+      if (item.type === 'text' && (typeof item.text !== 'string' || item.text.length > 2000)) return [];
       element = {
         ...common,
         type: item.type,
@@ -97,6 +98,7 @@ export function parseElements(value: unknown): CanvasElement[] {
         width: item.width,
         height: item.height,
         ...(item.type === 'frame' ? { title: item.title, fill: item.fill } : {}),
+        ...(item.type === 'text' ? { text: item.text } : {}),
       };
     } else return [];
     ids.add(item.id);

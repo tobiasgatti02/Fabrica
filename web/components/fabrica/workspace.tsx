@@ -349,9 +349,7 @@ export default function Workspace({
         </div>
       )}
       <footer className="workspace-footer">
-        <Link href="/">
-          <ArrowLeft size={14} /> Volver a F4brica
-        </Link>
+        
         <span>Un lugar para cada decisión.</span>
       </footer>
     </main>

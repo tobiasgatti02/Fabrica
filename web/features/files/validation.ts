@@ -10,6 +10,7 @@ export const modelFormats = [
   'stl',
   'ply',
   '3ds',
+  'skp',
 ] as const;
 
 const modelResources = [
@@ -65,6 +66,6 @@ export function modelFilesError(files: readonly FileLike[]) {
 export function inspirationFileError(file: FileLike) {
   if (!file.size) return 'El archivo está vacío.';
   if (file.size > INSPIRATION_FILE_LIMIT)
-    return `Cada archivo de Inspiración puede pesar hasta ${INSPIRATION_FILE_LIMIT_MB} MB.`;
+    return `Cada archivo de la mesa de trabajo puede pesar hasta ${INSPIRATION_FILE_LIMIT_MB} MB.`;
   return '';
 }

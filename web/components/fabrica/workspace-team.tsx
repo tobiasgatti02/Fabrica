@@ -19,7 +19,7 @@ const roleLabels: Record<string, string> = {
 };
 const areaLabels: Record<WorkspaceArea, string> = {
   panel: 'Panel',
-  inspiracion: 'Inspiración',
+  inspiracion: 'Mesa de trabajo',
   modelo: 'Modelo 3D',
 };
 const permissionLabels: Record<WorkspacePermission, string> = {

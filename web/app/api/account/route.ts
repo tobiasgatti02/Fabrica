@@ -17,6 +17,7 @@ import {
   studioComments,
   studioInspiration,
   studioInspirationComments,
+  studioWorktables,
   studioMeasurements,
   studioPlans,
   studioProjects,
@@ -118,6 +119,7 @@ async function deleteAccount(userId: string) {
       database.delete(studioTasks).where(inArray(studioTasks.project, projectIds)),
       database.delete(studioInspirationComments).where(inArray(studioInspirationComments.project, projectIds)),
       database.delete(studioInspiration).where(inArray(studioInspiration.project, projectIds)),
+      database.delete(studioWorktables).where(inArray(studioWorktables.project, projectIds)),
       database.delete(studioTeamMembers).where(inArray(studioTeamMembers.project, projectIds)),
       ...(proposalIds.length
         ? [
@@ -130,7 +132,7 @@ async function deleteAccount(userId: string) {
       database.delete(studioAssets).where(inArray(studioAssets.project, projectIds)),
       database.delete(studioProjects).where(inArray(studioProjects.id, projectIds)),
     ];
-    await database.batch(statements);
+    await database.batch(statements as [typeof statements[number], ...typeof statements]);
   }
 
   // Remove participation in other accounts' work, then the user's own records.

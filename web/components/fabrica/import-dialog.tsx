@@ -266,7 +266,7 @@ export function ImportDialog({
                 onChange={(event) => setPrimary(event.target.value)}
               >
                 {files
-                  .filter((file) => viewFormats.includes(extension(file.name)))
+                  .filter((file) => isModelFormat(file.name))
                   .map((file) => (
                     <option key={file.name}>{file.name}</option>
                   ))}
@@ -292,18 +292,17 @@ export function ImportDialog({
         <details className="import-formats">
           <summary>Compatibilidad y archivos grandes</summary>
           <p>
-            <b>Visor:</b> GLB, glTF, DAE, OBJ + MTL, FBX, STL, PLY y 3DS.
+            <b>Visor:</b> SKP, GLB, glTF, DAE, OBJ + MTL, FBX, STL, PLY y 3DS.
           </p>
           <p>
-            <b>SketchUp:</b> exportá GLB o DAE.{' '}
+            <b>SketchUp:</b> abrí archivos SKP directamente en el visor.{' '}
             <b>Blender, Rhino, 3ds Max, Maya, Cinema 4D:</b> usá alguno de los
             formatos del visor.
           </p>
           <p>
-            <b>Revit, Archicad, AutoCAD y archivos SKP, RVT, PLN, DWG o IFC:</b>{' '}
-            el original se puede guardar; para recorrerlo necesitás una
-            exportación compatible. La conversión automática todavía no está
-            disponible.
+            <b>Revit, Archicad, AutoCAD y archivos RVT, PLN, DWG o IFC:</b>{' '}
+            para recorrerlos necesitás una exportación compatible. La
+            conversión automática todavía no está disponible.
           </p>
           <p>
             Se guardan archivos de hasta 5 GB por archivo, en partes con

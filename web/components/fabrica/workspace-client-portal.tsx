@@ -16,8 +16,8 @@ import {
   type WorkspaceTask,
 } from '@/features/workspace/client';
 
-type View = 'resumen' | 'calendario' | 'cronograma' | 'avance';
-const views: { id: View; label: string }[] = [
+export type PortalView = 'resumen' | 'calendario' | 'cronograma' | 'avance';
+const views: { id: PortalView; label: string }[] = [
   { id: 'resumen', label: 'Resumen' },
   { id: 'calendario', label: 'Calendario' },
   { id: 'cronograma', label: 'Cronograma' },
@@ -54,8 +54,20 @@ function statusLabel(status: string) {
       : 'Pendiente';
 }
 
-export default function ClientPortal({ data }: { data: WorkspaceData }) {
-  const [view, setView] = useState<View>('resumen');
+export default function ClientPortal({
+  data,
+  selectedView,
+  onSelectView,
+  embedded = false,
+}: {
+  data: WorkspaceData;
+  selectedView?: PortalView;
+  onSelectView?: (view: PortalView) => void;
+  embedded?: boolean;
+}) {
+  const [localView, setLocalView] = useState<PortalView>('resumen');
+  const view = selectedView ?? localView;
+  const setView = onSelectView ?? setLocalView;
   const [monthOffset, setMonthOffset] = useState(0);
   const today = useMemo(() => {
     const parts = new Intl.DateTimeFormat('en-CA', {
@@ -80,6 +92,13 @@ export default function ClientPortal({ data }: { data: WorkspaceData }) {
     (task) => task.status !== 'done' && task.dueDate! >= today,
   );
   const completed = tasks.filter((task) => task.status === 'done').length;
+  const progressItemLabel = data.viewer.guest
+    ? tasks.length === 1
+      ? 'hito compartido completado'
+      : 'hitos compartidos completados'
+    : tasks.length === 1
+      ? 'tarea completada'
+      : 'tareas completadas';
   const reportedProgress = data.project.progress;
   const progress =
     reportedProgress ??
@@ -151,27 +170,33 @@ export default function ClientPortal({ data }: { data: WorkspaceData }) {
     : [];
 
   return (
-    <div className="workspace-content client-portal">
-      <header className="client-portal-heading">
-        <p className="workspace-eyebrow">SEGUIMIENTO DEL PROYECTO</p>
-        <h1>{data.project.name}</h1>
-        <p>
-          {data.project.description ||
-            'Toda la información compartida sobre el proyecto, en un solo lugar.'}
-        </p>
-      </header>
-      <nav className="client-view-nav" aria-label="Vistas del proyecto">
-        {views.map((item) => (
-          <button
-            key={item.id}
-            type="button"
-            aria-current={view === item.id ? 'page' : undefined}
-            onClick={() => setView(item.id)}
-          >
-            {item.label}
-          </button>
-        ))}
-      </nav>
+    <div
+      className={`${embedded ? 'client-portal embedded' : 'workspace-content client-portal'}`}
+    >
+      {!embedded && (
+        <header className="client-portal-heading">
+          <p className="workspace-eyebrow">SEGUIMIENTO DEL PROYECTO</p>
+          <h1>{data.project.name}</h1>
+          <p>
+            {data.project.description ||
+              'Toda la información compartida sobre el proyecto, en un solo lugar.'}
+          </p>
+        </header>
+      )}
+      {!embedded && (
+        <nav className="client-view-nav" aria-label="Vistas del proyecto">
+          {views.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              aria-current={view === item.id ? 'page' : undefined}
+              onClick={() => setView(item.id)}
+            >
+              {item.label}
+            </button>
+          ))}
+        </nav>
+      )}
       {view === 'resumen' && (
         <>
           <section className="client-overview-grid" aria-label="Estado general">
@@ -233,7 +258,11 @@ export default function ClientPortal({ data }: { data: WorkspaceData }) {
         <section className="client-portal-section">
           <div className="client-section-heading">
             <div>
-              <p className="workspace-eyebrow">FECHAS COMPARTIDAS</p>
+              <p className="workspace-eyebrow">
+                {data.viewer.guest
+                  ? 'FECHAS COMPARTIDAS'
+                  : 'FECHAS DEL PROYECTO'}
+              </p>
               <h2>Calendario</h2>
             </div>
             <div className="client-month-controls">
@@ -299,7 +328,7 @@ export default function ClientPortal({ data }: { data: WorkspaceData }) {
           </div>
           <p className="client-view-note">
             El calendario muestra las fechas de entrega de los hitos
-            compartidos.
+            {data.viewer.guest ? ' compartidos.' : ' del proyecto.'}
           </p>
         </section>
       )}
@@ -373,7 +402,9 @@ export default function ClientPortal({ data }: { data: WorkspaceData }) {
                 <strong>{progress === null ? '—' : `${progress}%`}</strong>
                 <span>
                   {reportedProgress === null
-                    ? 'Calculado con hitos compartidos'
+                    ? data.viewer.guest
+                      ? 'Calculado con hitos compartidos'
+                      : 'Calculado con tareas del proyecto'
                     : 'Avance estimado por el estudio'}
                 </span>
               </div>
@@ -389,16 +420,26 @@ export default function ClientPortal({ data }: { data: WorkspaceData }) {
               )}
               <p>
                 {tasks.length
-                  ? `${completed} de ${tasks.length} hitos compartidos completados`
-                  : 'Todavía no hay hitos publicados.'}
+                  ? `${completed} de ${tasks.length} ${progressItemLabel}`
+                  : data.viewer.guest
+                    ? 'Todavía no hay hitos publicados.'
+                    : 'Todavía no hay tareas cargadas.'}
               </p>
             </div>
           </section>
           <section className="client-portal-section">
             <div className="client-section-heading">
               <div>
-                <p className="workspace-eyebrow">HITOS COMPARTIDOS</p>
-                <h2>Estado de cada hito</h2>
+                <p className="workspace-eyebrow">
+                  {data.viewer.guest
+                    ? 'HITOS COMPARTIDOS'
+                    : 'TAREAS DEL PROYECTO'}
+                </p>
+                <h2>
+                  {data.viewer.guest
+                    ? 'Estado de cada hito'
+                    : 'Estado de cada tarea'}
+                </h2>
               </div>
             </div>
             {tasks.length ? (
@@ -408,12 +449,14 @@ export default function ClientPortal({ data }: { data: WorkspaceData }) {
                 ))}
               </div>
             ) : (
-              <Empty text="El estudio todavía no publicó hitos para este proyecto." />
+              <Empty text="Todavía no hay tareas para este proyecto." />
             )}
           </section>
           {budget.length > 0 && (
             <section className="client-portal-section">
-              <p className="workspace-eyebrow">PRESUPUESTO COMPARTIDO</p>
+              <p className="workspace-eyebrow">
+                {data.viewer.guest ? 'PRESUPUESTO COMPARTIDO' : 'PRESUPUESTO'}
+              </p>
               <h2>Presupuesto</h2>
               <div className="client-budget-summary">
                 <div>

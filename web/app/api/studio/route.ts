@@ -59,7 +59,7 @@ function db() {
   return getDb(env.DATABASE_URL);
 }
 
-async function context(request: Request) {
+export async function context(request: Request) {
   const database = db();
   const share = new URL(request.url).searchParams.get('share');
   if (share) {

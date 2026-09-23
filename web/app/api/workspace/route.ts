@@ -13,6 +13,7 @@ import {
   studioClients,
   studioInspiration,
   studioInspirationComments,
+  studioWorktables,
   studioProjects,
   studioProposalFeedback,
   studioProposalOptions,
@@ -147,7 +148,7 @@ const url = (value: unknown) => {
 function fail(error: unknown) {
   if ((error as Error).message === 'INSPIRATION_FILE_LIMIT')
     return json(
-      { error: 'Cada archivo de Inspiración puede pesar hasta 20 MB.' },
+      { error: 'Cada archivo de la mesa de trabajo puede pesar hasta 20 MB.' },
       413,
     );
   const code = Number((error as Error).message);
@@ -455,6 +456,7 @@ export async function GET(request: Request) {
       tasks,
       inspiration,
       inspirationComments,
+      worktables,
       allProposals,
       allOptions,
       allFeedback,
@@ -483,6 +485,11 @@ export async function GET(request: Request) {
             .from(studioInspirationComments)
             .where(eq(studioInspirationComments.project, ctx.project.id))
             .orderBy(asc(studioInspirationComments.created))
+        : Promise.resolve([]),
+      inspirationView
+        ? db.select().from(studioWorktables)
+            .where(eq(studioWorktables.project, ctx.project.id))
+            .orderBy(asc(studioWorktables.created))
         : Promise.resolve([]),
       proposalsView
         ? db
@@ -602,6 +609,7 @@ export async function GET(request: Request) {
       budgetItems,
       projectStats,
       inspiration,
+      worktables,
       inspirationComments,
       proposals: visibleProposals,
       options,
@@ -697,8 +705,10 @@ export async function POST(request: Request) {
       'save-budget-item': 'panel',
       'delete-budget-item': 'panel',
       'add-inspiration': 'inspiracion',
+      'create-worktable': 'inspiracion',
       'add-inspiration-comment': 'inspiracion',
       'update-inspiration': 'inspiracion',
+      'replace-inspiration-image': 'inspiracion',
       'edit-inspiration': 'inspiracion',
       'delete-inspiration': 'inspiracion',
       'delete-asset': 'inspiracion',
@@ -720,7 +730,22 @@ export async function POST(request: Request) {
       ].includes(action)
     )
       throw new Error('403');
+    if (action === 'create-worktable') {
+      const id = crypto.randomUUID();
+      await db.insert(studioWorktables).values({
+        id, project: project.id, title: required(body.title, 100),
+        template: choice(body.template, ['blank', 'facade', 'interior', 'inspiration', 'renders', 'plans']),
+        created: Date.now(),
+      });
+      return json({ ok: true, id }, 201);
+    }
     if (action === 'add-inspiration') {
+      const worktable = string(body.worktable);
+      if (worktable) {
+        const [board] = await db.select({ id: studioWorktables.id }).from(studioWorktables)
+          .where(and(eq(studioWorktables.id, worktable), eq(studioWorktables.project, project.id))).limit(1);
+        if (!board) throw new Error('404');
+      }
       const asset = string(body.asset);
       if (asset) {
         const uploadedAsset = await assetInProject(db, asset, project.id);
@@ -742,6 +767,7 @@ export async function POST(request: Request) {
         note: string(body.note, 2000),
         url: link,
         asset: asset || null,
+        worktable: worktable || null,
         category: choice(body.category || 'general', categories),
         status: 'idea',
         author: ctx.name,
@@ -1020,6 +1046,19 @@ export async function POST(request: Request) {
             eq(studioInspiration.project, project.id),
           ),
         );
+    } else if (action === 'replace-inspiration-image') {
+      const id = required(body.id);
+      const asset = await assetInProject(db, required(body.asset), project.id);
+      if (asset.size > INSPIRATION_FILE_LIMIT || !/^image\/(jpeg|png|webp|avif)$/.test(asset.mime))
+        throw new Error('400');
+      const [item] = await db.select({ asset: studioInspiration.asset })
+        .from(studioInspiration)
+        .where(and(eq(studioInspiration.id, id), eq(studioInspiration.project, project.id)))
+        .limit(1);
+      if (!item?.asset) throw new Error('404');
+      await db.update(studioInspiration).set({ asset: asset.id })
+        .where(and(eq(studioInspiration.id, id), eq(studioInspiration.project, project.id)));
+      if (item.asset !== asset.id) await removeUnusedAsset(db, item.asset, project.id);
     } else if (action === 'delete-inspiration') {
       const [item] = await db
         .select({ asset: studioInspiration.asset })
@@ -1357,7 +1396,7 @@ async function assetInProject(
   project: string,
 ) {
   const [asset] = await db
-    .select({ id: studioAssets.id, size: studioAssets.size })
+    .select({ id: studioAssets.id, size: studioAssets.size, mime: studioAssets.mime })
     .from(studioAssets)
     .where(and(eq(studioAssets.id, id), eq(studioAssets.project, project)))
     .limit(1);

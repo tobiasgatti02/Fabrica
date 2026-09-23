@@ -51,9 +51,11 @@ import {
   Scan,
   Square,
   StickyNote,
+  Type,
   Undo2,
 } from 'lucide-react';
 import { InspirationCanvas } from './inspiration-canvas';
+import { ImageEditor } from './image-editor';
 import {
   boardReducer,
   emptyBoard,
@@ -76,6 +78,7 @@ import {
   uploadWorkspaceAsset,
   type WorkspaceAsset,
   type WorkspaceInspiration,
+  type WorkspaceWorktable,
 } from '@/features/workspace/client';
 import { formatBytes } from '@/features/studio/domain';
 import {
@@ -95,6 +98,28 @@ import { inspirationFileError } from '@/features/files/validation';
 import { showErrorToast } from '@/lib/notifications';
 
 type Camera = Point & { zoom: number };
+const worktableTemplates = [
+  { id: 'blank', title: 'Mesa en blanco' },
+  { id: 'facade', title: 'Tablero 1 · Detalles de fachada' },
+  { id: 'interior', title: 'Tablero 2 · Detalles de interiorismo' },
+  { id: 'inspiration', title: 'Tablero 3 · Inspiración' },
+  { id: 'renders', title: 'Tablero 4 · Renders y fotos' },
+  { id: 'plans', title: 'Tablero 5 · Planos' },
+] as const;
+function templateElements(template: string): CanvasElement[] {
+  const sections: Record<string, string[]> = {
+    facade: ['Materiales', 'Encuentros y terminaciones', 'Referencias'],
+    interior: ['Espacios', 'Materiales y mobiliario', 'Detalles'],
+    inspiration: ['Ideas', 'Referencias', 'Paleta'],
+    renders: ['Vistas exteriores', 'Vistas interiores', 'Selección final'],
+    plans: ['Plantas', 'Cortes y elevaciones', 'Detalles constructivos'],
+  };
+  return (sections[template] || []).map((title, index) => ({
+    id: `template-${template}-${index}`, type: 'frame' as const,
+    x: index * 690, y: 40, width: 640, height: 760, title,
+    fill: '#f4f2eb', stroke: '#9aab92', weight: 2, style: 'solid' as const,
+  }));
+}
 type Draft = {
   title: string;
   note?: string;
@@ -172,9 +197,11 @@ type BoardContextMenu = {
 type CanvasTool =
   | 'select'
   | 'sticky'
+  | 'text'
   | 'frame'
   | 'rectangle'
   | 'circle'
+  | 'line'
   | 'arrow'
   | 'draw'
   | 'marker'
@@ -184,7 +211,7 @@ type CanvasTool =
   | 'erase-area';
 type ActiveCanvasElement = {
   pointer: number;
-  type: Exclude<CanvasTool, 'select' | 'sticky' | 'erase' | 'erase-area' | 'lasso'>;
+  type: Exclude<CanvasTool, 'select' | 'sticky' | 'text' | 'erase' | 'erase-area' | 'lasso'>;
   start: Point;
   points: Point[];
   targets: BoardBounds[];
@@ -367,18 +394,39 @@ function Media({
   share,
   invite,
   fullFrame = false,
+  resizable = false,
+  zoom = 1,
 }: {
   asset: WorkspaceAsset;
   project: string;
   share: string;
   invite?: string;
   fullFrame?: boolean;
+  resizable?: boolean;
+  zoom?: number;
 }) {
+  const maxPhotoDimension = 2000;
   const ref = useRef<HTMLDivElement>(null);
   const [near, setNear] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [failed, setFailed] = useState(false);
-  const [photoSize, setPhotoSize] = useState({ width: 300, height: 200 });
+  const photoSizeKey = `fabrica:photo-size:${project}:${asset.id}`;
+  const photoRatio = useRef(1);
+  const [photoSize, setPhotoSize] = useState(() => {
+    if (typeof window === 'undefined' || !fullFrame) return { width: 300, height: 200 };
+    try {
+      const saved = JSON.parse(localStorage.getItem(photoSizeKey) || 'null');
+      if (saved && Number.isFinite(saved.width) && Number.isFinite(saved.height))
+        return { width: Math.min(maxPhotoDimension, Math.max(140, saved.width)), height: Math.min(maxPhotoDimension, Math.max(100, saved.height)) };
+    } catch { /* Use the image's natural dimensions. */ }
+    return { width: 300, height: 200 };
+  });
+  const updatePhotoSize = (size: { width: number; height: number }) => {
+    setPhotoSize(size);
+    try { localStorage.setItem(photoSizeKey, JSON.stringify(size)); }
+    catch { /* The photo remains resizable for this session. */ }
+  };
+  const photoResize = useRef<{ pointer: number; x: number; y: number; width: number; height: number } | null>(null);
   const source = assetUrl(asset.id, project, share, invite);
   // No media URL is mounted until the card approaches the visible canvas.
   useEffect(() => {
@@ -405,6 +453,35 @@ function Media({
       }
       style={fullFrame ? photoSize : undefined}
     >
+      {fullFrame && resizable && (
+        <button
+          type="button"
+          className="inspiration-photo-resize"
+          aria-label="Redimensionar foto"
+          title="Arrastrá para redimensionar"
+          onPointerDown={(event) => {
+            if (event.button !== 0) return;
+            event.preventDefault();
+            event.stopPropagation();
+            photoResize.current = { pointer: event.pointerId, x: event.clientX, y: event.clientY, ...photoSize };
+            event.currentTarget.setPointerCapture(event.pointerId);
+          }}
+          onPointerMove={(event) => {
+            const start = photoResize.current;
+            if (!start || start.pointer !== event.pointerId) return;
+            const ratio = photoRatio.current;
+            const dx = (event.clientX - start.x) / zoom;
+            const dy = (event.clientY - start.y) / zoom;
+            const change = Math.abs(dx) >= Math.abs(dy * ratio) ? dx : dy * ratio;
+            const maxWidth = Math.min(maxPhotoDimension, maxPhotoDimension * ratio);
+            const minWidth = Math.min(maxWidth, Math.max(140, 100 * ratio));
+            const width = Math.min(maxWidth, Math.max(minWidth, start.width + change));
+            updatePhotoSize({ width, height: width / ratio });
+          }}
+          onPointerUp={() => { photoResize.current = null; }}
+          onPointerCancel={() => { photoResize.current = null; }}
+        />
+      )}
       {image && !failed ? (
         <>
           {!loaded && (
@@ -429,11 +506,17 @@ function Media({
                     event.currentTarget.naturalWidth /
                     event.currentTarget.naturalHeight;
                   if (Number.isFinite(ratio) && ratio > 0) {
-                    const width = Math.min(320, Math.max(180, 420 * ratio));
-                    setPhotoSize({
-                      width,
-                      height: Math.min(420, width / ratio),
-                    });
+                    photoRatio.current = ratio;
+                    let savedWidth: number | undefined;
+                    try {
+                      const saved = JSON.parse(localStorage.getItem(photoSizeKey) || 'null');
+                      if (saved && Number.isFinite(saved.width)) savedWidth = saved.width;
+                    } catch { /* Use the natural image size. */ }
+                    const maxWidth = Math.min(maxPhotoDimension, maxPhotoDimension * ratio);
+                    const minWidth = Math.min(maxWidth, Math.max(140, 100 * ratio));
+                    const width = Math.min(maxWidth, Math.max(minWidth,
+                      savedWidth ?? Math.min(320, Math.max(180, 420 * ratio))));
+                    updatePhotoSize({ width, height: width / ratio });
                   }
                 }
               }}
@@ -467,10 +550,13 @@ function PhotoFrame({
   share,
   invite,
   selected,
+  canEdit,
+  zoom,
   commentCount,
   onDrag,
   onSelect,
   onComments,
+  onEditImage,
 }: {
   item: WorkspaceInspiration;
   asset: WorkspaceAsset;
@@ -478,10 +564,13 @@ function PhotoFrame({
   share: string;
   invite: string;
   selected: boolean;
+  canEdit: boolean;
+  zoom: number;
   commentCount: number;
   onDrag: (event: PointerEvent<HTMLElement>, id: string) => void;
   onSelect: (id: string) => void;
   onComments: () => void;
+  onEditImage: () => void;
 }) {
   return (
     <div className="inspiration-photo-frame">
@@ -492,6 +581,8 @@ function PhotoFrame({
         share={share}
         invite={invite}
         fullFrame
+        resizable={selected}
+        zoom={zoom}
       />
       <button
         className="inspiration-drag-handle inspiration-photo-handle"
@@ -514,6 +605,7 @@ function PhotoFrame({
           {formatBytes(asset.size)}
         </div>
         <div className="inspiration-photo-actions">
+          {canEdit && <button type="button" onClick={onEditImage}><Pencil size={15} /> Editar</button>}
           <a
             href={assetUrl(asset.id, project, share, invite)}
             target="_blank"
@@ -536,7 +628,7 @@ function PhotoFrame({
   );
 }
 
-export default function Inspiration({
+function WorktableCanvas({
   data,
   project,
   share,
@@ -544,9 +636,13 @@ export default function Inspiration({
   busy,
   run,
   notify,
-}: WorkspaceViewProps) {
+  board,
+}: WorkspaceViewProps & { board: WorkspaceWorktable | null }) {
+  const boardId = board?.id || '';
+  const storageKey = boardId ? `${project}:${boardId}` : project;
   const canEdit = data.viewer.permissions.inspiracion === 'edit';
   const [selected, setSelected] = useState<string | null>(null);
+  const [editingImage, setEditingImage] = useState<string | null>(null);
   const [help, setHelp] = useState(false);
   const [storageError, setStorageError] = useState(false);
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
@@ -563,7 +659,7 @@ export default function Inspiration({
     items: Record<string, StickyMeta>;
   }>({ project: '', items: {} });
   const stickyMetadata =
-    stickyStore.project === project ? stickyStore.items : {};
+    stickyStore.project === storageKey ? stickyStore.items : {};
   const [stickyLinks, setStickyLinks] = useState<StickyLink[]>([]);
   const stickyLinksProject = useRef<string | null>(null);
   const [activeFrameResize, setActiveFrameResize] = useState<string | null>(null);
@@ -603,6 +699,15 @@ export default function Inspiration({
   >(null);
   const [canvasReady, setCanvasReady] = useState(false);
   const [canvasDraft, setCanvasDraft] = useState<CanvasElement | null>(null);
+  const [textEditor, setTextEditor] = useState<{
+    id: string; x: number; y: number; width: number; height: number; text: string; isNew: boolean;
+  } | null>(null);
+  const textInput = useRef<HTMLTextAreaElement>(null);
+  const textEditorFinishing = useRef(false);
+  const editingTextId = textEditor?.id;
+  useEffect(() => {
+    if (editingTextId) textInput.current?.focus({ preventScroll: true });
+  }, [editingTextId]);
   const [alignmentGuides, setAlignmentGuides] = useState<AlignmentGuide[]>([]);
   const [pending, setPending] = useState<Pending[]>([]);
   const [commentTarget, setCommentTarget] = useState<string | null>(null);
@@ -645,60 +750,64 @@ export default function Inspiration({
   }, []);
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
+      let hasStoredCanvas = false;
+      try { hasStoredCanvas = localStorage.getItem('fabrica:inspiration-elements:' + storageKey) !== null; }
+      catch { /* Use the template when browser storage is unavailable. */ }
       setPositionsReady(true);
       dispatchCanvas({
         type: 'reset',
-        elements: readCanvasElements(project),
-        positions: readPositions(project),
+        elements: hasStoredCanvas
+          ? readCanvasElements(storageKey) : templateElements(board?.template || 'blank'),
+        positions: readPositions(storageKey),
       });
       setCanvasReady(true);
-      setStickyStore({ project, items: readStickyMetadata(project) });
-      stickyLinksProject.current = project;
-      setStickyLinks(readStickyLinks(project));
-      groupsProject.current = project;
+      setStickyStore({ project: storageKey, items: readStickyMetadata(storageKey) });
+      stickyLinksProject.current = storageKey;
+      setStickyLinks(readStickyLinks(storageKey));
+      groupsProject.current = storageKey;
       try {
-        const saved = JSON.parse(localStorage.getItem('fabrica:inspiration-groups:' + project) || '{}');
+        const saved = JSON.parse(localStorage.getItem('fabrica:inspiration-groups:' + storageKey) || '{}');
         setGroups(saved && typeof saved === 'object' && !Array.isArray(saved)
           ? Object.fromEntries(Object.entries(saved).filter((entry): entry is [string, string] =>
               /^(card|element):/.test(entry[0]) && typeof entry[1] === 'string')) : {});
       } catch { setGroups({}); }
     });
     return () => cancelAnimationFrame(frame);
-  }, [project]);
+  }, [storageKey, board?.template]);
   useEffect(() => {
-    if (canvasReady && groupsProject.current === project) {
+    if (canvasReady && groupsProject.current === storageKey) {
       try {
-        localStorage.setItem('fabrica:inspiration-groups:' + project, JSON.stringify(groups));
+        localStorage.setItem('fabrica:inspiration-groups:' + storageKey, JSON.stringify(groups));
       } catch { setStorageError(true); }
     }
-  }, [groups, project, canvasReady]);
+  }, [groups, storageKey, canvasReady]);
   useEffect(() => {
-    if (stickyStore.project !== project) return;
+    if (stickyStore.project !== storageKey) return;
     try {
       localStorage.setItem(
-        'fabrica:inspiration-stickies:' + project,
+        'fabrica:inspiration-stickies:' + storageKey,
         JSON.stringify(stickyStore.items),
       );
     } catch {
       setStorageError(true);
     }
-  }, [project, stickyStore]);
+  }, [storageKey, stickyStore]);
   useEffect(() => {
-    if (!canvasReady || stickyLinksProject.current !== project) return;
-    try { localStorage.setItem('fabrica:inspiration-sticky-links:' + project, JSON.stringify(stickyLinks)); }
+    if (!canvasReady || stickyLinksProject.current !== storageKey) return;
+    try { localStorage.setItem('fabrica:inspiration-sticky-links:' + storageKey, JSON.stringify(stickyLinks)); }
     catch { setStorageError(true); }
-  }, [project, stickyLinks, canvasReady]);
+  }, [storageKey, stickyLinks, canvasReady]);
   const saveLocal = useRef<(() => void) | null>(null);
   useEffect(() => {
     if (!positionsReady || !canvasReady) return;
     const persist = () => {
       try {
         localStorage.setItem(
-          'fabrica:inspiration:' + project,
+          'fabrica:inspiration:' + storageKey,
           JSON.stringify(positions),
         );
         localStorage.setItem(
-          'fabrica:inspiration-elements:' + project,
+          'fabrica:inspiration-elements:' + storageKey,
           JSON.stringify(canvasElements),
         );
         if (mounted.current) setStorageError(false);
@@ -715,7 +824,7 @@ export default function Inspiration({
     canvasElements,
     positionsReady,
     canvasReady,
-    project,
+    storageKey,
     dragging,
   ]);
   useEffect(() => {
@@ -890,12 +999,39 @@ export default function Inspiration({
     focusBoard();
   }
 
+  function createTextAt(point: Point) {
+    if (!canEdit || canvasElements.length >= MAX_ELEMENTS) return;
+    textEditorFinishing.current = false;
+    setContextMenu(null);
+    setTextEditor({ id: crypto.randomUUID(), x: point.x, y: point.y, width: 320, height: 56, text: '', isNew: true });
+    setTool('select');
+  }
+
+  function finishTextEditor(save = true) {
+    if (!textEditor || textEditorFinishing.current) return;
+    textEditorFinishing.current = true;
+    if (save && textEditor.text.trim()) {
+      const previous = canvasElements.find((element) => element.id === textEditor.id);
+      const element: CanvasElement = {
+        id: textEditor.id, type: 'text', x: textEditor.x, y: textEditor.y,
+        width: textEditor.width, height: Math.max(56, textEditor.height),
+        text: textEditor.text.slice(0, 2000), stroke: previous?.stroke || '#252525',
+        weight: 1, style: 'solid',
+      };
+      if (textEditor.isNew) dispatchCanvas({ type: 'add', element });
+      else if (previous?.type === 'text' && (previous.text !== element.text || previous.height !== element.height))
+        dispatchCanvas({ type: 'update', element });
+      selectCanvasElement(element.id);
+    }
+    setTextEditor(null);
+  }
+
   function updateStickyMeta(
     id: string,
     update: (current: StickyMeta) => StickyMeta,
   ) {
     setStickyStore((current) => {
-      const items = current.project === project ? current.items : {};
+      const items = current.project === storageKey ? current.items : {};
       return {
         project,
         items: {
@@ -1095,6 +1231,13 @@ export default function Inspiration({
         endY: point.y,
         ...style,
       };
+    if (active.type === 'line')
+      return {
+        id: 'draft',
+        type: 'stroke' as const,
+        points: [active.start, point],
+        ...style,
+      };
     const previous = active.points.at(-1);
     if (
       active.points.length < MAX_STROKE_POINTS &&
@@ -1160,7 +1303,7 @@ export default function Inspiration({
       start: point,
       points: [point],
       targets:
-        tool === 'rectangle' || tool === 'circle' || tool === 'frame' ? alignmentTargets() : [],
+        tool === 'rectangle' || tool === 'circle' || tool === 'line' || tool === 'arrow' || tool === 'frame' ? alignmentTargets() : [],
     };
     viewport.current?.setPointerCapture(event.pointerId);
     setDragging(true);
@@ -1253,6 +1396,7 @@ export default function Inspiration({
           id: string;
         }>({
           action: 'add-inspiration',
+          worktable: boardId,
           title: draft.title.slice(0, 160),
           note: draft.note || '',
           url: draft.url || '',
@@ -1264,14 +1408,14 @@ export default function Inspiration({
         setPositions((current) => ({ ...current, [result.id]: entry.point }));
         if (draft.sticky) {
           setStickyStore((current) => ({
-            project,
+            project: storageKey,
             items: {
-              ...(current.project === project ? current.items : {}),
+              ...(current.project === storageKey ? current.items : {}),
               [result.id]: draft.sticky!,
             },
           }));
         }
-        if (draft.sequenceFrom && stickyLinksProject.current === project) {
+        if (draft.sequenceFrom && stickyLinksProject.current === storageKey) {
           setStickyLinks((current) => [...current, { from: draft.sequenceFrom!, to: result.id }].slice(-1000));
         }
         selectCard(result.id);
@@ -1866,7 +2010,7 @@ export default function Inspiration({
         setSelected((current) => (current === id ? null : current));
         setStickyLinks((current) => current.filter((link) => link.from !== id && link.to !== id));
         setStickyStore((current) => {
-          if (current.project !== project || !current.items[id]) return current;
+          if (current.project !== storageKey || !current.items[id]) return current;
           const items = { ...current.items };
           delete items[id];
           return { ...current, items };
@@ -1921,7 +2065,7 @@ export default function Inspiration({
   return (
     <div className="workspace-content inspiration-page">
       <section className="workspace-section inspiration-board-section">
-        <div className="inspiration-command-bar"><div className="inspiration-board-title"><h1>Lienzo</h1></div></div>
+        <div className="inspiration-command-bar"><div className="inspiration-board-title"><h1>{board?.title || 'Mesa principal'}</h1></div></div>
         <div className="inspiration-canvas-wrap">
           <div
             className="inspiration-tools"
@@ -1999,6 +2143,14 @@ export default function Inspiration({
                   <Circle size={18} />
                 </button>
                 <button
+                  title="Dibujar línea"
+                  aria-label="Dibujar línea"
+                  aria-pressed={tool === 'line'}
+                  onClick={() => chooseTool('line')}
+                >
+                  <Minus size={19} />
+                </button>
+                <button
                   title="Agregar flecha"
                   aria-label="Agregar flecha"
                   aria-pressed={tool === 'arrow'}
@@ -2035,6 +2187,14 @@ export default function Inspiration({
                   }}
                 >
                   <StickyNote size={19} />
+                </button>
+                <button
+                  title="Agregar texto libre (T)"
+                  aria-label="Agregar texto libre"
+                  aria-pressed={tool === 'text'}
+                  onClick={() => chooseTool(tool === 'text' ? 'select' : 'text')}
+                >
+                  <Type size={19} />
                 </button>
               </>
             )}
@@ -2103,7 +2263,7 @@ export default function Inspiration({
             </fieldset>
           )}
           {canEdit &&
-            ['rectangle', 'circle', 'arrow'].includes(tool) && (
+            ['rectangle', 'circle', 'line', 'arrow'].includes(tool) && (
               <div
                 className="inspiration-stroke-controls"
                 aria-label="Estilo de trazo"
@@ -2326,7 +2486,9 @@ export default function Inspiration({
               (hand || space ? ' hand-tool' : '') +
               (['draw', 'marker', 'smart'].includes(tool) && !hand && !space ? ' draw-tool' : '') +
               (tool === 'sticky' && !hand && !space ? ' sticky-tool' : '') +
+              (tool === 'text' && !hand && !space ? ' shape-tool' : '') +
               (tool === 'frame' && !hand && !space ? ' shape-tool' : '') +
+              (tool === 'line' && !hand && !space ? ' shape-tool' : '') +
               (['erase', 'erase-area'].includes(tool) && !hand && !space ? ' erase-tool' : '') +
               ((tool === 'rectangle' ||
                 tool === 'circle' ||
@@ -2340,16 +2502,24 @@ export default function Inspiration({
             tabIndex={0}
             data-reference-count={data.inspiration.length}
             role="application"
-            aria-label="Lienzo de inspiración. Seleccioná y arrastrá tarjetas, figuras, flechas o trazos para moverlos. Pegá imágenes con Control o Command V. Espacio y arrastrar para desplazarte."
+            aria-label="Mesa de trabajo. Seleccioná y arrastrá tarjetas, figuras, flechas o trazos para moverlos. Pegá imágenes con Control o Command V. Espacio y arrastrar para desplazarte."
             onPaste={paste}
             onCopy={copy}
             onDragOver={(event) => event.preventDefault()}
             onDrop={drop}
             onPointerDown={(event) => {
               const target = event.target as HTMLElement;
+              if (target.closest('.inspiration-raw-text-editor')) return;
               if (target.closest('.inspiration-context-menu')) return;
               setContextMenu(null);
               const card = target.closest<HTMLElement>('[data-card]');
+              if (
+                tool === 'text' && canEdit && !hand && !space && event.button === 0 && !card
+              ) {
+                event.preventDefault();
+                createTextAt(worldPoint(event.clientX, event.clientY));
+                return;
+              }
               if (
                 tool === 'sticky' &&
                 canEdit &&
@@ -2377,6 +2547,7 @@ export default function Inspiration({
               const drawingTool =
                 tool !== 'select' &&
                 tool !== 'sticky' &&
+                tool !== 'text' &&
                 tool !== 'erase' &&
                 tool !== 'erase-area' &&
                 tool !== 'lasso' &&
@@ -2411,6 +2582,12 @@ export default function Inspiration({
               const target = event.target as HTMLElement;
               if (target.closest('[data-card], button, input, textarea')) return;
               const element = markAt(worldPoint(event.clientX, event.clientY));
+              if (element?.type === 'text' && canEdit) {
+                textEditorFinishing.current = false;
+                setTextEditor({ id: element.id, x: element.x, y: element.y, width: element.width,
+                  height: element.height, text: element.text, isNew: false });
+                return;
+              }
               if (element?.type === 'frame') {
                 selectCanvasElement(element.id);
               }
@@ -2504,6 +2681,7 @@ export default function Inspiration({
                   chooseTool('sticky');
                   setStickyPanel('colors');
                 }
+                if (canEdit && key === 't') chooseTool('text');
                 if (canEdit && key === 'p') chooseTool('draw');
                 if (canEdit && key === 'r') chooseTool('rectangle');
                 if (canEdit && key === 'o') chooseTool('circle');
@@ -2630,6 +2808,11 @@ export default function Inspiration({
                     Crear post-it
                   </button>
                 )}
+                {canEdit && !contextMenu.card && (
+                  <button role="menuitem" onClick={() => createTextAt(contextMenu.point)}>
+                    Agregar texto libre
+                  </button>
+                )}
               </div>
             )}
             <InspirationCanvas
@@ -2639,7 +2822,43 @@ export default function Inspiration({
               draft={canvasDraft}
               guides={alignmentGuides}
               selected={selectedCanvasMarks}
+              editingId={textEditor?.id}
             />
+            {textEditor && (
+              <textarea
+                ref={textInput}
+                className="inspiration-raw-text-editor"
+                aria-label="Texto libre del lienzo"
+                placeholder="Escribí acá…"
+                maxLength={2000}
+                value={textEditor.text}
+                onChange={(event) => {
+                  const height = Math.max(56, Math.ceil(event.currentTarget.scrollHeight / camera.zoom));
+                  setTextEditor((current) => current && ({ ...current, text: event.target.value, height }));
+                }}
+                onBlur={() => finishTextEditor()}
+                onKeyDown={(event) => {
+                  if (event.key === 'Escape') {
+                    event.stopPropagation();
+                    finishTextEditor(false);
+                    focusBoard();
+                  }
+                  if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+                    event.preventDefault();
+                    finishTextEditor();
+                    focusBoard();
+                  }
+                }}
+                style={{
+                  left: camera.x + textEditor.x * camera.zoom,
+                  top: camera.y + textEditor.y * camera.zoom,
+                  width: textEditor.width * camera.zoom,
+                  height: textEditor.height * camera.zoom,
+                  fontSize: 20 * camera.zoom,
+                  lineHeight: `${28 * camera.zoom}px`,
+                }}
+              />
+            )}
             {lassoPoints.length > 1 && (
               <svg className="inspiration-lasso-preview" aria-hidden="true"
                 width={viewportSize.width} height={viewportSize.height}>
@@ -2745,6 +2964,8 @@ export default function Inspiration({
                         share={share}
                         invite={invite}
                         selected={selected === item.id}
+                        canEdit={canEdit}
+                        zoom={camera.zoom}
                         commentCount={commentsByItem.get(item.id)?.length || 0}
                         onDrag={startGesture}
                         onSelect={(id) => {
@@ -2756,6 +2977,7 @@ export default function Inspiration({
                           setCommentText('');
                           selectCard(item.id);
                         }}
+                        onEditImage={() => setEditingImage(item.id)}
                       />
                     ) : (
                       <>
@@ -2968,6 +3190,18 @@ export default function Inspiration({
               </div>
             )}
           </div>
+          {editingImage && (() => {
+            const item = items.find((candidate) => candidate.id === editingImage);
+            const asset = item?.asset ? assetMap.get(item.asset) : undefined;
+            return item && asset ? <ImageEditor key={item.id} title={item.title}
+              source={assetUrl(asset.id, project, share, invite)} canEdit={canEdit}
+              onClose={() => setEditingImage(null)} onSave={async (file) => {
+                const validationError = inspirationFileError(file);
+                if (validationError) throw new Error(validationError);
+                const uploaded = await uploadWorkspaceAsset(file, project, share, invite, 'inspiration');
+                await run({ action: 'replace-inspiration-image', id: item.id, asset: uploaded });
+              }} /> : null;
+          })()}
           {/* oxlint-enable jsx-a11y/no-noninteractive-element-interactions, jsx-a11y/no-noninteractive-tabindex */}
           <div className="inspiration-canvas-footer">
             <div className="inspiration-board-state">
@@ -3129,4 +3363,102 @@ export default function Inspiration({
       )}
     </div>
   );
+}
+
+export default function Inspiration(props: WorkspaceViewProps) {
+  const { data, project, busy, run } = props;
+  const [openIds, setOpenIds] = useState<string[]>(() => {
+    if (typeof window === 'undefined') return ['default'];
+    try {
+      const saved: unknown = JSON.parse(localStorage.getItem('fabrica:open-worktables:' + project) || '["default"]');
+      return Array.isArray(saved) ? saved.filter((id): id is string => typeof id === 'string').slice(0, 100) : ['default'];
+    } catch { return ['default']; }
+  });
+  const [activeId, setActiveId] = useState(() => {
+    if (typeof window === 'undefined') return 'default';
+    try { return localStorage.getItem('fabrica:active-worktable:' + project) || 'default'; }
+    catch { return 'default'; }
+  });
+  const [showBoards, setShowBoards] = useState(false);
+  const [showTemplates, setShowTemplates] = useState(false);
+  const allBoards = useMemo(() => [
+    { id: 'default', project, title: 'Mesa principal', template: 'blank', created: 0 },
+    ...(data.worktables || []),
+  ], [data.worktables, project]);
+  const available = new Set(allBoards.map((board) => board.id));
+  const openBoards = allBoards.filter((board) => openIds.includes(board.id));
+  const activeBoard = openBoards.find((board) => board.id === activeId) || openBoards[0];
+  useEffect(() => {
+    try {
+      localStorage.setItem('fabrica:open-worktables:' + project, JSON.stringify(openIds));
+      localStorage.setItem('fabrica:active-worktable:' + project, activeId);
+    } catch { /* Tabs remain usable when storage is unavailable. */ }
+  }, [project, openIds, activeId]);
+  function openBoard(id: string) {
+    if (!available.has(id)) return;
+    setOpenIds((current) => current.includes(id) ? current : [...current, id]);
+    setActiveId(id);
+    setShowBoards(false);
+  }
+  function closeBoard(id: string) {
+    const next = openIds.filter((entry) => entry !== id);
+    setOpenIds(next);
+    if (activeId === id) setActiveId(next[0] || '');
+  }
+  async function createBoard(template: (typeof worktableTemplates)[number]) {
+    setShowTemplates(false);
+    try {
+      const title = template.id === 'blank'
+        ? `Mesa de trabajo ${(data.worktables || []).length + 1}` : template.title;
+      const created = await run<{ ok: boolean; id: string }>({
+        action: 'create-worktable', title, template: template.id,
+      });
+      setOpenIds((current) => [...current, created.id]);
+      setActiveId(created.id);
+    } catch { /* Workspace handles the error. */ }
+  }
+  const activeBoardId = activeBoard?.id;
+  const visibleData = useMemo(() => {
+    if (!activeBoardId) return data;
+    const inspiration = data.inspiration.filter((item) =>
+      (item.worktable || 'default') === activeBoardId);
+    const ids = new Set(inspiration.map((item) => item.id));
+    return { ...data, inspiration,
+      inspirationComments: data.inspirationComments.filter((comment) => ids.has(comment.inspiration)) };
+  }, [data, activeBoardId]);
+  return <div className="worktables-layout">
+    <div className="worktables-bar">
+      <span className="worktables-heading">Mesas de trabajo</span>
+      <div className="worktables-tabs" role="tablist" aria-label="Mesas de trabajo">
+        {openBoards.map((board) => <div className="worktables-tab" key={board.id}>
+          <button type="button" role="tab" aria-selected={activeBoard?.id === board.id}
+            onClick={() => openBoard(board.id)} title={board.title}>{board.title}</button>
+          <button type="button" className="worktables-close" aria-label={`Cerrar ${board.title}`}
+            onClick={() => closeBoard(board.id)}><X size={14} /></button>
+        </div>)}
+      </div>
+      <div className="worktables-menu-wrap">
+        <button type="button" className="worktables-menu-button" aria-expanded={showBoards}
+          onClick={() => { setShowBoards(!showBoards); setShowTemplates(false); }}>Abrir mesa</button>
+        {showBoards && <div className="worktables-menu">
+          {allBoards.filter((board) => !openIds.includes(board.id)).map((board) =>
+            <button key={board.id} type="button" onClick={() => openBoard(board.id)}>{board.title}</button>)}
+          {allBoards.every((board) => openIds.includes(board.id)) && <span>Ya están todas abiertas</span>}
+        </div>}
+      </div>
+      {data.viewer.permissions.inspiracion === 'edit' && <div className="worktables-menu-wrap">
+        <button type="button" className="worktables-add" disabled={busy}
+          aria-expanded={showTemplates} onClick={() => { setShowTemplates(!showTemplates); setShowBoards(false); }}>
+          <Plus size={16} /> Nueva mesa
+        </button>
+        {showTemplates && <div className="worktables-menu worktables-template-menu">
+          {worktableTemplates.map((template) => <button type="button" key={template.id}
+            onClick={() => void createBoard(template)}>{template.title}</button>)}
+        </div>}
+      </div>}
+    </div>
+    {activeBoard ? <WorktableCanvas key={activeBoard.id} {...props} data={visibleData}
+      board={activeBoard.id === 'default' ? null : activeBoard} /> :
+      <div className="worktables-empty">Abrí una mesa de trabajo o creá una nueva.</div>}
+  </div>;
 }

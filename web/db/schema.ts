@@ -81,6 +81,26 @@ export const studioProjects = pgTable(
   ],
 );
 
+// Only the latest state of each open viewer is retained; expired rows are removed.
+export const studioPresence = pgTable(
+  'studio_presence',
+  {
+    id: text('id').primaryKey(),
+    secretHash: text('secret_hash').notNull(),
+    project: text('project').notNull().references(() => studioProjects.id, { onDelete: 'cascade' }),
+    version: text('version').notNull(),
+    name: text('name').notNull(),
+    role: text('role').notNull(),
+    cursor: text('cursor'),
+    camera: text('camera'),
+    expires: bigint('expires', { mode: 'number' }).notNull(),
+  },
+  (table) => [
+    index('studio_presence_room').on(table.project, table.version, table.expires),
+    index('studio_presence_expires').on(table.expires),
+  ],
+);
+
 export const studioTeamMembers = pgTable(
   'studio_team_members',
   {
@@ -175,6 +195,18 @@ export const studioAssetUploads = pgTable('studio_asset_uploads', {
   created: bigint('created', { mode: 'number' }).notNull(),
 });
 
+export const studioWorktables = pgTable(
+  'studio_worktables',
+  {
+    id: text('id').primaryKey(),
+    project: text('project').notNull().references(() => studioProjects.id),
+    title: text('title').notNull(),
+    template: text('template').notNull().default('blank'),
+    created: bigint('created', { mode: 'number' }).notNull(),
+  },
+  (table) => [index('studio_worktables_project').on(table.project)],
+);
+
 export const studioInspiration = pgTable(
   'studio_inspiration',
   {
@@ -186,6 +218,7 @@ export const studioInspiration = pgTable(
     note: text('note').notNull().default(''),
     url: text('url').notNull().default(''),
     asset: text('asset').references(() => studioAssets.id),
+    worktable: text('worktable').references(() => studioWorktables.id),
     category: text('category').notNull().default('general'),
     status: text('status').notNull().default('idea'),
     author: text('author').notNull(),

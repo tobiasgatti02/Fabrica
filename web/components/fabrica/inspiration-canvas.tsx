@@ -11,6 +11,27 @@ import { elementIndex } from '@/features/workspace/inspiration-scene';
 
 function drawElement(ctx: CanvasRenderingContext2D, element: CanvasElement) {
   ctx.globalAlpha = element.opacity ?? 1;
+  if (element.type === 'text') {
+    ctx.font = '20px sans-serif';
+    ctx.textBaseline = 'top';
+    ctx.fillStyle = element.stroke;
+    let y = element.y;
+    for (const paragraph of element.text.split('\n')) {
+      let line = '';
+      for (const character of paragraph) {
+        const next = line + character;
+        if (line && ctx.measureText(next).width > element.width) {
+          ctx.fillText(line, element.x, y);
+          y += 28;
+          line = character;
+        } else line = next;
+      }
+      ctx.fillText(line, element.x, y);
+      y += 28;
+    }
+    ctx.globalAlpha = 1;
+    return;
+  }
   if (element.type === 'frame') {
     ctx.fillStyle = element.fill;
     ctx.fillRect(element.x, element.y, element.width, element.height);
@@ -50,8 +71,13 @@ function drawElement(ctx: CanvasRenderingContext2D, element: CanvasElement) {
       Math.PI * 2,
     );
   else if (element.type === 'arrow') {
+    const dx = element.endX - element.x;
+    const dy = element.endY - element.y;
+    const length = Math.hypot(dx, dy);
+    const headLength = Math.min(Math.max(10, element.weight * 4), length * 0.45);
+    const angle = Math.atan2(dy, dx);
     ctx.moveTo(element.x, element.y);
-    ctx.lineTo(element.endX, element.endY);
+    ctx.lineTo(element.endX - headLength * Math.cos(angle), element.endY - headLength * Math.sin(angle));
   } else if (element.type === 'stroke') {
     element.points.forEach((point, index) =>
       index ? ctx.lineTo(point.x, point.y) : ctx.moveTo(point.x, point.y),
@@ -63,7 +89,7 @@ function drawElement(ctx: CanvasRenderingContext2D, element: CanvasElement) {
         element.endY - element.y,
         element.endX - element.x,
       ),
-      size = Math.max(10, element.weight * 4);
+      size = Math.min(Math.max(10, element.weight * 4), Math.hypot(element.endX - element.x, element.endY - element.y) * 0.45);
     ctx.setLineDash([]);
     ctx.beginPath();
     ctx.moveTo(element.endX, element.endY);
@@ -90,6 +116,7 @@ export const InspirationCanvas = memo(function InspirationCanvas({
   draft,
   guides,
   selected,
+  editingId,
 }: {
   index: ReturnType<typeof elementIndex>;
   camera: Point & { zoom: number };
@@ -97,6 +124,7 @@ export const InspirationCanvas = memo(function InspirationCanvas({
   draft: CanvasElement | null;
   guides: AlignmentGuide[];
   selected: CanvasElement[];
+  editingId?: string;
 }) {
   const ref = useRef<HTMLCanvasElement>(null);
   const lastIndex = useRef(index);
@@ -128,7 +156,7 @@ export const InspirationCanvas = memo(function InspirationCanvas({
       canvas.dataset.visibleMarks = String(visible.length);
       // Frames are backgrounds regardless of creation order.
       visible.forEach(({ element }) => { if (element.type === 'frame') drawElement(ctx, element); });
-      visible.forEach(({ element }) => { if (element.type !== 'frame') drawElement(ctx, element); });
+      visible.forEach(({ element }) => { if (element.type !== 'frame' && element.id !== editingId) drawElement(ctx, element); });
       if (draft) drawElement(ctx, draft);
       selected.forEach((selected) => {
         const b = boundsForCanvasElement(selected),
@@ -174,7 +202,7 @@ export const InspirationCanvas = memo(function InspirationCanvas({
     }
     const frame = requestAnimationFrame(draw);
     return () => cancelAnimationFrame(frame);
-  }, [index, camera, size, draft, guides, selected]);
+  }, [index, camera, size, draft, guides, selected, editingId]);
   return (
     <canvas
       ref={ref}
