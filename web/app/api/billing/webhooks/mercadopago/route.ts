@@ -66,8 +66,13 @@ export async function POST(request: Request) {
     let state = account.state;
     let graceEnds = account.graceEnds;
     let nextPaidThrough = account.paidThrough;
-    if (paymentStatus === 'approved') {
+    if (paymentStatus === 'approved')
       nextPaidThrough = Math.max(account.paidThrough || 0, paidThrough || 0) || null;
+    if (providerStatus === 'cancelled' || providerStatus === 'canceled') {
+      state = nextPaidThrough && nextPaidThrough > now ? 'canceling' : 'canceled';
+    } else if (providerStatus === 'paused') {
+      state = 'paused';
+    } else if (paymentStatus === 'approved') {
       state = nextPaidThrough && nextPaidThrough > now ? 'active' : 'pending';
       if (state === 'active') graceEnds = null;
     } else if (paymentStatus === 'rejected') {
@@ -75,10 +80,6 @@ export async function POST(request: Request) {
         state = 'grace_period';
         graceEnds = now + 5 * 86_400_000;
       }
-    } else if (providerStatus === 'cancelled' || providerStatus === 'canceled') {
-      state = account.paidThrough && account.paidThrough > now ? 'canceling' : 'canceled';
-    } else if (providerStatus === 'paused') {
-      state = 'paused';
     }
 
     await db.update(billingSubscriptions).set({

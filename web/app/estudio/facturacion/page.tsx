@@ -13,6 +13,7 @@ type BillingData = {
   rights: { projects: number; storageBytes: number; professionals: number; clients: number | null };
   usage: { projects: number; storageBytes: number; professionals: number; clients: number };
   lastCharge: { status: string; amountCents: number; currency: string } | null;
+  subscription: { state: string; providerStatus: string | null; nextChargeAt: number | null } | null;
 };
 type Plan = { id: string; key: string; amountCents: number; currency: string; rights: BillingData['rights'] };
 type PlansData = { plans: Plan[]; publicKey: string | null; testMode: boolean };
@@ -27,6 +28,7 @@ export default function BillingPage() {
   const [testMode, setTestMode] = useState(false);
   const [sdkReady, setSdkReady] = useState(false);
   const [selectedPlan, setSelectedPlan] = useState<Plan | null>(null);
+  const [changingPlan, setChangingPlan] = useState(false);
   const [message, setMessage] = useState('');
   const [loadError, setLoadError] = useState('');
   const refreshStatus = useCallback(() => {
@@ -73,14 +75,28 @@ export default function BillingPage() {
     <section><h2>Planes disponibles</h2><div className="billing-plans">{plans.map((plan) => <article key={plan.id}>
       <h3>{plan.key}</h3><strong>{money.format(plan.amountCents / 100)} <small>/ mes</small></strong>
       <p>{plan.rights.projects} proyectos · {bytes(plan.rights.storageBytes)} · {plan.rights.professionals} profesionales</p>
-      <button type="button" disabled={plan.key === status.plan || !publicKey} onClick={() => { setSelectedPlan(plan); setMessage(''); }}>{plan.key === status.plan ? 'Plan actual' : 'Elegir plan'}</button>
+      <button type="button" disabled={plan.key === status.plan || !publicKey || changingPlan} onClick={() => { setSelectedPlan(plan); setMessage(''); }}>{plan.key === status.plan ? 'Plan actual' : 'Elegir plan'}</button>
     </article>)}</div></section>
     {selectedPlan && <section className="billing-checkout">
-      <h2>Suscribirse a {selectedPlan.key}</h2>
-      <p>{money.format(selectedPlan.amountCents / 100)} por mes. {testMode && 'Prueba: ingresá el correo de la cuenta compradora y una tarjeta de prueba.'}</p>
-      {sdkReady && publicKey
-        ? <BillingCardForm key={selectedPlan.id} plan={selectedPlan.key} amountCents={selectedPlan.amountCents} publicKey={publicKey} onComplete={(value) => { setMessage(value); setSelectedPlan(null); refreshStatus(); }} />
-        : <p>Cargando el formulario seguro…</p>}
+      <h2>{status.subscription && status.state === 'active' ? 'Cambiar' : 'Suscribirse'} a {selectedPlan.key}</h2>
+      <p>{money.format(selectedPlan.amountCents / 100)} por mes.</p>
+      {status.subscription && status.state === 'active'
+        ? <button type="button" disabled={changingPlan} onClick={async () => {
+          setChangingPlan(true);
+          try {
+            const response = await fetch('/api/billing/change-plan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ plan: selectedPlan.key }) });
+            const result = await response.json() as { error?: string };
+            if (!response.ok) throw new Error(result.error || 'No se pudo cambiar el plan.');
+            setMessage('El cambio de plan fue solicitado.');
+            setSelectedPlan(null);
+            refreshStatus();
+          } catch (error) { setMessage(error instanceof Error ? error.message : 'No se pudo cambiar el plan.'); }
+          finally { setChangingPlan(false); }
+        }}>{changingPlan ? 'Actualizando…' : 'Confirmar cambio de plan'}</button>
+        : <>{testMode && <p>Prueba: ingresá el correo de la cuenta compradora y una tarjeta de prueba.</p>}
+          {sdkReady && publicKey
+            ? <BillingCardForm key={selectedPlan.id} plan={selectedPlan.key} amountCents={selectedPlan.amountCents} publicKey={publicKey} onComplete={(value) => { setMessage(value); setSelectedPlan(null); refreshStatus(); }} />
+            : <p>Cargando el formulario seguro…</p>}</>}
       <button type="button" onClick={() => setSelectedPlan(null)}>Volver a planes</button>
     </section>}
     {!publicKey && <p className="billing-alert">Los pagos todavía no están configurados en este entorno.</p>}

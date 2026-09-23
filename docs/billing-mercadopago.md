@@ -8,6 +8,9 @@ La integración usa planes asociados de Mercado Pago: un plan externo por versi�
 - El worker Cloudflare `fabrica-test` usa la conexión pooled de Neon `test` y tiene configurados `APP_BASE_URL`, las credenciales y el secreto de webhook de Mercado Pago, los tres IDs de planes y `MERCADOPAGO_TEST_MODE=true`.
 - El despliegue de Test corresponde a la versión de Cloudflare `98326f96-8966-455d-8c0d-5d178f23b6bb`. El endpoint del webhook rechazó una firma inválida con HTTP 401.
 - Aún falta una prueba de suscripción con un comprador y una tarjeta de prueba para confirmar la entrega del webhook y la activación del período pagado. Esta comprobación puede crear un cargo de prueba y no se ejecutó durante la migración.
+- El simulador del panel envió `subscription_preapproval` con el ID ficticio `123456` y reportó 503. El receptor ahora reconoce un 404 de ese recurso **solo en Test** como prueba aceptada, tras validar la firma; mantiene 503 para fallos transitorios y recursos reales todavía no registrados localmente. Este cambio requiere desplegar una nueva versión de `fabrica-test` y volver a pulsar la prueba del panel.
+- Una petición sin firma al endpoint público devolvió 401 el 23 de septiembre. No fue posible inspeccionar los logs del worker con Wrangler local porque no hay sesión autenticada, ni repetir una petición firmada porque el secreto de firma no está en el entorno local. El 503 original todavía no tiene causa confirmada por logs.
+- La landing muestra los cuatro planes y sus importes con una nota visible de que los cobros siguen en Test. En facturación, un estudio con suscripción activa confirma un cambio de plan por la ruta de modificación, sin abrir un segundo formulario de alta.
 
 ## Información confirmada por MCP
 
