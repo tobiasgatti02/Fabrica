@@ -9,13 +9,16 @@ import { gsap } from 'gsap';
 import { ScrollTrigger } from 'gsap/ScrollTrigger';
 import { chapters, chapterAt, clamp } from './timeline';
 import type { SceneController } from './scene/house-scene';
-import { PLANS, type PlanKey } from '@/features/billing/core';
 
 const HouseScene = dynamic(() => import('./scene/house-scene'), { ssr: false });
 export function Wordmark() { return <span className="wordmark">fabrica<span aria-hidden="true">®</span></span>; }
 
 const stageRenders = ['terrain', 'foundation', 'framing', 'shell', 'finishes', 'exterior', 'interior'];
-const publicPlans: PlanKey[] = ['prueba', 'inicial', 'estudio', 'equipo'];
+type PublicPlan = { key: string; amountCents: number; currency: string; rights: {
+  projects: number; storageBytes: number; professionals: number; clients: number | null;
+  teamPermissions: boolean; advancedAdmin: boolean; prioritySupport: boolean;
+} };
+const planNames: Record<string, string> = { prueba: 'Prueba', inicial: 'Inicial', estudio: 'Estudio', equipo: 'Equipo' };
 const price = new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 });
 function FallbackHouse({ progress }: { progress: number }) {
   const stage = progress >= .965 ? 6 : Math.min(5, chapterAt(progress));
@@ -29,6 +32,8 @@ export default function Landing() {
   const [reduced, setReduced] = useState(false);
   const [ready, setReady] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [plans, setPlans] = useState<PublicPlan[]>([]);
+  const [plansError, setPlansError] = useState(false);
   const sceneFailed = useRef(false);
   const markReady = useCallback(() => setReady(true), []);
   const markFailed = useCallback(() => { sceneFailed.current = true; setFailed(true); setProgress(controller.current.progress); }, []);
@@ -39,6 +44,13 @@ export default function Landing() {
     const element = story.current;
     const top = element.getBoundingClientRect().top + window.scrollY;
     window.scrollTo({ top: top + p * (element.offsetHeight - window.innerHeight), behavior: controller.current.reduced ? 'instant' : 'smooth' });
+  }, []);
+
+  useEffect(() => {
+    void fetch('/api/billing/catalog').then(async (response) => {
+      if (!response.ok) throw new Error('catalog');
+      return response.json() as Promise<{ plans: PublicPlan[] }>;
+    }).then((data) => setPlans(data.plans)).catch(() => setPlansError(true));
   }, []);
 
   useEffect(() => {
@@ -125,17 +137,17 @@ export default function Landing() {
       </div>
       <section id="precios" className="pricing-section" aria-labelledby="pricing-title">
         <div className="pricing-intro"><p className="eyebrow">Fabrica / Precios</p><h2 id="pricing-title">Un plan para cada<br /><em>forma de crear.</em></h2><p>Empezá con 14 días de prueba. Elegí más capacidad cuando tu estudio la necesite.</p></div>
-        <div className="pricing-grid">{publicPlans.map((key) => {
-          const plan = PLANS[key];
-          return <article className="pricing-plan" key={key}>
-            <span className="pricing-status">{key === 'prueba' ? '14 días' : 'Suscripción mensual'}</span>
-            <h3>{plan.name}</h3>
-            <p className="pricing-amount">{key === 'prueba' ? 'Gratis' : price.format(plan.amountCents / 100)}{key !== 'prueba' && <small> / mes</small>}</p>
-            <ul><li>{plan.rights.projects} {plan.rights.projects === 1 ? 'proyecto' : 'proyectos'}</li><li>{plan.rights.storageBytes / 1024 ** 3} GB de almacenamiento</li><li>{plan.rights.professionals} profesionales</li><li>{plan.rights.clients === null ? 'Clientes ilimitados' : `${plan.rights.clients} clientes`}</li></ul>
-            <Link className="pricing-link action-button action-button--secondary" href={key === 'prueba' ? '/estudio' : '/estudio/facturacion'}>{key === 'prueba' ? 'Explorar Fabrica' : 'Ver plan'} <ArrowUpRight size={17} /></Link>
+        <div className="pricing-grid" aria-live="polite">{plans.map((plan) => {
+          const trial = plan.key === 'prueba';
+          return <article className={`pricing-plan ${plan.key === 'estudio' ? 'pricing-plan--featured' : ''}`} key={plan.key}>
+            <span className="pricing-status">{trial ? '14 días de prueba' : plan.key === 'estudio' ? 'Para estudios en marcha' : 'Suscripción mensual'}</span>
+            <h3>{planNames[plan.key] || plan.key}</h3>
+            <p className="pricing-amount">{trial ? 'Gratis' : price.format(plan.amountCents / 100)}{!trial && <small> / mes</small>}</p>
+            <ul><li>{plan.rights.projects} {plan.rights.projects === 1 ? 'proyecto' : 'proyectos'}</li><li>{plan.rights.storageBytes / 1024 ** 3} GB para modelos y mesa de trabajo</li><li>{plan.rights.professionals} profesionales</li><li>{plan.rights.clients === null ? 'Clientes ilimitados' : `${plan.rights.clients} clientes`}</li>{plan.rights.teamPermissions && <li>Permisos por área</li>}{plan.rights.advancedAdmin && <li>Administración avanzada</li>}{plan.rights.prioritySupport && <li>Soporte prioritario</li>}</ul>
+            <Link className="pricing-link action-button action-button--secondary" href={trial ? '/estudio' : `/estudio/facturacion?plan=${encodeURIComponent(plan.key)}`}>{trial ? 'Empezar prueba' : 'Elegir plan'} <ArrowUpRight size={17} /></Link>
           </article>;
-        })}</div>
-        <p className="pricing-note">Los cobros están en prueba. Confirmá la disponibilidad y las condiciones dentro del estudio antes de suscribirte.</p>
+        })}{!plans.length && <p className="pricing-loading">{plansError ? 'No pudimos cargar los precios. Intentá más tarde.' : 'Cargando planes y precios actuales…'}</p>}</div>
+        <p className="pricing-note">Cobro mensual mediante Mercado Pago. Tus límites y el estado de la suscripción se actualizan en el estudio.</p>
       </section>
       <div className="studio-footer"><Wordmark /><span>Un espacio propio para cada proyecto.</span><Link className="action-button action-button--secondary" href="/estudio">Entrar al estudio <ArrowUpRight size={16} /></Link></div>
     </section>

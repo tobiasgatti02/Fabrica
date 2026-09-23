@@ -275,6 +275,23 @@ export default function Workspace({
                 : data?.clients.length || 0
             }
             onSelect={openProject}
+            actions={data?.viewer.accountOwner ? (close) => <button type="button" disabled={busy} onClick={async () => {
+              close();
+              if (!data || !window.confirm(`¿Eliminar “${data.project.name}” y todos sus archivos? Esta acción no se puede deshacer.`)) return;
+              setBusy(true);
+              try {
+                const response = await fetch(`/api/studio?project=${encodeURIComponent(data.project.id)}`, {
+                  method: 'POST', headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ action: 'delete-project', id: data.project.id }),
+                });
+                const result = await response.json() as { error?: string };
+                if (!response.ok) throw new Error(result.error || 'No se pudo eliminar el proyecto.');
+                window.location.href = '/estudio';
+              } catch (caught) {
+                showErrorToast((caught as Error).message);
+                setBusy(false);
+              }
+            }}>Eliminar proyecto actual</button> : undefined}
           />
         }
         actions={

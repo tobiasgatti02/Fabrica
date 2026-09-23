@@ -19,7 +19,7 @@ export function BillingCardForm({ plan, amountCents, publicKey, onComplete }: {
   plan: string;
   amountCents: number;
   publicKey: string;
-  onComplete: (message: string) => void;
+  onComplete: () => void;
 }) {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -67,7 +67,7 @@ export function BillingCardForm({ plan, amountCents, publicKey, onComplete }: {
             });
             const result = await response.json() as { error?: string; providerStatus?: string; providerCodes?: string[]; providerMessages?: string[] };
             if (!response.ok) throw new Error(`${result.error || 'No se pudo crear la suscripción.'}${result.providerCodes?.length ? ` (${result.providerCodes.join(', ')})` : ''}${result.providerMessages?.length ? ` ${result.providerMessages.join(' ')}` : ''}`);
-            onComplete(`Suscripción enviada a Mercado Pago (${result.providerStatus || 'pendiente'}). Estamos verificando el pago.`);
+            onComplete();
           } catch (caught) {
             if (!disposed) setError(caught instanceof Error ? caught.message : 'No se pudo crear la suscripción.');
           } finally {
@@ -81,11 +81,11 @@ export function BillingCardForm({ plan, amountCents, publicKey, onComplete }: {
   }, [plan, amountCents, publicKey, onComplete]);
 
   return <form id="billing-card-form" className="billing-card-form">
-    <h3>Datos de pago</h3>
-    <p>Los datos de la tarjeta se procesan en los campos seguros de Mercado Pago.</p>
+    <h3>Medio de pago</h3>
+    <p>Tu tarjeta se carga en los campos seguros de Mercado Pago.</p>
     <fieldset><legend>Número de tarjeta</legend><div id="billing-card-number" className="billing-card-field" /></fieldset>
-    <fieldset><legend>Vencimiento</legend><div id="billing-card-expiry" className="billing-card-field" /></fieldset>
-    <fieldset><legend>Código de seguridad</legend><div id="billing-card-cvv" className="billing-card-field" /></fieldset>
+    <div className="billing-form-row"><fieldset><legend>Vencimiento</legend><div id="billing-card-expiry" className="billing-card-field" /></fieldset>
+    <fieldset><legend>Código de seguridad</legend><div id="billing-card-cvv" className="billing-card-field" /></fieldset></div>
     <label>Nombre del titular<input id="billing-card-name" autoComplete="cc-name" required /></label>
     <label>Banco emisor<select id="billing-card-issuer" aria-label="Banco emisor" /></label>
     <label>Cuotas<select id="billing-card-installments" aria-label="Cuotas" /></label>

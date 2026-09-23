@@ -1915,6 +1915,25 @@ export default function Studio({
       setSaving(false);
     }
   };
+  const deleteProject = async () => {
+    if (!activeProject || saving) return;
+    const name = projects.find((item) => item.id === activeProject)?.name || 'este proyecto';
+    if (!window.confirm(`¿Eliminar “${name}” y todos sus modelos, planos y archivos? Esta acción no se puede deshacer.`)) return;
+    setSaving(true);
+    try {
+      await studioRequest({ action: 'delete-project', id: activeProject }, '', activeProject);
+      const nextId = projects.find((item) => item.id !== activeProject)?.id || '';
+      const next = await refresh(nextId, '');
+      const nextProject = next.project?.id || nextId;
+      window.history.replaceState({}, '', nextProject ? `/estudio?project=${encodeURIComponent(nextProject)}` : '/estudio');
+      changeVersion((next.versions as StoredVersion[]).at(-1)?.id || '');
+      showToast('Proyecto y archivos eliminados');
+    } catch (error) {
+      showToast((error as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
   const createClient = async () => {
     if (!newClientName.trim() || saving) return;
     setSaving(true);
@@ -2327,6 +2346,9 @@ export default function Studio({
                         }}
                       >
                         <FolderPlus /> Nuevo proyecto
+                      </button>
+                      <button type="button" disabled={saving} onClick={() => { close(); void deleteProject(); }}>
+                        Eliminar proyecto actual
                       </button>
                     </>
                   )
@@ -3393,8 +3415,8 @@ export default function Studio({
           <DialogTitle>Eliminar versión</DialogTitle>
           <DialogDescription>
             ¿Eliminar “{activeVersion?.name}”? Se borrarán sus comentarios,
-            medidas y planos. Las demás versiones y los comentarios generales
-            del proyecto se conservarán. Esta acción no se puede deshacer.
+            medidas, planos y archivos que ninguna otra versión use. Las demás
+            versiones se conservarán. Esta acción no se puede deshacer.
           </DialogDescription>
           <Button
             variant="outline"

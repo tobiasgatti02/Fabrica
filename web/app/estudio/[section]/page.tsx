@@ -2,6 +2,8 @@ import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import Workspace from '@/components/fabrica/workspace';
 import { getFabricaUser } from '@/features/auth/server';
+import { ownerAccessBlocked } from '@/features/billing/access';
+import { redirect } from 'next/navigation';
 import type { WorkspaceSection } from '@/features/workspace/client';
 import '../studio.css';
 import '../workspace.css';
@@ -50,6 +52,8 @@ export default async function WorkspacePage({
     notFound();
   const query = await searchParams;
   const user = await getFabricaUser();
+  if (user && !query.share && !query.invite && await ownerAccessBlocked(user.userId))
+    redirect('/estudio/facturacion');
   return (
     <Workspace
       section={section as WorkspaceSection}

@@ -53,7 +53,7 @@ export async function getUsage(db: Database, owner: string): Promise<Usage> {
     db.select({ value: sql<number>`count(distinct coalesce(${studioTeamMembers.user}, lower(${studioTeamMembers.email})))::integer` })
       .from(studioTeamMembers)
       .where(and(eq(studioTeamMembers.owner, owner), ne(studioTeamMembers.role, 'external'),
-        sql`${studioTeamMembers.accepted} is not null`)),
+        sql`(${studioTeamMembers.accepted} is not null or ${studioTeamMembers.inviteExpires} > ${Date.now()})`)),
     db.execute(sql`
       select coalesce(sum(files.size), 0)::bigint as bytes from (
         select distinct on (key) key, size from (
@@ -114,4 +114,11 @@ export async function assertBillingWritable(db: Database, owner: string) {
   const status = await getBillingStatus(db, owner);
   if (!canWrite(status.state)) throw new BillingLimitError('read_only');
   return status;
+}
+
+export function fitsPlan(usage: Usage, rights: PlanRights) {
+  return usage.projects <= rights.projects &&
+    usage.storageBytes <= rights.storageBytes &&
+    usage.professionals <= rights.professionals &&
+    (rights.clients === null || usage.clients <= rights.clients);
 }

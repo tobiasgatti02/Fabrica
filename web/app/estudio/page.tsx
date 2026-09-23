@@ -1,5 +1,7 @@
 import Studio from '@/components/fabrica/studio';
 import { getFabricaUser } from '@/features/auth/server';
+import { ownerAccessBlocked } from '@/features/billing/access';
+import { redirect } from 'next/navigation';
 import './studio.css';
 export const dynamic = 'force-dynamic';
 
@@ -24,6 +26,8 @@ export default async function StudioPage({
           ? 'No pudimos ingresar con Google. Intentá nuevamente.'
           : '';
   const user = await getFabricaUser();
+  if (user && !sharedToken && await ownerAccessBlocked(user.userId))
+    redirect('/estudio/facturacion');
   return (
     <Studio
       localPreview={import.meta.env.DEV}

@@ -1,6 +1,6 @@
 import { and, desc, eq } from 'drizzle-orm';
 import { billingAccounts, billingChanges, billingPriceVersions, billingSubscriptions } from '@/db/schema';
-import { getBillingStatus } from '@/features/billing/server';
+import { fitsPlan, getBillingStatus } from '@/features/billing/server';
 import { updateSubscription } from '@/features/billing/mercadopago';
 import { billingFailure, billingJson, requireBillingOwner } from '@/features/billing/http';
 
@@ -12,7 +12,13 @@ export async function POST(request: Request) {
     const status = await getBillingStatus(db, user.userId);
     const [price] = await db.select().from(billingPriceVersions).where(and(eq(billingPriceVersions.plan, body.plan), eq(billingPriceVersions.active, 1))).limit(1);
     const [subscription] = await db.select().from(billingSubscriptions).where(eq(billingSubscriptions.account, status.account.id)).orderBy(desc(billingSubscriptions.created)).limit(1);
-    if (!price || !subscription?.externalId) return billingJson({ error: 'No hay una suscripción activa para cambiar.' }, 409);
+    if (!price || !subscription?.externalId || status.state !== 'active') return billingJson({ error: 'No hay una suscripción activa para cambiar.' }, 409);
+    if (price.plan === status.account.plan) return billingJson({ error: 'Ya tenés este plan.' }, 409);
+    if (!fitsPlan(status.usage, { projects: price.projectLimit, storageBytes: price.storageLimitBytes,
+      professionals: price.professionalLimit, clients: price.clientLimit,
+      teamPermissions: Boolean(price.teamPermissions), advancedAdmin: Boolean(price.advancedAdmin),
+      prioritySupport: Boolean(price.prioritySupport) }))
+      return billingJson({ error: 'Tu uso actual supera los límites de ese plan. Liberá espacio o elegí otro.' }, 409);
     await updateSubscription(subscription.externalId, { auto_recurring: { transaction_amount: price.amountCents / 100, currency_id: price.currency } }, `change:${subscription.id}:${price.id}`);
     const now = Date.now();
     await db.update(billingSubscriptions).set({ priceVersion: price.id, amountCents: price.amountCents, currency: price.currency, updated: now }).where(eq(billingSubscriptions.id, subscription.id));

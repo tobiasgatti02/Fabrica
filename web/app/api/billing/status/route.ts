@@ -21,6 +21,7 @@ export async function GET(request: Request) {
       subscription: subscription ? {
         state: subscription.state, providerStatus: subscription.providerStatus,
         nextChargeAt: subscription.nextChargeAt,
+        amountCents: subscription.amountCents, currency: subscription.currency,
       } : null,
       lastCharge: charge ? {
         status: charge.providerStatus, amountCents: charge.amountCents,

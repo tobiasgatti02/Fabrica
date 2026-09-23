@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { getFabricaUser } from '@/features/auth/server';
 import { StudioTour } from '@/components/fabrica/studio-tour';
+import { RenewalReminder } from '@/components/billing/renewal-reminder';
 import './studio.css';
 import './studio-shell.css';
 
@@ -21,6 +22,7 @@ export default async function StudioLayout({
   return (
     <>
       {children}
+      {user && <RenewalReminder />}
       {(user || import.meta.env.DEV) && (
         <StudioTour account={user?.userId || 'local-preview'} />
       )}

@@ -6,7 +6,7 @@ import { getDb } from '@/db';
 import { createStarterProject } from '@/features/studio/server/seed';
 import { safeReferenceUrl } from '@/features/workspace/inspiration-scene';
 import { INSPIRATION_FILE_LIMIT } from '@/features/files/validation';
-import { assertBillingAllowance } from '@/features/billing/server';
+import { assertBillingAllowance, assertBillingWritable, getBillingStatus } from '@/features/billing/server';
 import {
   studioAssets,
   studioAssetUploads,
@@ -153,6 +153,8 @@ function fail(error: unknown) {
     return json({ error: 'Tu plan está en modo lectura. Cambiá de plan para continuar.' }, 403);
   if (billingError.startsWith('billing_limit_'))
     return json({ error: 'Alcanzaste el límite de tu plan. Cambiá de plan para continuar.' }, 409);
+  if (billingError === 'billing_feature_team_permissions')
+    return json({ error: 'Los permisos personalizados están disponibles en Estudio y Equipo.' }, 403);
   if ((error as Error).message === 'INSPIRATION_FILE_LIMIT')
     return json(
       { error: 'Cada archivo de la mesa de trabajo puede pesar hasta 20 MB.' },
@@ -711,6 +713,7 @@ export async function POST(request: Request) {
     const ctx = await context(request);
     const project = ctx.project;
     const action = string(body.action);
+    await assertBillingWritable(db, project.owner);
     const actionArea: Record<string, AreaKey> = {
       'update-project': 'panel',
       'save-task': 'panel',
@@ -1408,6 +1411,8 @@ export async function POST(request: Request) {
       return json({ invite: token });
     } else if (action === 'update-member-permissions') {
       if (!ctx.accountOwner) throw new Error('403');
+      const billing = await getBillingStatus(db, ctx.userId);
+      if (!billing.rights.teamPermissions) throw new Error('billing_feature_team_permissions');
       const id = required(body.id);
       const raw = body.permissions;
       if (!raw || typeof raw !== 'object' || Array.isArray(raw))
@@ -1473,6 +1478,10 @@ export async function POST(request: Request) {
           ]),
         ]),
       );
+      const billing = await getBillingStatus(db, ctx.userId);
+      if (!billing.rights.teamPermissions &&
+        JSON.stringify(permissions) !== JSON.stringify(defaultPermissionsForRole(role)))
+        throw new Error('billing_feature_team_permissions');
       const identityChanged =
         email !== member.email ||
         (role === 'external') !== (member.role === 'external');
@@ -1519,6 +1528,7 @@ export async function PUT(request: Request) {
     if (ctx.permissions.inspiracion !== 'edit' && !ctx.guest)
       throw new Error('403');
     const db = database();
+    await assertBillingWritable(db, ctx.project.owner);
     const params = new URL(request.url).searchParams;
     const [upload] = await db
       .select()
