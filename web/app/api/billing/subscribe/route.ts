@@ -1,6 +1,6 @@
 import { env } from 'cloudflare:workers';
-import { and, eq } from 'drizzle-orm';
-import { billingAccounts, billingPriceVersions, billingSubscriptions } from '@/db/schema';
+import { and, desc, eq } from 'drizzle-orm';
+import { billingPriceVersions, billingSubscriptions } from '@/db/schema';
 import { getBillingStatus } from '@/features/billing/server';
 import { createSubscription } from '@/features/billing/mercadopago';
 import { billingFailure, billingJson, requireBillingOwner } from '@/features/billing/http';
@@ -18,8 +18,13 @@ export async function POST(request: Request) {
       throw new Error('billing_base_url_invalid');
     if (env.MERCADOPAGO_TEST_MODE === 'true' && !body.payerEmail.toLowerCase().endsWith('@testuser.com'))
       return billingJson({ error: 'Para pruebas, usá el correo del comprador de prueba de Mercado Pago.' }, 400);
-    if (status.account.state === 'pending' || status.account.state === 'active')
-      return billingJson({ error: 'Ya hay una suscripción en curso para este estudio.' }, 409);
+    const [latest] = await db.select().from(billingSubscriptions)
+      .where(eq(billingSubscriptions.account, status.account.id))
+      .orderBy(desc(billingSubscriptions.created)).limit(1);
+    if (['active', 'canceling'].includes(status.state))
+      return billingJson({ error: 'Ya tenés una suscripción vigente. Cambiá de plan desde Facturación.' }, 409);
+    if (latest?.state === 'pending')
+      return billingJson({ error: 'Ya hay un pago en verificación. Esperá la confirmación o cancelá ese intento para volver a probar.' }, 409);
     const [price] = await db.select().from(billingPriceVersions).where(and(
       eq(billingPriceVersions.plan, body.plan), eq(billingPriceVersions.active, 1),
     )).limit(1);
@@ -41,9 +46,6 @@ export async function POST(request: Request) {
       state: 'pending', currency: price.currency, amountCents: price.amountCents,
       created: Date.now(), updated: Date.now(),
     });
-    await db.update(billingAccounts).set({
-      plan: price.plan, priceVersion: price.id, state: 'pending', updated: Date.now(),
-    }).where(eq(billingAccounts.id, status.account.id));
     return billingJson({ ok: true, subscriptionId, providerStatus: subscription.status }, 201);
   } catch (error) { return billingFailure(error); }
 }

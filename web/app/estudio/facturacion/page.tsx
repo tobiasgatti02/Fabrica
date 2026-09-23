@@ -11,7 +11,7 @@ type BillingData = {
   state: string; plan: string; trialEnds: number; paidThrough: number | null; cancelAt: number | null;
   rights: Rights; usage: { projects: number; storageBytes: number; professionals: number; clients: number };
   lastCharge: { status: string; amountCents: number; currency: string; occurredAt: number } | null;
-  subscription: { state: string; providerStatus: string | null; nextChargeAt: number | null; amountCents: number; currency: string } | null;
+  subscription: { state: string; providerStatus: string | null; nextChargeAt: number | null; amountCents: number; currency: string; created: number } | null;
 };
 type Plan = { id: string; key: string; amountCents: number; currency: string; rights: Rights };
 type PlansData = { plans: Plan[]; publicKey: string | null; testMode: boolean };
@@ -63,7 +63,7 @@ export default function BillingPage() {
   }, [refreshStatus]);
 
   useEffect(() => {
-    if (!pendingPayment && status?.state !== 'pending') return;
+    if (!pendingPayment && status?.subscription?.state !== 'pending') return;
     let active = true;
     const check = async () => {
       try {
@@ -72,7 +72,9 @@ export default function BillingPage() {
         if (pendingPayment && next.state === 'active' && next.lastCharge?.status === 'approved') {
           sessionStorage.removeItem('fabrica-payment-pending');
           setPendingPayment(false); setSelectedPlan(null); setSuccessOpen(true); setMessage('');
-        } else if (pendingPayment && ['canceled', 'expired', 'paused'].includes(next.state)) {
+        } else if (next.state === 'active') {
+          setSelectedPlan(null);
+        } else if (pendingPayment && next.subscription?.state !== 'pending' && next.state !== 'active') {
           sessionStorage.removeItem('fabrica-payment-pending');
           setPendingPayment(false); setMessage('El pago no se confirmó. Revisá el estado e intentá nuevamente.');
         }
@@ -81,7 +83,7 @@ export default function BillingPage() {
     const timer = window.setInterval(() => void check(), 3000);
     void check();
     return () => { active = false; window.clearInterval(timer); };
-  }, [pendingPayment, refreshStatus, status?.state]);
+  }, [pendingPayment, refreshStatus, status?.subscription?.state]);
 
   const onPaymentSubmitted = useCallback(() => {
     sessionStorage.setItem('fabrica-payment-pending', '1');
@@ -95,7 +97,8 @@ export default function BillingPage() {
 
   const expiry = status.state === 'trialing' ? status.trialEnds : status.cancelAt || status.subscription?.nextChargeAt || status.paidThrough;
   const warning = expiry && ['trialing', 'active', 'canceling'].includes(status.state) && daysUntil(expiry) <= 3;
-  const active = Boolean(status.subscription && ['active', 'canceling'].includes(status.state));
+  const active = Boolean(status.subscription && status.state === 'active');
+  const verifying = status.subscription?.state === 'pending';
   const changePlan = async () => {
     if (!selectedPlan) return;
     setBusy(true); setMessage('');
@@ -115,7 +118,7 @@ export default function BillingPage() {
     <header className="billing-hero"><div><p className="workspace-eyebrow">TU MEMBRESÍA</p><h1>Un estudio que crece<br /><em>con tus proyectos.</em></h1><p>Revisá tu capacidad, los próximos cobros y tu plan en un solo lugar.</p></div><div className="billing-status-card"><span>PLAN ACTUAL</span><strong>{names[status.plan] || status.plan}</strong><p><i className={`billing-dot billing-dot--${status.state}`} />{states[status.state] || status.state}</p>{expiry && <small>{status.state === 'trialing' ? 'Prueba hasta el ' : 'Próxima fecha: '}{date(expiry)}</small>}</div></header>
     {warning && <div className="billing-notice" role="status"><Clock3 size={20} /><p>{status.state === 'trialing' ? 'Tu prueba' : status.state === 'canceling' ? 'Tu acceso' : 'Tu próximo cobro'} {daysUntil(expiry) === 0 ? 'vence hoy' : `vence en ${daysUntil(expiry)} ${daysUntil(expiry) === 1 ? 'día' : 'días'}`}. {status.state === 'trialing' ? 'Elegí un plan para seguir trabajando.' : status.state === 'canceling' ? 'Podés volver a suscribirte para continuar.' : 'Verificá tu medio de pago para evitar interrupciones.'}</p></div>}
     {['grace_period', 'expired', 'canceled', 'paused'].includes(status.state) && <div className="billing-notice billing-notice--urgent" role="alert"><Clock3 size={20} /><p>El acceso de edición está suspendido. Elegí un plan para volver a trabajar en el estudio.</p></div>}
-    {(pendingPayment || status.state === 'pending') && <div className="billing-notice" role="status"><Clock3 size={20} /><p>Estamos esperando la confirmación de Mercado Pago. Esta página se actualiza automáticamente.</p></div>}
+    {verifying && <div className="billing-notice" role="status"><Clock3 size={20} /><div><p>Mercado Pago está verificando el pago de {names[plans.find((plan) => plan.id === selectedPlan?.id)?.key || status.plan] || 'tu plan'}. Tu prueba sigue disponible mientras tanto.</p>{Date.now() - status.subscription!.created >= 120_000 && <button type="button" className="billing-retry" disabled={busy} onClick={async () => { setBusy(true); try { const response = await fetch('/api/billing/reset-pending', { method: 'POST' }); const result = await response.json() as { error?: string }; if (!response.ok) throw new Error(result.error || 'No se pudo cancelar el intento.'); sessionStorage.removeItem('fabrica-payment-pending'); setPendingPayment(false); setMessage('El intento anterior se canceló. Podés ingresar una tarjeta nueva.'); await refreshStatus(); } catch (error) { setMessage(error instanceof Error ? error.message : 'No se pudo reintentar.'); await refreshStatus(); } finally { setBusy(false); } }}>Cancelar intento y volver a probar</button>}</div></div>}
     {message && <output className="billing-message" role="status">{message}</output>}
 
     <section className="billing-section billing-current"><div className="billing-section-heading"><p className="workspace-eyebrow">01 / CAPACIDAD</p><h2>Uso del estudio</h2><p>Se cuentan los archivos de la mesa de trabajo, los modelos 3D y los planos vinculados a tus proyectos.</p></div><div className="billing-usage-card">
@@ -132,11 +135,11 @@ export default function BillingPage() {
         <div className="billing-plan-top"><span>{plan.key === 'estudio' ? 'PARA ESTUDIOS EN MARCHA' : 'SUSCRIPCIÓN MENSUAL'}</span>{current && <span className="billing-current-tag"><Check size={14} /> Actual</span>}</div>
         <h3>{names[plan.key] || plan.key}</h3><p className="billing-plan-price">{money(plan.amountCents, plan.currency)} <small>/ mes</small></p>
         <ul><li><Check size={15} />{plan.rights.projects} proyectos</li><li><HardDrive size={15} />{bytes(plan.rights.storageBytes)} entre archivos y modelos</li><li><UsersRound size={15} />{plan.rights.professionals} profesionales</li><li><Check size={15} />{plan.rights.clients === null ? 'Clientes ilimitados' : `${plan.rights.clients} clientes`}</li>{plan.rights.teamPermissions && <li><Check size={15} />Permisos por área</li>}{plan.rights.advancedAdmin && <li><Check size={15} />Administración avanzada</li>}{plan.rights.prioritySupport && <li><Check size={15} />Soporte prioritario</li>}</ul>
-        <button type="button" disabled={current || !publicKey || busy || pendingPayment || status.state === 'pending' || (active && overLimit)} onClick={() => { setSelectedPlan(plan); setMessage(''); requestAnimationFrame(() => document.getElementById('billing-checkout')?.scrollIntoView({ behavior: 'smooth' })); }}>{current ? 'Tu plan actual' : overLimit && active ? 'Superás este límite' : 'Elegir plan'} {!current && <ArrowRight size={17} />}</button>
+        <button type="button" disabled={current || !publicKey || busy || verifying || status.state === 'canceling' || (active && overLimit)} onClick={() => { setSelectedPlan(plan); setMessage(''); requestAnimationFrame(() => document.getElementById('billing-checkout')?.scrollIntoView({ behavior: 'smooth' })); }}>{current ? 'Tu plan actual' : verifying ? 'Verificando pago' : status.state === 'canceling' ? 'Acceso vigente' : overLimit && active ? 'Superás este límite' : 'Elegir plan'} {!current && <ArrowRight size={17} />}</button>
       </article>;
     })}</div></section>
 
-    {selectedPlan && !pendingPayment && status.state !== 'pending' && <section className="billing-checkout" id="billing-checkout"><div className="billing-checkout-heading"><div><p className="workspace-eyebrow">03 / CONFIRMACIÓN</p><h2>{active ? 'Cambiar a' : 'Empezar con'} {names[selectedPlan.key] || selectedPlan.key}</h2><p>{money(selectedPlan.amountCents, selectedPlan.currency)} por mes. {active ? 'Confirmá el nuevo precio y capacidad.' : 'Completá los datos para activar la suscripción.'}</p></div><button type="button" className="billing-close" aria-label="Cerrar formulario" onClick={() => setSelectedPlan(null)}><X size={20} /></button></div>
+    {selectedPlan && !verifying && status.state !== 'canceling' && <section className="billing-checkout" id="billing-checkout"><div className="billing-checkout-heading"><div><p className="workspace-eyebrow">03 / CONFIRMACIÓN</p><h2>{active ? 'Cambiar a' : 'Empezar con'} {names[selectedPlan.key] || selectedPlan.key}</h2><p>{money(selectedPlan.amountCents, selectedPlan.currency)} por mes. {active ? 'Confirmá el nuevo precio y capacidad.' : 'Completá los datos para activar la suscripción.'}</p></div><button type="button" className="billing-close" aria-label="Cerrar formulario" onClick={() => setSelectedPlan(null)}><X size={20} /></button></div>
       {active ? <button className="billing-primary" type="button" disabled={busy} onClick={() => void changePlan()}>{busy ? 'Actualizando…' : 'Confirmar cambio'} <ArrowRight size={17} /></button> : <>{testMode && <p className="billing-test-note">Entorno de prueba: usá una cuenta compradora y una tarjeta de prueba de Mercado Pago.</p>}{sdkReady && publicKey ? <BillingCardForm key={selectedPlan.id} plan={selectedPlan.key} amountCents={selectedPlan.amountCents} publicKey={publicKey} onComplete={onPaymentSubmitted} /> : <p>Cargando formulario seguro…</p>}</>}
     </section>}
 

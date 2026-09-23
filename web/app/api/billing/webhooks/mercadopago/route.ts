@@ -1,6 +1,6 @@
 import { env } from 'cloudflare:workers';
 import { eq } from 'drizzle-orm';
-import { billingAccounts, billingCharges, billingSubscriptions, billingWebhookEvents } from '@/db/schema';
+import { billingAccounts, billingCharges, billingPriceVersions, billingSubscriptions, billingWebhookEvents } from '@/db/schema';
 import { getAuthorizedPayment, getSubscription, MercadoPagoRequestError, verifyWebhook } from '@/features/billing/mercadopago';
 import { billingDb } from '@/features/billing/http';
 
@@ -56,7 +56,9 @@ export async function POST(request: Request) {
     }
     const provider = await getSubscription(externalSubscriptionId);
     const providerStatus = resourceValue(provider.status) || 'pending';
-    const paymentStatus = payment ? resourceValue(payment.status) || 'pending' : null;
+    const paymentStatus = payment
+      ? resourceValue((payment.payment as Record<string, unknown> | undefined)?.status) || 'pending'
+      : null;
     const now = Date.now();
     const paidThrough = dateValue(provider.next_payment_date);
     const [account] = await db.select().from(billingAccounts)
@@ -64,30 +66,36 @@ export async function POST(request: Request) {
     if (!account) throw new Error('billing_account_unavailable');
 
     let state = account.state;
+    let subscriptionState = subscription.state;
     let graceEnds = account.graceEnds;
     let nextPaidThrough = account.paidThrough;
     if (paymentStatus === 'approved')
       nextPaidThrough = Math.max(account.paidThrough || 0, paidThrough || 0) || null;
     if (providerStatus === 'cancelled' || providerStatus === 'canceled') {
-      state = nextPaidThrough && nextPaidThrough > now ? 'canceling' : 'canceled';
+      state = nextPaidThrough && nextPaidThrough > now ? 'canceling' : account.trialEnds > now ? 'trialing' : 'expired';
+      subscriptionState = 'canceled';
     } else if (providerStatus === 'paused') {
-      state = 'paused';
+      state = nextPaidThrough && nextPaidThrough > now ? 'paused' : account.trialEnds > now ? 'trialing' : 'expired';
+      subscriptionState = 'paused';
     } else if (paymentStatus === 'approved') {
       state = nextPaidThrough && nextPaidThrough > now ? 'active' : 'pending';
+      subscriptionState = state;
       if (state === 'active') graceEnds = null;
-    } else if (paymentStatus === 'rejected') {
-      if (!account.paidThrough || account.paidThrough <= now) {
-        state = 'grace_period';
-        graceEnds = now + 5 * 86_400_000;
-      }
+    } else if (paymentStatus === 'rejected' && (!account.paidThrough || account.paidThrough <= now)) {
+      state = account.trialEnds > now ? 'trialing' : 'expired';
+      subscriptionState = 'rejected';
     }
 
     await db.update(billingSubscriptions).set({
-      providerStatus, state, nextChargeAt: paidThrough, currentPeriodEnd: nextPaidThrough,
+      providerStatus, state: subscriptionState, nextChargeAt: paidThrough, currentPeriodEnd: nextPaidThrough,
       updated: now,
     }).where(eq(billingSubscriptions.id, subscription.id));
+    const [price] = state === 'active'
+      ? await db.select().from(billingPriceVersions).where(eq(billingPriceVersions.id, subscription.priceVersion)).limit(1)
+      : [];
     await db.update(billingAccounts).set({
       state, graceEnds, paidThrough: nextPaidThrough, updated: now,
+      ...(price ? { plan: price.plan, priceVersion: price.id } : {}),
     }).where(eq(billingAccounts.id, subscription.account));
     if (payment) await db.insert(billingCharges).values({
       id: crypto.randomUUID(), subscription: subscription.id,

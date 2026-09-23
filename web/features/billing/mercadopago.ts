@@ -126,3 +126,7 @@ export function updateSubscription(id: string, body: Record<string, unknown>, id
 export function getAuthorizedPayment(id: string) {
   return request(`/authorized_payments/${encodeURIComponent(id)}`);
 }
+
+export function searchAuthorizedPayments(subscriptionId: string) {
+  return request(`/authorized_payments/search?preapproval_id=${encodeURIComponent(subscriptionId)}`);
+}
