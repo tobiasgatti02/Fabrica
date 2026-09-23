@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState, type SyntheticEvent } from 'react';
+import { useEffect, useMemo, useState, type SyntheticEvent } from 'react';
 import {
   ArrowRight,
   Banknote,
@@ -9,6 +9,9 @@ import {
   Circle,
   Clock3,
   Copy,
+  ChevronDown,
+  ChevronUp,
+  Settings2,
   FolderPlus,
   ListTodo,
   Pencil,
@@ -17,7 +20,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import type { WorkspaceViewProps } from './workspace';
-import ClientPortal from './workspace-client-portal';
+import ClientPortal, { type PortalView } from './workspace-client-portal';
 import {
   shortDate,
   stageLabels,
@@ -25,6 +28,42 @@ import {
   type WorkspaceTask,
 } from '@/features/workspace/client';
 
+type PanelView = PortalView | 'proyectos' | 'tareas' | 'presupuesto';
+const panelViews = [
+  { id: 'resumen', label: 'Resumen', icon: ListTodo },
+  { id: 'proyectos', label: 'Proyectos', icon: FolderPlus },
+  { id: 'tareas', label: 'Tareas', icon: Check },
+  { id: 'calendario', label: 'Calendario', icon: CalendarDays },
+  { id: 'cronograma', label: 'Cronograma', icon: Clock3 },
+  { id: 'avance', label: 'Avance', icon: Circle },
+  { id: 'presupuesto', label: 'Presupuesto', icon: Banknote },
+] as const;
+const defaultViewOrder: PanelView[] = panelViews.map((item) => item.id);
+const isPanelView = (value: unknown): value is PanelView =>
+  typeof value === 'string' && defaultViewOrder.includes(value as PanelView);
+const portalViews: PanelView[] = ['calendario', 'cronograma', 'avance'];
+function readViewPreferences(owner: string) {
+  const defaults = { order: defaultViewOrder, hidden: [] as PanelView[] };
+  try {
+    const saved = JSON.parse(
+      localStorage.getItem(`fabrica:panel-views:${owner}`) || '{}',
+    ) as {
+      order?: unknown[];
+      hidden?: unknown[];
+    };
+    const order = Array.isArray(saved.order)
+      ? saved.order.filter(isPanelView)
+      : [];
+    return {
+      order: [...new Set([...order, ...defaultViewOrder])],
+      hidden: Array.isArray(saved.hidden)
+        ? saved.hidden.filter(isPanelView).filter((item) => item !== 'resumen')
+        : [],
+    };
+  } catch {
+    return defaults;
+  }
+}
 const stageOrder = Object.keys(stageLabels);
 const emptyTask = {
   id: '',
@@ -64,6 +103,44 @@ export default function Panel({
   notify,
   openProject,
 }: WorkspaceViewProps) {
+  const [view, setView] = useState<PanelView>('resumen');
+  const [viewOrder, setViewOrder] = useState<PanelView[]>(defaultViewOrder);
+  const [hiddenViews, setHiddenViews] = useState<PanelView[]>([]);
+  const [customizeOpen, setCustomizeOpen] = useState(false);
+  const preferencesKey = `fabrica:panel-views:${data.project.owner}`;
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const saved = readViewPreferences(data.project.owner);
+      setViewOrder(saved.order);
+      setHiddenViews(saved.hidden);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [data.project.owner]);
+  const savePreferences = (order: PanelView[], hidden: PanelView[]) => {
+    setViewOrder(order);
+    setHiddenViews(hidden);
+    try {
+      localStorage.setItem(preferencesKey, JSON.stringify({ order, hidden }));
+    } catch {
+      /* The current session can still be customized without storage. */
+    }
+  };
+  const toggleView = (id: PanelView) => {
+    const next = hiddenViews.includes(id)
+      ? hiddenViews.filter((item) => item !== id)
+      : [...hiddenViews, id];
+    savePreferences(viewOrder, next);
+    if (view === id && next.includes(id)) setView('resumen');
+  };
+  const moveView = (id: PanelView, direction: -1 | 1) => {
+    const index = viewOrder.indexOf(id);
+    const target = index + direction;
+    if (target < 0 || target >= viewOrder.length) return;
+    const next = [...viewOrder];
+    [next[index], next[target]] = [next[target], next[index]];
+    savePreferences(next, hiddenViews);
+  };
+  const selectPortalView = (next: PortalView) => setView(next);
   const [editingProject, setEditingProject] = useState(false);
   const [projectDraft, setProjectDraft] = useState({
     stage: data.project.stage,
@@ -280,40 +357,97 @@ export default function Panel({
 
   return (
     <div className="workspace-content panel-page">
-      {data.viewer.guest ? (
-        <section
-          className="panel-metrics client-metrics"
-          aria-label="Resumen del proyecto"
-        >
-          <div>
-            <span>ETAPA ACTUAL</span>
-            <strong>{stageLabels[data.project.stage] || 'Idea'}</strong>
-            <small>Estado del proyecto</small>
-          </div>
-          <div>
-            <span>AVANCE ESTIMADO</span>
-            <strong>
-              {progress(data.project.id) === null
-                ? '—'
-                : `${progress(data.project.id)}%`}
-            </strong>
-            <small>
-              {progress(data.project.id) === null
-                ? 'Próximamente'
-                : 'Del trabajo total'}
-            </small>
-          </div>
-          <div>
-            <span>ENTREGA PREVISTA</span>
-            <strong>
-              {data.project.dueDate
-                ? shortDate(data.project.dueDate)
-                : 'A definir'}
-            </strong>
-            <small>Fecha estimada</small>
-          </div>
-        </section>
-      ) : (
+      <header className="panel-page-header">
+        <div>
+          <p className="workspace-eyebrow">
+            ESPACIO DE TRABAJO / {data.project.name}
+          </p>
+          <h1>{data.project.name}</h1>
+          <p>
+            {data.project.description ||
+              'Organizá el trabajo, las fechas y las decisiones del proyecto.'}
+          </p>
+        </div>
+        <div className="panel-page-header-meta">
+          <span>{stageLabels[data.project.stage] || 'Proyecto'}</span>
+          {data.project.dueDate && (
+            <small>Entrega {shortDate(data.project.dueDate)}</small>
+          )}
+        </div>
+      </header>
+      <div className="panel-views-bar">
+        <nav className="panel-views" aria-label="Vistas del panel">
+          {viewOrder
+            .filter((id) => !hiddenViews.includes(id))
+            .map((id) => {
+              const item = panelViews.find((candidate) => candidate.id === id)!;
+              const Icon = item.icon;
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  aria-current={view === id ? 'page' : undefined}
+                  onClick={() => setView(id)}
+                >
+                  <Icon size={15} aria-hidden="true" />
+                  {item.label}
+                </button>
+              );
+            })}
+        </nav>
+        <div className="panel-view-customize">
+          <button
+            type="button"
+            className="panel-customize-trigger"
+            aria-expanded={customizeOpen}
+            aria-controls="panel-view-settings"
+            onClick={() => setCustomizeOpen((value) => !value)}
+          >
+            <Settings2 size={16} /> Personalizar
+          </button>
+          {customizeOpen && (
+            <div className="panel-customize-menu" id="panel-view-settings">
+              <strong>Vistas del panel</strong>
+              <p>Mostrá y ordená las vistas de tu estudio.</p>
+              {viewOrder.map((id, index) => {
+                const item = panelViews.find(
+                  (candidate) => candidate.id === id,
+                )!;
+                return (
+                  <div className="panel-customize-row" key={id}>
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={!hiddenViews.includes(id)}
+                        disabled={id === 'resumen'}
+                        onChange={() => toggleView(id)}
+                      />
+                      {item.label}
+                    </label>
+                    <button
+                      type="button"
+                      aria-label={`Subir ${item.label}`}
+                      disabled={index === 0}
+                      onClick={() => moveView(id, -1)}
+                    >
+                      <ChevronUp size={15} />
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={`Bajar ${item.label}`}
+                      disabled={index === viewOrder.length - 1}
+                      onClick={() => moveView(id, 1)}
+                    >
+                      <ChevronDown size={15} />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+      {view === 'resumen' && (
         <section className="panel-metrics" aria-label="Resumen del estudio">
           <div>
             <span>01 / PROYECTOS</span>
@@ -339,7 +473,7 @@ export default function Panel({
           </div>
         </section>
       )}
-      {!data.viewer.guest && (
+      {view === 'proyectos' && (
         <section className="workspace-section">
           <div className="workspace-section-head">
             <div>
@@ -398,438 +532,448 @@ export default function Panel({
           </div>
         </section>
       )}
-      <section className="workspace-section panel-detail" id="project-detail">
-        <div className="workspace-section-head">
-          <div>
-            <p className="workspace-eyebrow">PROYECTO SELECCIONADO</p>
-            <h2>{data.project.name}</h2>
-            <p className="workspace-muted">
-              {data.viewer.guest
-                ? 'Seguimiento del proyecto'
-                : clientNameFor(data.project.client)}
-            </p>
-          </div>
-          {data.viewer.permissions.panel === 'edit' && (
-            <div className="panel-detail-actions">
-              <button
-                type="button"
-                className="workspace-secondary"
-                onClick={() => void copySummary()}
-              >
-                <Copy size={15} /> Copiar resumen
-              </button>
-              <button
-                className="workspace-secondary"
-                onClick={() => {
-                  setProjectDraft({
-                    stage: data.project.stage,
-                    description: data.project.description,
-                    progress:
-                      data.project.progress === null
-                        ? ''
-                        : String(data.project.progress),
-                    startDate: data.project.startDate || '',
-                    dueDate: data.project.dueDate || '',
-                  });
-                  setEditingProject((value) => !value);
-                }}
-              >
-                <Pencil size={15} />{' '}
-                {editingProject ? 'Cerrar edición' : 'Editar seguimiento'}
-              </button>
+      {view === 'resumen' && (
+        <section className="workspace-section panel-detail" id="project-detail">
+          <div className="workspace-section-head">
+            <div>
+              <p className="workspace-eyebrow">PROYECTO SELECCIONADO</p>
+              <h2>{data.project.name}</h2>
+              <p className="workspace-muted">
+                {data.viewer.guest
+                  ? 'Seguimiento del proyecto'
+                  : clientNameFor(data.project.client)}
+              </p>
             </div>
-          )}
-        </div>
-        {editingProject && (
-          <div className="workspace-form-card">
-            <div className="workspace-form-grid">
-              <label>
-                Etapa
-                <select
-                  value={projectDraft.stage}
-                  onChange={(event) =>
-                    setProjectDraft({
-                      ...projectDraft,
-                      stage: event.target.value,
-                    })
-                  }
+            {data.viewer.permissions.panel === 'edit' && (
+              <div className="panel-detail-actions">
+                <button
+                  type="button"
+                  className="workspace-secondary"
+                  onClick={() => void copySummary()}
                 >
-                  {stageOrder.map((stage) => (
-                    <option key={stage} value={stage}>
-                      {stageLabels[stage]}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Inicio
-                <input
-                  type="date"
-                  value={projectDraft.startDate}
-                  onChange={(event) =>
+                  <Copy size={15} /> Copiar resumen
+                </button>
+                <button
+                  className="workspace-secondary"
+                  onClick={() => {
                     setProjectDraft({
-                      ...projectDraft,
-                      startDate: event.target.value,
-                    })
-                  }
-                />
-              </label>
-              <label>
-                Entrega prevista
-                <input
-                  type="date"
-                  value={projectDraft.dueDate}
-                  onChange={(event) =>
-                    setProjectDraft({
-                      ...projectDraft,
-                      dueDate: event.target.value,
-                    })
-                  }
-                />
-              </label>
-            </div>
-            <label>
-              Avance estimado (opcional)
-              <input
-                type="number"
-                min="0"
-                max="100"
-                placeholder="Si queda vacío, se calcula con tareas"
-                value={projectDraft.progress}
-                onChange={(event) =>
-                  setProjectDraft({
-                    ...projectDraft,
-                    progress: event.target.value,
-                  })
-                }
-              />
-            </label>
-            <label>
-              Nota del proyecto
-              <textarea
-                rows={3}
-                placeholder="Objetivos, contexto o próximos pasos"
-                value={projectDraft.description}
-                onChange={(event) =>
-                  setProjectDraft({
-                    ...projectDraft,
-                    description: event.target.value,
-                  })
-                }
-              />
-            </label>
-            <button
-              className="workspace-primary"
-              disabled={busy}
-              onClick={() => void saveProject()}
-            >
-              Guardar seguimiento
-            </button>
-          </div>
-        )}
-        <div className="panel-project-summary">
-          <div>
-            <span>ETAPA ACTUAL</span>
-            <strong>{stageLabels[data.project.stage] || 'Idea'}</strong>
-          </div>
-          <div>
-            <span>INICIO</span>
-            <strong>{shortDate(data.project.startDate)}</strong>
-          </div>
-          <div>
-            <span>ENTREGA PREVISTA</span>
-            <strong>{shortDate(data.project.dueDate)}</strong>
-          </div>
-          <div>
-            <span>AVANCE</span>
-            <strong>
-              {progress(data.project.id) === null
-                ? 'Sin definir'
-                : `${progress(data.project.id)}%`}
-            </strong>
-          </div>
-        </div>
-        {data.project.description && (
-          <p className="panel-description">{data.project.description}</p>
-        )}
-        <div className="panel-stage-track" aria-label="Etapas del proyecto">
-          {stageOrder.map((stage, index) => (
-            <span
-              key={stage}
-              className={
-                index <= stageOrder.indexOf(data.project.stage) ? 'active' : ''
-              }
-              title={stageLabels[stage]}
-            />
-          ))}
-        </div>
-      </section>
-      <section className="workspace-section panel-budget" id="presupuesto">
-        <div className="workspace-section-head">
-          <div>
-            <p className="workspace-eyebrow">CONTROL DEL PROYECTO</p>
-            <h2>Presupuesto y decisiones</h2>
-            <p className="workspace-muted">
-              Lo que se define en el diseño, sin perder de vista su impacto.
-            </p>
-          </div>
-          {data.viewer.permissions.panel === 'edit' && (
-            <button
-              className="workspace-primary"
-              onClick={() => {
-                setBudgetDraft(emptyBudgetItem);
-                setShowBudgetForm((value) => !value);
-              }}
-            >
-              <Plus size={17} /> Agregar partida
-            </button>
-          )}
-        </div>
-        {showBudgetForm && (
-          <form
-            className="workspace-form-card panel-budget-form"
-            onSubmit={saveBudgetItem}
-          >
-            <div className="workspace-form-grid">
-              <label className="wide">
-                Partida
-                <input
-                  required
-                  maxLength={160}
-                  placeholder="Ej. Mobiliario de cocina"
-                  value={budgetDraft.title}
-                  onChange={(event) =>
-                    setBudgetDraft({
-                      ...budgetDraft,
-                      title: event.target.value,
-                    })
-                  }
-                />
-              </label>
-              <label>
-                Rubro
-                <input
-                  required
-                  maxLength={80}
-                  placeholder="Cocina"
-                  value={budgetDraft.category}
-                  onChange={(event) =>
-                    setBudgetDraft({
-                      ...budgetDraft,
-                      category: event.target.value,
-                    })
-                  }
-                />
-              </label>
-              <label>
-                Estimado
-                <input
-                  required
-                  min="0"
-                  step="1"
-                  type="number"
-                  value={budgetDraft.planned}
-                  onChange={(event) =>
-                    setBudgetDraft({
-                      ...budgetDraft,
-                      planned: event.target.value,
-                    })
-                  }
-                />
-              </label>
-              <label>
-                Comprometido
-                <input
-                  required
-                  min="0"
-                  step="1"
-                  type="number"
-                  value={budgetDraft.committed}
-                  onChange={(event) =>
-                    setBudgetDraft({
-                      ...budgetDraft,
-                      committed: event.target.value,
-                    })
-                  }
-                />
-              </label>
-              <label>
-                Estado
-                <select
-                  value={budgetDraft.status}
-                  onChange={(event) =>
-                    setBudgetDraft({
-                      ...budgetDraft,
-                      status: event.target.value,
-                    })
-                  }
+                      stage: data.project.stage,
+                      description: data.project.description,
+                      progress:
+                        data.project.progress === null
+                          ? ''
+                          : String(data.project.progress),
+                      startDate: data.project.startDate || '',
+                      dueDate: data.project.dueDate || '',
+                    });
+                    setEditingProject((value) => !value);
+                  }}
                 >
-                  {Object.entries(budgetStatusLabels).map(([status, label]) => (
-                    <option key={status} value={status}>
-                      {label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="budget-visible-toggle">
-                Visible para el cliente
-                <span>
-                  <input
-                    type="checkbox"
-                    checked={budgetDraft.clientVisible}
+                  <Pencil size={15} />{' '}
+                  {editingProject ? 'Cerrar edición' : 'Editar seguimiento'}
+                </button>
+              </div>
+            )}
+          </div>
+          {editingProject && (
+            <div className="workspace-form-card">
+              <div className="workspace-form-grid">
+                <label>
+                  Etapa
+                  <select
+                    value={projectDraft.stage}
                     onChange={(event) =>
-                      setBudgetDraft({
-                        ...budgetDraft,
-                        clientVisible: event.target.checked,
+                      setProjectDraft({
+                        ...projectDraft,
+                        stage: event.target.value,
+                      })
+                    }
+                  >
+                    {stageOrder.map((stage) => (
+                      <option key={stage} value={stage}>
+                        {stageLabels[stage]}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Inicio
+                  <input
+                    type="date"
+                    value={projectDraft.startDate}
+                    onChange={(event) =>
+                      setProjectDraft({
+                        ...projectDraft,
+                        startDate: event.target.value,
                       })
                     }
                   />
-                  Compartir esta partida en el portal
-                </span>
+                </label>
+                <label>
+                  Entrega prevista
+                  <input
+                    type="date"
+                    value={projectDraft.dueDate}
+                    onChange={(event) =>
+                      setProjectDraft({
+                        ...projectDraft,
+                        dueDate: event.target.value,
+                      })
+                    }
+                  />
+                </label>
+              </div>
+              <label>
+                Avance estimado (opcional)
+                <input
+                  type="number"
+                  min="0"
+                  max="100"
+                  placeholder="Si queda vacío, se calcula con tareas"
+                  value={projectDraft.progress}
+                  onChange={(event) =>
+                    setProjectDraft({
+                      ...projectDraft,
+                      progress: event.target.value,
+                    })
+                  }
+                />
               </label>
-            </div>
-            <div className="panel-budget-form-actions">
-              <button className="workspace-primary" disabled={busy}>
-                {budgetDraft.id ? 'Guardar partida' : 'Agregar al presupuesto'}
-              </button>
+              <label>
+                Nota del proyecto
+                <textarea
+                  rows={3}
+                  placeholder="Objetivos, contexto o próximos pasos"
+                  value={projectDraft.description}
+                  onChange={(event) =>
+                    setProjectDraft({
+                      ...projectDraft,
+                      description: event.target.value,
+                    })
+                  }
+                />
+              </label>
               <button
-                type="button"
-                className="workspace-secondary"
+                className="workspace-primary"
+                disabled={busy}
+                onClick={() => void saveProject()}
+              >
+                Guardar seguimiento
+              </button>
+            </div>
+          )}
+          <div className="panel-project-summary">
+            <div>
+              <span>ETAPA ACTUAL</span>
+              <strong>{stageLabels[data.project.stage] || 'Idea'}</strong>
+            </div>
+            <div>
+              <span>INICIO</span>
+              <strong>{shortDate(data.project.startDate)}</strong>
+            </div>
+            <div>
+              <span>ENTREGA PREVISTA</span>
+              <strong>{shortDate(data.project.dueDate)}</strong>
+            </div>
+            <div>
+              <span>AVANCE</span>
+              <strong>
+                {progress(data.project.id) === null
+                  ? 'Sin definir'
+                  : `${progress(data.project.id)}%`}
+              </strong>
+            </div>
+          </div>
+          {data.project.description && (
+            <p className="panel-description">{data.project.description}</p>
+          )}
+          <div className="panel-stage-track" aria-label="Etapas del proyecto">
+            {stageOrder.map((stage, index) => (
+              <span
+                key={stage}
+                className={
+                  index <= stageOrder.indexOf(data.project.stage)
+                    ? 'active'
+                    : ''
+                }
+                title={stageLabels[stage]}
+              />
+            ))}
+          </div>
+        </section>
+      )}
+      {view === 'presupuesto' && (
+        <section className="workspace-section panel-budget" id="presupuesto">
+          <div className="workspace-section-head">
+            <div>
+              <p className="workspace-eyebrow">CONTROL DEL PROYECTO</p>
+              <h2>Presupuesto y decisiones</h2>
+              <p className="workspace-muted">
+                Lo que se define en el diseño, sin perder de vista su impacto.
+              </p>
+            </div>
+            {data.viewer.permissions.panel === 'edit' && (
+              <button
+                className="workspace-primary"
                 onClick={() => {
                   setBudgetDraft(emptyBudgetItem);
-                  setShowBudgetForm(false);
+                  setShowBudgetForm((value) => !value);
                 }}
               >
-                Cancelar
+                <Plus size={17} /> Agregar partida
               </button>
+            )}
+          </div>
+          {showBudgetForm && (
+            <form
+              className="workspace-form-card panel-budget-form"
+              onSubmit={saveBudgetItem}
+            >
+              <div className="workspace-form-grid">
+                <label className="wide">
+                  Partida
+                  <input
+                    required
+                    maxLength={160}
+                    placeholder="Ej. Mobiliario de cocina"
+                    value={budgetDraft.title}
+                    onChange={(event) =>
+                      setBudgetDraft({
+                        ...budgetDraft,
+                        title: event.target.value,
+                      })
+                    }
+                  />
+                </label>
+                <label>
+                  Rubro
+                  <input
+                    required
+                    maxLength={80}
+                    placeholder="Cocina"
+                    value={budgetDraft.category}
+                    onChange={(event) =>
+                      setBudgetDraft({
+                        ...budgetDraft,
+                        category: event.target.value,
+                      })
+                    }
+                  />
+                </label>
+                <label>
+                  Estimado
+                  <input
+                    required
+                    min="0"
+                    step="1"
+                    type="number"
+                    value={budgetDraft.planned}
+                    onChange={(event) =>
+                      setBudgetDraft({
+                        ...budgetDraft,
+                        planned: event.target.value,
+                      })
+                    }
+                  />
+                </label>
+                <label>
+                  Comprometido
+                  <input
+                    required
+                    min="0"
+                    step="1"
+                    type="number"
+                    value={budgetDraft.committed}
+                    onChange={(event) =>
+                      setBudgetDraft({
+                        ...budgetDraft,
+                        committed: event.target.value,
+                      })
+                    }
+                  />
+                </label>
+                <label>
+                  Estado
+                  <select
+                    value={budgetDraft.status}
+                    onChange={(event) =>
+                      setBudgetDraft({
+                        ...budgetDraft,
+                        status: event.target.value,
+                      })
+                    }
+                  >
+                    {Object.entries(budgetStatusLabels).map(
+                      ([status, label]) => (
+                        <option key={status} value={status}>
+                          {label}
+                        </option>
+                      ),
+                    )}
+                  </select>
+                </label>
+                <label className="budget-visible-toggle">
+                  Visible para el cliente
+                  <span>
+                    <input
+                      type="checkbox"
+                      checked={budgetDraft.clientVisible}
+                      onChange={(event) =>
+                        setBudgetDraft({
+                          ...budgetDraft,
+                          clientVisible: event.target.checked,
+                        })
+                      }
+                    />
+                    Compartir esta partida en el portal
+                  </span>
+                </label>
+              </div>
+              <div className="panel-budget-form-actions">
+                <button className="workspace-primary" disabled={busy}>
+                  {budgetDraft.id
+                    ? 'Guardar partida'
+                    : 'Agregar al presupuesto'}
+                </button>
+                <button
+                  type="button"
+                  className="workspace-secondary"
+                  onClick={() => {
+                    setBudgetDraft(emptyBudgetItem);
+                    setShowBudgetForm(false);
+                  }}
+                >
+                  Cancelar
+                </button>
+              </div>
+            </form>
+          )}
+          <div className="panel-budget-overview">
+            <div>
+              <span>PRESUPUESTO BASE</span>
+              <strong>{moneyFormat.format(budgetPlanned)}</strong>
+              <small>
+                {budgetItems.length
+                  ? `${budgetItems.length} ${budgetItems.length === 1 ? 'partida' : 'partidas'} cargadas`
+                  : 'Aún sin partidas'}
+              </small>
             </div>
-          </form>
-        )}
-        <div className="panel-budget-overview">
-          <div>
-            <span>PRESUPUESTO BASE</span>
-            <strong>{moneyFormat.format(budgetPlanned)}</strong>
-            <small>
-              {budgetItems.length
-                ? `${budgetItems.length} ${budgetItems.length === 1 ? 'partida' : 'partidas'} cargadas`
-                : 'Aún sin partidas'}
-            </small>
-          </div>
-          <div>
-            <span>COMPROMETIDO</span>
-            <strong>{moneyFormat.format(budgetCommitted)}</strong>
-            <small>Contratado, aprobado o pagado</small>
-          </div>
-          <div className={budgetDifference > 0 ? 'is-over' : ''}>
-            <span>DESVÍO ACTUAL</span>
-            <strong>
-              {budgetItems.length
-                ? `${budgetDifference > 0 ? '+' : ''}${moneyFormat.format(budgetDifference)}`
-                : '—'}
-            </strong>
-            <small>
-              {budgetDifference > 0
-                ? 'Por encima de lo previsto'
-                : budgetItems.length
-                  ? 'Contra el presupuesto base'
-                  : 'Cargá la primera partida'}
-            </small>
-          </div>
-        </div>
-        <div className="panel-budget-layout">
-          <div className="panel-budget-table-wrap">
-            <div className="panel-budget-table-head">
-              <span>PARTIDA</span>
-              <span>ESTIMADO</span>
+            <div>
               <span>COMPROMETIDO</span>
-              <span>ESTADO</span>
-              <span className="sr-only">Acciones</span>
+              <strong>{moneyFormat.format(budgetCommitted)}</strong>
+              <small>Contratado, aprobado o pagado</small>
             </div>
-            {budgetItems.length ? (
-              <div className="panel-budget-table">
-                {budgetItems.map((item) => (
-                  <div className="panel-budget-row" key={item.id}>
-                    <div>
-                      <strong>{item.title}</strong>
-                      <small>{item.category}</small>
-                    </div>
-                    <span>{moneyFormat.format(item.planned)}</span>
-                    <span>{moneyFormat.format(item.committed)}</span>
-                    <span className={`budget-status ${item.status}`}>
-                      {budgetStatusLabels[item.status] || 'Estimado'}
-                    </span>
-                    {data.viewer.permissions.panel === 'edit' ? (
-                      <div className="panel-budget-actions">
-                        <button
-                          type="button"
-                          title="Editar partida"
-                          aria-label={`Editar ${item.title}`}
-                          onClick={() => editBudgetItem(item)}
-                        >
-                          <Pencil size={15} />
-                        </button>
-                        <button
-                          type="button"
-                          title="Eliminar partida"
-                          aria-label={`Eliminar ${item.title}`}
-                          onClick={() => {
-                            if (window.confirm(`¿Eliminar “${item.title}”?`))
-                              void run({
-                                action: 'delete-budget-item',
-                                id: item.id,
-                              });
-                          }}
-                        >
-                          <Trash2 size={15} />
-                        </button>
-                      </div>
-                    ) : null}
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="panel-budget-empty">
-                <Banknote size={24} />
-                <div>
-                  <strong>El presupuesto empieza por una partida.</strong>
-                  <p>
-                    Cargá estimados por rubro y vinculalos después a las
-                    decisiones de diseño.
-                  </p>
-                </div>
-              </div>
-            )}
+            <div className={budgetDifference > 0 ? 'is-over' : ''}>
+              <span>DESVÍO ACTUAL</span>
+              <strong>
+                {budgetItems.length
+                  ? `${budgetDifference > 0 ? '+' : ''}${moneyFormat.format(budgetDifference)}`
+                  : '—'}
+              </strong>
+              <small>
+                {budgetDifference > 0
+                  ? 'Por encima de lo previsto'
+                  : budgetItems.length
+                    ? 'Contra el presupuesto base'
+                    : 'Cargá la primera partida'}
+              </small>
+            </div>
           </div>
-          <aside className="panel-decisions-card">
-            <div className="panel-decisions-icon">
-              <ReceiptText size={18} />
-            </div>
-            <p className="workspace-eyebrow">PRÓXIMAS DEFINICIONES</p>
-            <h3>
-              {pendingProjectTasks.length
-                ? `${pendingProjectTasks.length} ${pendingProjectTasks.length === 1 ? 'tema requiere' : 'temas requieren'} atención`
-                : 'Todo claro por ahora'}
-            </h3>
-            <p>
-              {pendingProjectTasks.length
-                ? 'Concentrá la conversación con el cliente antes de comprometer costos o fechas.'
-                : 'Las próximas decisiones y cambios aparecerán acá.'}
-            </p>
-            {pendingProjectTasks.slice(0, 3).map((task) => (
-              <div className="panel-decision-item" key={task.id}>
-                <span />
-                {task.title}
+          <div className="panel-budget-layout">
+            <div className="panel-budget-table-wrap">
+              <div className="panel-budget-table-head">
+                <span>PARTIDA</span>
+                <span>ESTIMADO</span>
+                <span>COMPROMETIDO</span>
+                <span>ESTADO</span>
+                <span className="sr-only">Acciones</span>
               </div>
-            ))}
-            {!data.viewer.guest && (
-              <a href="#tareas" className="workspace-text-button">
-                Ver próximos pasos <ArrowRight size={15} />
-              </a>
-            )}
-          </aside>
-        </div>
-      </section>
-      {!data.viewer.guest && (
+              {budgetItems.length ? (
+                <div className="panel-budget-table">
+                  {budgetItems.map((item) => (
+                    <div className="panel-budget-row" key={item.id}>
+                      <div>
+                        <strong>{item.title}</strong>
+                        <small>{item.category}</small>
+                      </div>
+                      <span>{moneyFormat.format(item.planned)}</span>
+                      <span>{moneyFormat.format(item.committed)}</span>
+                      <span className={`budget-status ${item.status}`}>
+                        {budgetStatusLabels[item.status] || 'Estimado'}
+                      </span>
+                      {data.viewer.permissions.panel === 'edit' ? (
+                        <div className="panel-budget-actions">
+                          <button
+                            type="button"
+                            title="Editar partida"
+                            aria-label={`Editar ${item.title}`}
+                            onClick={() => editBudgetItem(item)}
+                          >
+                            <Pencil size={15} />
+                          </button>
+                          <button
+                            type="button"
+                            title="Eliminar partida"
+                            aria-label={`Eliminar ${item.title}`}
+                            onClick={() => {
+                              if (window.confirm(`¿Eliminar “${item.title}”?`))
+                                void run({
+                                  action: 'delete-budget-item',
+                                  id: item.id,
+                                });
+                            }}
+                          >
+                            <Trash2 size={15} />
+                          </button>
+                        </div>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="panel-budget-empty">
+                  <Banknote size={24} />
+                  <div>
+                    <strong>El presupuesto empieza por una partida.</strong>
+                    <p>
+                      Cargá estimados por rubro y vinculalos después a las
+                      decisiones de diseño.
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+            <aside className="panel-decisions-card">
+              <div className="panel-decisions-icon">
+                <ReceiptText size={18} />
+              </div>
+              <p className="workspace-eyebrow">PRÓXIMAS DEFINICIONES</p>
+              <h3>
+                {pendingProjectTasks.length
+                  ? `${pendingProjectTasks.length} ${pendingProjectTasks.length === 1 ? 'tema requiere' : 'temas requieren'} atención`
+                  : 'Todo claro por ahora'}
+              </h3>
+              <p>
+                {pendingProjectTasks.length
+                  ? 'Concentrá la conversación con el cliente antes de comprometer costos o fechas.'
+                  : 'Las próximas decisiones y cambios aparecerán acá.'}
+              </p>
+              {pendingProjectTasks.slice(0, 3).map((task) => (
+                <div className="panel-decision-item" key={task.id}>
+                  <span />
+                  {task.title}
+                </div>
+              ))}
+              {!data.viewer.guest && (
+                <a href="#tareas" className="workspace-text-button">
+                  Ver próximos pasos <ArrowRight size={15} />
+                </a>
+              )}
+            </aside>
+          </div>
+        </section>
+      )}
+      {view === 'tareas' && (
         <section className="workspace-section panel-tasks" id="tareas">
           <div className="workspace-section-head">
             <div>
@@ -869,7 +1013,10 @@ export default function Panel({
                     type="date"
                     value={taskDraft.startDate}
                     onChange={(event) =>
-                      setTaskDraft({ ...taskDraft, startDate: event.target.value })
+                      setTaskDraft({
+                        ...taskDraft,
+                        startDate: event.target.value,
+                      })
                     }
                   />
                 </label>
@@ -927,7 +1074,10 @@ export default function Panel({
                       type="checkbox"
                       checked={taskDraft.clientVisible}
                       onChange={(event) =>
-                        setTaskDraft({ ...taskDraft, clientVisible: event.target.checked })
+                        setTaskDraft({
+                          ...taskDraft,
+                          clientVisible: event.target.checked,
+                        })
                       }
                     />
                     Mostrar como hito en el portal
@@ -1075,6 +1225,14 @@ export default function Panel({
             </div>
           )}
         </section>
+      )}
+      {portalViews.includes(view) && (
+        <ClientPortal
+          data={data}
+          selectedView={view as PortalView}
+          onSelectView={selectPortalView}
+          embedded
+        />
       )}
       {newProject && (
         <div className="workspace-modal-backdrop">

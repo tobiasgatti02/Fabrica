@@ -20,6 +20,16 @@ Actualizado el 13 de septiembre de 2026. Disponible en la vista local `/estudio`
 
 ## Importación real y límites
 
+### Presencia en una entrega
+
+El visor muestra a quienes tienen abierta la misma entrega del mismo proyecto. Cada cursor se ancla a un punto del modelo 3D, de modo que conserva su significado aunque las personas usen cámaras diferentes. La lista de participantes permite seguir voluntariamente la cámara de otra persona o dejar de seguirla. «Ocultarme» desconecta la sesión de presencia y deja de mostrar otros participantes; cambiar de entrega o cerrar la pestaña también la desconecta.
+
+La API de presencia comprueba en cada solicitud el acceso al proyecto y a la entrega. Los clientes con enlace sólo pueden participar en entregas publicadas, y un enlace revocado o vencido deja de autorizar nuevas actualizaciones. Cada pestaña recibe una identidad efímera distinta. La base conserva únicamente el último cursor y cámara de cada sesión; las filas vencen a los 12 segundos y se eliminan al salir o al incorporarse nuevas sesiones. La migración `0015` crea `studio_presence`.
+
+La misma presencia funciona en cada mesa de trabajo. El cursor se guarda en coordenadas del tablero para que aparezca en el lugar correcto aunque cada participante tenga otro zoom o desplazamiento. Sobre una tarjeta también conserva su posición relativa a ella, ya que la distribución de tarjetas puede variar entre navegadores. «Seguir vista» acompaña el zoom y desplazamiento de otra persona; mover el propio tablero deja de seguirla. Cada mesa mantiene su sala independiente y aplica los permisos de inspiración del proyecto, incluidos los accesos de cliente y colaborador externo.
+
+La sincronización actual consulta cada 500 ms y envía cambios de cursor o cámara cuando ocurren, con un pulso de mantenimiento cada 3 segundos. Es apta para probar revisiones con grupos pequeños; antes de escalar a muchas sesiones simultáneas conviene reemplazar el sondeo de Postgres por un canal de eventos en tiempo real y medir su costo. La presencia está disponible en el visor de una entrega y en cada mesa de trabajo; las demás secciones no tienen una posición de cursor comparable.
+
 El visor incluye cargadores bajo demanda para GLB/glTF (incluido Draco), DAE, OBJ con MTL, FBX, STL, PLY y 3DS. Se selecciona un archivo principal y sus recursos, o se arrastran juntos. Las referencias externas se resuelven contra los archivos incluidos, sin descargar recursos arbitrarios citados por un modelo. Nombres duplicados se rechazan para evitar resolver una textura equivocada.
 
 Se conservan archivos originales de cualquier extensión, incluidos SKP, RVT, PLN, DWG e IFC, pero **no hay conversores nativos para estos formatos**. Una extensión aceptada para almacenamiento no equivale a compatibilidad de visualización. Las exportaciones deben usar uno de los formatos implementados; las rutas particulares de cada aplicación y versión todavía requieren más modelos de prueba. Las medidas presuponen que las coordenadas de la versión respetan la unidad declarada; falta una validación automática de unidades durante la importación.

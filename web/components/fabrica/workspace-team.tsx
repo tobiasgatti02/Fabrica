@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, type SyntheticEvent } from 'react';
-import { Copy, Mail, Plus, ShieldCheck, Trash2 } from 'lucide-react';
+import { Copy, Mail, Pencil, Plus, ShieldCheck, Trash2 } from 'lucide-react';
 import type { WorkspaceViewProps } from './workspace';
 import {
   shortDate,
@@ -19,7 +19,7 @@ const roleLabels: Record<string, string> = {
 };
 const areaLabels: Record<WorkspaceArea, string> = {
   panel: 'Panel',
-  inspiracion: 'Inspiración',
+  inspiracion: 'Mesa de trabajo',
   modelo: 'Modelo 3D',
 };
 const permissionLabels: Record<WorkspacePermission, string> = {
@@ -35,6 +35,7 @@ export default function Team({ data, busy, run, notify }: WorkspaceViewProps) {
   const [scope, setScope] = useState('');
   const [inviteLink, setInviteLink] = useState('');
   const [inviteIsExternal, setInviteIsExternal] = useState(false);
+  const [editing, setEditing] = useState<WorkspaceMember | null>(null);
   const active = data.members.filter((item) => item.accepted);
   const pending = data.members.filter((item) => !item.accepted);
   const projectsFor = (member: WorkspaceMember) =>
@@ -88,6 +89,31 @@ export default function Team({ data, busy, run, notify }: WorkspaceViewProps) {
       id: member.id,
       permissions: { ...member.permissions, [area]: value },
     });
+  const saveMember = async (event: SyntheticEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!editing) return;
+    try {
+      const result = await run<{ ok: boolean; invite?: string }>({
+        action: 'update-member',
+        id: editing.id,
+        name: editing.name,
+        email: editing.email,
+        role: editing.role,
+        project: editing.project || '',
+        permissions: editing.permissions,
+      });
+      if (result.invite) {
+        setInviteLink(linkFor(result.invite, editing.role === 'external'));
+        setInviteIsExternal(editing.role === 'external');
+        notify('Acceso anterior revocado. Compartí la nueva invitación.');
+      } else {
+        notify('Persona actualizada');
+      }
+      setEditing(null);
+    } catch {
+      /* run shows the error */
+    }
+  };
   const permissionsFor = (member: WorkspaceMember) => (
     <div
       className="team-member-permissions"
@@ -215,22 +241,33 @@ export default function Team({ data, busy, run, notify }: WorkspaceViewProps) {
                 </button>
               )}
               {data.viewer.accountOwner && (
-                <button
-                  className="team-member-remove"
-                  type="button"
-                  title="Quitar del equipo"
-                  aria-label={`Quitar a ${member.name || member.email}`}
-                  onClick={() => {
-                    if (
-                      window.confirm(
-                        `¿Quitar a ${member.name || member.email} del equipo?`,
+                <div className="team-member-actions">
+                  <button
+                    className="team-member-edit"
+                    type="button"
+                    title="Editar persona"
+                    aria-label={`Editar a ${member.name || member.email}`}
+                    onClick={() => setEditing(structuredClone(member))}
+                  >
+                    <Pencil size={16} />
+                  </button>
+                  <button
+                    className="team-member-remove"
+                    type="button"
+                    title="Quitar del equipo"
+                    aria-label={`Quitar a ${member.name || member.email}`}
+                    onClick={() => {
+                      if (
+                        window.confirm(
+                          `¿Quitar a ${member.name || member.email} del equipo? Se cerrarán sus sesiones y perderá el acceso inmediatamente.`,
+                        )
                       )
-                    )
-                      void run({ action: 'remove-member', id: member.id });
-                  }}
-                >
-                  <Trash2 size={16} />
-                </button>
+                        void run({ action: 'remove-member', id: member.id });
+                    }}
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
               )}
             </div>
           ))}
@@ -273,9 +310,18 @@ export default function Team({ data, busy, run, notify }: WorkspaceViewProps) {
                 {data.viewer.accountOwner && (
                   <>
                     <button
+                      className="team-member-edit"
+                      type="button"
+                      onClick={() => setEditing(structuredClone(member))}
+                    >
+                      <Pencil size={15} /> Editar
+                    </button>
+                    <button
                       className="workspace-text-button"
                       type="button"
-                      onClick={() => void renew(member.id, member.role === 'external')}
+                      onClick={() =>
+                        void renew(member.id, member.role === 'external')
+                      }
                     >
                       <Copy size={15} /> Nuevo enlace
                     </button>
@@ -296,6 +342,128 @@ export default function Team({ data, busy, run, notify }: WorkspaceViewProps) {
             ))}
           </div>
         </section>
+      )}
+
+      {editing && (
+        <div className="workspace-modal-backdrop">
+          <button
+            type="button"
+            className="workspace-backdrop-dismiss"
+            aria-label="Cerrar ventana"
+            onClick={() => setEditing(null)}
+          />
+          <form
+            className="workspace-modal team-edit-modal"
+            onSubmit={saveMember}
+          >
+            <p className="workspace-eyebrow">EDITAR PERSONA</p>
+            <h2>{editing.name || editing.email}</h2>
+            <div className="workspace-form-grid">
+              <label>
+                Nombre
+                <input
+                  value={editing.name}
+                  maxLength={120}
+                  onChange={(event) =>
+                    setEditing({ ...editing, name: event.target.value })
+                  }
+                  placeholder="Nombre de la persona"
+                />
+              </label>
+              <label>
+                Email
+                <input
+                  required
+                  type="email"
+                  value={editing.email}
+                  onChange={(event) =>
+                    setEditing({ ...editing, email: event.target.value })
+                  }
+                />
+              </label>
+              <label>
+                Rol
+                <select
+                  value={editing.role}
+                  onChange={(event) =>
+                    setEditing({ ...editing, role: event.target.value })
+                  }
+                >
+                  <option value="external">Externo/a · sin cuenta</option>
+                  <option value="architect">Arquitecto/a</option>
+                  <option value="collaborator">Colaborador/a</option>
+                  <option value="viewer">Observador/a</option>
+                </select>
+              </label>
+              <label>
+                Proyectos visibles
+                <select
+                  value={editing.project || ''}
+                  onChange={(event) =>
+                    setEditing({
+                      ...editing,
+                      project: event.target.value || null,
+                    })
+                  }
+                >
+                  <option value="">Todos los proyectos</option>
+                  {data.projects.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <fieldset className="team-edit-permissions">
+              <legend>Permisos por área</legend>
+              {Object.entries(areaLabels).map(([area, label]) => {
+                const key = area as WorkspaceArea;
+                return (
+                  <label key={key}>
+                    <span>{label}</span>
+                    <select
+                      value={editing.permissions[key]}
+                      onChange={(event) =>
+                        setEditing({
+                          ...editing,
+                          permissions: {
+                            ...editing.permissions,
+                            [key]: event.target.value as WorkspacePermission,
+                          },
+                        })
+                      }
+                    >
+                      {Object.entries(permissionLabels).map(
+                        ([value, permissionLabel]) => (
+                          <option key={value} value={value}>
+                            {permissionLabel}
+                          </option>
+                        ),
+                      )}
+                    </select>
+                  </label>
+                );
+              })}
+            </fieldset>
+            <p className="team-edit-security-note">
+              Si cambiás el email o el tipo de acceso, se revocará la sesión
+              anterior y se generará una nueva invitación.
+            </p>
+            <div className="workspace-modal-actions">
+              <button
+                type="button"
+                className="workspace-secondary"
+                onClick={() => setEditing(null)}
+              >
+                Cancelar
+              </button>
+              <button className="workspace-primary" disabled={busy}>
+                Guardar cambios
+              </button>
+            </div>
+          </form>
+        </div>
       )}
 
       {inviteLink && (

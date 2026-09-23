@@ -51,8 +51,8 @@ const steps = [
   {
     area: 'inspiracion',
     target: 'inspiracion',
-    title: 'Reuní la inspiración',
-    text: 'En Inspiración organizás imágenes, enlaces y referencias del proyecto por categoría. Usalo para reunir ideas de espacios, materiales, colores o mobiliario y registrar qué propuestas seguir explorando.',
+    title: 'Organizá tus mesas de trabajo',
+    text: 'Creá varias mesas por proyecto para organizar imágenes, enlaces, referencias, renders y planos. Abrí solo las mesas que necesites.',
   },
 ] as const;
 

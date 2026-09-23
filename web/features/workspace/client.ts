@@ -47,9 +47,17 @@ export type WorkspaceInspiration = {
   note: string;
   url: string;
   asset: string | null;
+  worktable: string | null;
   category: string;
   status: string;
   author: string;
+  created: number;
+};
+export type WorkspaceWorktable = {
+  id: string;
+  project: string;
+  title: string;
+  template: string;
   created: number;
 };
 export type WorkspaceInspirationComment = {
@@ -130,6 +138,7 @@ export type WorkspaceData = {
   tasks: WorkspaceTask[];
   budgetItems: WorkspaceBudgetItem[];
   inspiration: WorkspaceInspiration[];
+  worktables: WorkspaceWorktable[];
   inspirationComments: WorkspaceInspirationComment[];
   proposals: WorkspaceProposal[];
   options: WorkspaceOption[];

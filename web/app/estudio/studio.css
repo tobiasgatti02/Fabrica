@@ -37,6 +37,87 @@
   display: block;
   outline: 0;
 }
+.studio-peer-cursor {
+  position: absolute;
+  z-index: 9;
+  display: flex;
+  align-items: flex-start;
+  gap: 2px;
+  color: #fdfcf6;
+  pointer-events: none;
+  transform: translate(-3px, -3px);
+  filter: drop-shadow(0 2px 4px #17201699);
+}
+.studio-peer-cursor svg {
+  width: 22px;
+  height: 22px;
+  fill: #657a4d;
+  stroke: white;
+  stroke-width: 1.5;
+}
+.studio-peer-cursor span {
+  margin-top: 14px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  background: #394b32;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.studio-presence {
+  position: absolute;
+  z-index: 13;
+  top: 12px;
+  right: 12px;
+  max-width: min(310px, calc(100% - 24px));
+  padding: 8px 10px;
+  border: 1px solid #ffffff85;
+  border-radius: 8px;
+  background: #f8f7f0ed;
+  box-shadow: 0 6px 22px #1b201b24;
+  font-size: 12px;
+}
+.studio-presence-heading,
+.studio-presence-person {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 26px;
+}
+.studio-presence-heading svg {
+  width: 15px;
+  height: 15px;
+}
+.studio-presence-heading button,
+.studio-presence-person button {
+  margin-left: auto;
+  padding: 3px 5px;
+  border-radius: 3px;
+  color: #42563b;
+  text-decoration: underline;
+  white-space: nowrap;
+}
+.studio-presence-heading button:hover,
+.studio-presence-person button:hover {
+  background: #e8ebdf;
+}
+.studio-presence-dot {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+  background: #718454;
+}
+.studio-presence-person > span:nth-child(2) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (max-width: 700px) {
+  .studio-presence {
+    top: 66px;
+    right: 10px;
+  }
+}
 .canvas-help {
   position: absolute;
   left: 50%;

@@ -1,8 +1,10 @@
 'use client';
 
 import dynamic from 'next/dynamic';
+import Image from 'next/image';
+import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowUpRight, ArrowDown, ArrowLeft, Plus, X } from 'lucide-react';
+import { ArrowUpRight, ArrowDown } from 'lucide-react';
 import { gsap } from 'gsap';
 import { ScrollTrigger } from 'gsap/ScrollTrigger';
 import { chapters, chapterAt, clamp } from './timeline';
@@ -14,7 +16,7 @@ export function Wordmark() { return <span className="wordmark">fabrica<span aria
 const stageRenders = ['terrain', 'foundation', 'framing', 'shell', 'finishes', 'exterior', 'interior'];
 function FallbackHouse({ progress }: { progress: number }) {
   const stage = progress >= .965 ? 6 : Math.min(5, chapterAt(progress));
-  return <>{stageRenders.map((name, i) => <img key={name} className="fallback-render" style={{ opacity: i === stage ? 1 : 0, transition: 'opacity .7s ease' }} src={`/images/casa-patio-${name}.webp`} width={1600} height={1000} alt="" />)}</>;
+  return <>{stageRenders.map((name, i) => <Image key={name} className="fallback-render" style={{ opacity: i === stage ? 1 : 0, transition: 'opacity .7s ease' }} src={`/images/casa-patio-${name}.webp`} width={1600} height={1000} alt="" />)}</>;
 }
 
 export default function Landing() {
@@ -25,7 +27,6 @@ export default function Landing() {
   const [ready, setReady] = useState(false);
   const [failed, setFailed] = useState(false);
   const sceneFailed = useRef(false);
-  const [detail, setDetail] = useState<'luz' | 'materiales' | null>(null);
   const markReady = useCallback(() => setReady(true), []);
   const markFailed = useCallback(() => { sceneFailed.current = true; setFailed(true); setProgress(controller.current.progress); }, []);
   const chapter = chapterAt(progress);
@@ -65,7 +66,7 @@ export default function Landing() {
       <a href="#vision" aria-label="Fabrica, volver al inicio" onClick={e => { e.preventDefault(); goTo(0); }}><Wordmark /></a>
       <span className="header-caption">Un espacio para imaginar juntos.</span>
       <nav aria-label="Navegación principal">
-        <a className="header-cta" href="/estudio">Entrar al estudio <ArrowUpRight size={17} /></a>
+        <Link className="header-cta" href="/estudio">Entrar al estudio <ArrowUpRight size={17} /></Link>
       </nav>
     </header>
 
@@ -87,12 +88,12 @@ export default function Landing() {
             {chapter === 0 && <button className="round-link" onClick={() => goTo(.18)}><span className="round-icon"><ArrowDown size={20} /></span>Deslizá para darle forma</button>}
           </div>
         </div>
-        {failed && <span className="loading-label" role="status">Recorrido en imágenes · Deslizá para avanzar</span>}
+        {failed && <output className="loading-label">Recorrido en imágenes · Deslizá para avanzar</output>}
 
         <footer id="interior" className={`interior-footer ${inside ? 'is-visible' : ''}`} aria-hidden={!inside} inert={!inside}>
           <div className="interior-top"><span className="eyebrow">06 / Bienvenido a Casa Patio</span><span>Estar · Una nueva perspectiva</span></div>
           <div className="interior-content"><p className="eyebrow">De imaginarlo a habitarlo</p><h2>Las ideas merecen<br /><em>ser habitadas.</em></h2><p>Presentá un espacio. Compartí cada mirada.<br />Dale lugar a la próxima versión.</p>
-            <div className="interior-actions"><a className="solid-link" href="/estudio">Abrir Casa Patio <ArrowUpRight size={18} /></a><a href="#para-estudios">Conocer Fabrica <ArrowDown size={17} /></a></div>
+            <div className="interior-actions"><Link className="solid-link" href="/estudio">Abrir Casa Patio <ArrowUpRight size={18} /></Link><a href="#para-estudios">Conocer Fabrica <ArrowDown size={17} /></a></div>
           </div>
 
         </footer>
@@ -105,9 +106,19 @@ export default function Landing() {
         </div>
       </div>
     </section>
-    <section id="para-estudios" className="studio-section">
-      <div className="studio-heading"><p className="eyebrow">Fabrica / Para tu estudio</p><h2>El proyecto cambia.<br /><em>La conversación sigue.</em></h2></div>
-      <div className="studio-footer"><Wordmark /><span>Diseñar es imaginar. Construirlo, conversar.</span><a href="/estudio">Entrar al proyecto <ArrowUpRight size={16} /></a></div>
+    <section id="para-estudios" className="studio-section" aria-labelledby="para-estudios-title">
+      <div className="studio-heading"><p className="eyebrow">Fabrica / Para tu estudio</p><h2 id="para-estudios-title">El proyecto cambia.<br /><em>La conversación sigue.</em></h2></div>
+      <div className="studio-description">
+        <p>Mostrá el proyecto como se vive, ordená cada entrega y convertí el feedback del cliente en decisiones claras.</p>
+        <div className="studio-benefits">
+          <div><span>01</span><h3>Presentá mejor</h3><p>Recorridos 3D y vistas guardadas para que cada propuesta se entienda sin explicar de más.</p></div>
+          <div><span>02</span><h3>Decidí con contexto</h3><p>Comentarios anclados al espacio, medidas y referencias reunidos en el mismo proyecto.</p></div>
+          <div><span>03</span><h3>Avanzá con claridad</h3><p>Versiones ordenadas y enlaces privados para revisar cada cambio con clientes y equipo.</p></div>
+        </div>
+        <Link className="studio-open" href="/estudio">Explorar Casa Patio <ArrowUpRight size={17} /></Link>
+        <p className="demo-note">Entrá a un proyecto de muestra y conocé la experiencia antes de crear el tuyo.</p>
+      </div>
+      <div className="studio-footer"><Wordmark /><span>Diseñar es imaginar. Construirlo, conversar.</span><Link href="/estudio">Entrar al proyecto <ArrowUpRight size={16} /></Link></div>
     </section>
   </main>;
 }

@@ -1,10 +1,28 @@
 import * as THREE from 'three';
-import { fileExtension, modelFormats } from '@/features/files/validation';
+import { fileExtension } from '@/features/files/validation';
 
-export const viewFormats: string[] = [...modelFormats];
+export const viewFormats = ['glb', 'gltf', 'dae', 'obj', 'fbx', 'stl', 'ply', '3ds', 'skp'];
 export const extension = fileExtension;
 
 export type ModelUpAxis = 'auto' | 'x' | 'y' | 'z';
+
+function convertSkp(url: string): Promise<ArrayBuffer> {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(new URL('./skp-convert.worker.ts', import.meta.url), {
+      type: 'module',
+    });
+    worker.onmessage = (event: MessageEvent<{ bytes?: ArrayBuffer; error?: string }>) => {
+      worker.terminate();
+      if (event.data.bytes) resolve(event.data.bytes);
+      else reject(new Error(event.data.error || 'No se pudo leer el archivo SKP.'));
+    };
+    worker.onerror = () => {
+      worker.terminate();
+      reject(new Error('No se pudo abrir el archivo SKP.'));
+    };
+    worker.postMessage(url);
+  });
+}
 
 function detectUpAxis(
   name: string,
@@ -14,7 +32,7 @@ function detectUpAxis(
   const format = extension(name);
   // glTF is always Y-up. The Collada and FBX loaders apply the axis metadata
   // while parsing, so their result is Y-up as well.
-  if (['glb', 'gltf', 'dae', 'fbx'].includes(format)) return 'y';
+  if (['glb', 'gltf', 'dae', 'fbx', 'skp'].includes(format)) return 'y';
   if (format === 'obj' && /^# Created by FreeCAD\b/im.test(source)) return 'z';
 
   // OBJ/STL/PLY do not carry a reliable up-axis. Architectural scenes tend to
@@ -130,6 +148,29 @@ export async function loadModel(
   let source = '';
   const url = files[name];
   switch (extension(name)) {
+    case 'skp': {
+      const [{ GLTFLoader }, { DRACOLoader }, { MeshoptDecoder }, bytes] =
+        await Promise.all([
+          import('three/examples/jsm/loaders/GLTFLoader.js'),
+          import('three/examples/jsm/loaders/DRACOLoader.js'),
+          import('three/examples/jsm/libs/meshopt_decoder.module.js'),
+          convertSkp(url),
+        ]);
+      const blobUrl = URL.createObjectURL(new Blob([bytes], { type: 'model/gltf-binary' }));
+      const draco = new DRACOLoader().setDecoderPath('/draco/');
+      try {
+        object = (
+          await new GLTFLoader(manager)
+            .setDRACOLoader(draco)
+            .setMeshoptDecoder(MeshoptDecoder)
+            .loadAsync(blobUrl)
+        ).scene;
+      } finally {
+        draco.dispose();
+        URL.revokeObjectURL(blobUrl);
+      }
+      break;
+    }
     case 'glb':
     case 'gltf': {
       const [{ GLTFLoader }, { DRACOLoader }, { MeshoptDecoder }] =

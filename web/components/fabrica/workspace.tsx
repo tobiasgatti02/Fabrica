@@ -307,7 +307,7 @@ export default function Workspace({
           !error &&
           !share &&
           !data.viewer.external &&
-          data.viewer.canEdit ? (
+          data.viewer.accountOwner ? (
             <WorkspaceShareControl
               key={data.project.id}
               project={data.project}
@@ -349,9 +349,7 @@ export default function Workspace({
         </div>
       )}
       <footer className="workspace-footer">
-        <Link href="/">
-          <ArrowLeft size={14} /> Volver a F4brica
-        </Link>
+        
         <span>Un lugar para cada decisión.</span>
       </footer>
     </main>

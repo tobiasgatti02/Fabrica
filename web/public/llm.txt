@@ -1,0 +1,4 @@
+# Fabrica
+
+La convención vigente está disponible en https://f4brica.app/llms.txt
+Sitemap: https://f4brica.app/sitemap.xml

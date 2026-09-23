@@ -3,6 +3,19 @@ export type StrokeStyle = 'solid' | 'dashed';
 export type CanvasElement =
   | {
       id: string;
+      type: 'text';
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+      text: string;
+      stroke: string;
+      weight: number;
+      style: StrokeStyle;
+      opacity?: number;
+    }
+  | {
+      id: string;
       type: 'frame';
       x: number;
       y: number;
@@ -188,7 +201,7 @@ export function canvasElementAt(
   const reversed = [...elements].reverse();
   // Marks inside a frame remain selectable; the frame is the background.
   return reversed.filter((element) => element.type !== 'frame').find((element) => {
-    if (element.type === 'rectangle') {
+    if (element.type === 'rectangle' || element.type === 'text') {
       const bounds = boundsForCanvasElement(element);
       return (
         point.x >= bounds.left - tolerance &&

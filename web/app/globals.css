@@ -32,6 +32,17 @@ a{color:inherit;text-decoration:none}button,input,textarea{font:inherit}button{c
 @media(max-height:650px) and (max-width:759px){.story-copy{top:86px}.chapter-copy h2{font-size:44px}.chapter-description{font-size:13px;line-height:1.4}.eyebrow{margin-bottom:10px}.round-link{display:none}.interior-content{top:13%}.interior-content h2{font-size:42px}.interior-hotspots{bottom:148px}.interior-content>p:not(.eyebrow){font-size:13px}}
 .studio-open{display:inline-flex;align-items:center;gap:28px;margin-top:26px;padding:14px 18px;background:#e7e5d9;color:#32372d;font-size:13px}.studio-open:hover svg{transform:translate(3px,-3px)}.studio-open svg{transition:transform .2s}.studio-footer>a{display:flex;gap:15px;align-items:center;font-size:13px}
 
+.not-found-page{min-height:100svh;position:relative;overflow:hidden;display:grid;place-items:center;padding:8vw 7%;background:radial-gradient(circle at 75% 30%,#f3efe4 0,#e8e6de 45%,#d8d4c9 100%)}
+.not-found-mark{position:absolute;right:-.03em;bottom:-.18em;font-family:var(--font-serif-fabrica),Georgia,serif;font-size:min(52vw,720px);line-height:1;color:#c9c5b933;letter-spacing:-.09em;user-select:none}
+.not-found-content{position:relative;width:min(100%,850px);z-index:1}
+.not-found-content h1{font-size:clamp(64px,9vw,132px);line-height:.92;margin-bottom:30px}
+.not-found-content h1 em{color:var(--rust);font-weight:400}
+.not-found-content>p:not(.eyebrow){max-width:520px;font-size:17px;line-height:1.7;color:#62655b}
+.not-found-actions{display:flex;align-items:center;gap:28px;margin-top:38px;flex-wrap:wrap}
+.not-found-actions>a{display:flex;align-items:center;gap:12px;font-size:14px}
+.not-found-actions .solid-link{gap:12px;margin:0}
+@media(max-width:759px){.not-found-page{place-items:start;padding:20svh 7% 10%}.not-found-content h1{font-size:58px}.not-found-mark{font-size:80vw;bottom:-.08em}.not-found-actions{align-items:flex-start;flex-direction:column}}
+
 /* Keep the editorial wordmark present over the light opening render. */
 .hero-ghost{color:#8c8d82a8;text-shadow:0 1px 0 #ffffff80}
 
