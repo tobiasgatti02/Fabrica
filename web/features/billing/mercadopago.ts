@@ -15,8 +15,10 @@ function providerErrorCodes(body: ProviderResponse) {
     Array.isArray(body.cause) ? body.cause.map((cause: unknown) =>
       cause && typeof cause === 'object' ? (cause as Record<string, unknown>).code : null) : []
   )];
-  return values.filter((value): value is string =>
-    typeof value === 'string' && /^[a-zA-Z0-9_.-]{1,80}$/.test(value));
+  return values.flatMap((value) => {
+    if (typeof value === 'number' && Number.isSafeInteger(value)) return [String(value)];
+    return typeof value === 'string' && /^[a-zA-Z0-9_.-]{1,80}$/.test(value) ? [value] : [];
+  });
 }
 
 function accessToken() {
