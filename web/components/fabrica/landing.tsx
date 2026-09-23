@@ -9,11 +9,14 @@ import { gsap } from 'gsap';
 import { ScrollTrigger } from 'gsap/ScrollTrigger';
 import { chapters, chapterAt, clamp } from './timeline';
 import type { SceneController } from './scene/house-scene';
+import { PLANS, type PlanKey } from '@/features/billing/core';
 
 const HouseScene = dynamic(() => import('./scene/house-scene'), { ssr: false });
 export function Wordmark() { return <span className="wordmark">fabrica<span aria-hidden="true">®</span></span>; }
 
 const stageRenders = ['terrain', 'foundation', 'framing', 'shell', 'finishes', 'exterior', 'interior'];
+const publicPlans: PlanKey[] = ['prueba', 'inicial', 'estudio', 'equipo'];
+const price = new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 });
 function FallbackHouse({ progress }: { progress: number }) {
   const stage = progress >= .965 ? 6 : Math.min(5, chapterAt(progress));
   return <>{stageRenders.map((name, i) => <Image key={name} className="fallback-render" style={{ opacity: i === stage ? 1 : 0, transition: 'opacity .7s ease' }} src={`/images/casa-patio-${name}.webp`} width={1600} height={1000} alt="" />)}</>;
@@ -121,13 +124,18 @@ export default function Landing() {
         <p className="demo-note">Podés explorar Casa Patio, un proyecto de muestra.</p>
       </div>
       <section id="precios" className="pricing-section" aria-labelledby="pricing-title">
-        <div><p className="eyebrow">Fabrica / Precios</p><h2 id="pricing-title">Planes para tu estudio.<br /><em>En preparación.</em></h2></div>
-        <div className="pricing-card">
-          <span className="pricing-status">Precios en preparación</span>
-          <p>Estamos definiendo los planes y precios de Fabrica.</p>
-          <Link className="pricing-link action-button action-button--secondary" href="/estudio">Explorar Fabrica <ArrowUpRight size={17} /></Link>
-          <small>Publicaremos las condiciones antes de habilitar contrataciones.</small>
-        </div>
+        <div className="pricing-intro"><p className="eyebrow">Fabrica / Precios</p><h2 id="pricing-title">Un plan para cada<br /><em>forma de crear.</em></h2><p>Empezá con 14 días de prueba. Elegí más capacidad cuando tu estudio la necesite.</p></div>
+        <div className="pricing-grid">{publicPlans.map((key) => {
+          const plan = PLANS[key];
+          return <article className="pricing-plan" key={key}>
+            <span className="pricing-status">{key === 'prueba' ? '14 días' : 'Suscripción mensual'}</span>
+            <h3>{plan.name}</h3>
+            <p className="pricing-amount">{key === 'prueba' ? 'Gratis' : price.format(plan.amountCents / 100)}{key !== 'prueba' && <small> / mes</small>}</p>
+            <ul><li>{plan.rights.projects} {plan.rights.projects === 1 ? 'proyecto' : 'proyectos'}</li><li>{plan.rights.storageBytes / 1024 ** 3} GB de almacenamiento</li><li>{plan.rights.professionals} profesionales</li><li>{plan.rights.clients === null ? 'Clientes ilimitados' : `${plan.rights.clients} clientes`}</li></ul>
+            <Link className="pricing-link action-button action-button--secondary" href={key === 'prueba' ? '/estudio' : '/estudio/facturacion'}>{key === 'prueba' ? 'Explorar Fabrica' : 'Ver plan'} <ArrowUpRight size={17} /></Link>
+          </article>;
+        })}</div>
+        <p className="pricing-note">Los cobros están en prueba. Confirmá la disponibilidad y las condiciones dentro del estudio antes de suscribirte.</p>
       </section>
       <div className="studio-footer"><Wordmark /><span>Un espacio propio para cada proyecto.</span><Link className="action-button action-button--secondary" href="/estudio">Entrar al estudio <ArrowUpRight size={16} /></Link></div>
     </section>

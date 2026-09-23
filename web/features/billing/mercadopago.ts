@@ -4,6 +4,12 @@ const API = 'https://api.mercadopago.com';
 
 type ProviderResponse = Record<string, unknown>;
 
+export class MercadoPagoRequestError extends Error {
+  constructor(public readonly status: number) {
+    super(`billing_provider_http_${status}`);
+  }
+}
+
 function accessToken() {
   if (!env.MERCADOPAGO_ACCESS_TOKEN) throw new Error('billing_provider_unconfigured');
   return env.MERCADOPAGO_ACCESS_TOKEN;
@@ -20,11 +26,11 @@ async function request(path: string, init: RequestInit = {}, idempotencyKey?: st
   headers.set('Authorization', `Bearer ${accessToken()}`);
   headers.set('Content-Type', 'application/json');
   if (idempotencyKey) headers.set('X-Idempotency-Key', idempotencyKey);
-  const response = await fetch(`${API}${path}`, { ...init, headers });
+  const response = await fetch(`${API}${path}`, { ...init, headers, signal: AbortSignal.timeout(8_000) });
   const body = (await response.json().catch(() => ({}))) as ProviderResponse;
   if (!response.ok) {
     console.error('Mercado Pago request failed', response.status);
-    throw new Error('billing_provider_request_failed');
+    throw new MercadoPagoRequestError(response.status);
   }
   return body;
 }

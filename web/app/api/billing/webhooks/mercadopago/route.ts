@@ -1,6 +1,6 @@
 import { eq } from 'drizzle-orm';
 import { billingAccounts, billingCharges, billingSubscriptions, billingWebhookEvents } from '@/db/schema';
-import { getAuthorizedPayment, getSubscription, verifyWebhook } from '@/features/billing/mercadopago';
+import { getAuthorizedPayment, getSubscription, MercadoPagoRequestError, verifyWebhook } from '@/features/billing/mercadopago';
 import { billingDb } from '@/features/billing/http';
 
 type Notification = { type?: string; action?: string; data?: { id?: string | number } };
@@ -14,7 +14,11 @@ function dateValue(value: unknown) {
 export async function POST(request: Request) {
   const payload = await request.json().catch(() => null) as Notification | null;
   const url = new URL(request.url);
-  const resourceId = url.searchParams.get('data.id') || (payload?.data?.id != null ? String(payload.data.id) : null);
+  const queryId = url.searchParams.get('data.id');
+  const bodyId = payload?.data?.id != null ? String(payload.data.id) : null;
+  if (queryId && bodyId && queryId !== bodyId)
+    return Response.json({ error: 'invalid_notification' }, { status: 400 });
+  const resourceId = queryId || bodyId;
   if (!resourceId || !(await verifyWebhook(request, resourceId)))
     return Response.json({ error: 'invalid_signature' }, { status: 401 });
 
@@ -23,16 +27,16 @@ export async function POST(request: Request) {
     return Response.json({ ok: true });
 
   const externalKey = `${topic}:${resourceId}:${request.headers.get('x-request-id')}`;
-  const db = billingDb();
-  const [seen] = await db.select().from(billingWebhookEvents)
-    .where(eq(billingWebhookEvents.externalKey, externalKey)).limit(1);
-  if (seen?.processedAt) return Response.json({ ok: true });
-  if (!seen) await db.insert(billingWebhookEvents).values({
-    id: crypto.randomUUID(), externalKey, topic, resourceId,
-    payload: JSON.stringify(payload), receivedAt: Date.now(),
-  }).onConflictDoNothing();
-
   try {
+    const db = billingDb();
+    const [seen] = await db.select().from(billingWebhookEvents)
+      .where(eq(billingWebhookEvents.externalKey, externalKey)).limit(1);
+    if (seen?.processedAt) return Response.json({ ok: true });
+    if (!seen) await db.insert(billingWebhookEvents).values({
+      id: crypto.randomUUID(), externalKey, topic, resourceId,
+      payload: JSON.stringify(payload), receivedAt: Date.now(),
+    }).onConflictDoNothing();
+
     const payment = topic === 'subscription_authorized_payment'
       ? await getAuthorizedPayment(resourceId) : null;
     const externalSubscriptionId = payment ? String(payment.preapproval_id || '') : resourceId;
@@ -56,12 +60,14 @@ export async function POST(request: Request) {
     let graceEnds = account.graceEnds;
     let nextPaidThrough = account.paidThrough;
     if (paymentStatus === 'approved') {
-      nextPaidThrough = paidThrough && paidThrough > now ? paidThrough : null;
-      state = nextPaidThrough ? 'active' : 'pending';
-      graceEnds = null;
+      nextPaidThrough = Math.max(account.paidThrough || 0, paidThrough || 0) || null;
+      state = nextPaidThrough && nextPaidThrough > now ? 'active' : 'pending';
+      if (state === 'active') graceEnds = null;
     } else if (paymentStatus === 'rejected') {
-      state = 'grace_period';
-      graceEnds = now + 5 * 86_400_000;
+      if (!account.paidThrough || account.paidThrough <= now) {
+        state = 'grace_period';
+        graceEnds = now + 5 * 86_400_000;
+      }
     } else if (providerStatus === 'cancelled' || providerStatus === 'canceled') {
       state = account.paidThrough && account.paidThrough > now ? 'canceling' : 'canceled';
     } else if (providerStatus === 'paused') {
@@ -81,12 +87,19 @@ export async function POST(request: Request) {
       amountCents: Math.round(Number(payment.transaction_amount || 0) * 100),
       currency: String(payment.currency_id || subscription.currency),
       occurredAt: dateValue(payment.date_created) || now, created: now,
-    }).onConflictDoNothing();
+    }).onConflictDoUpdate({ target: billingCharges.externalId, set: { providerStatus: paymentStatus || 'pending' } });
     await db.update(billingWebhookEvents).set({ processedAt: now, outcome: 'processed' })
       .where(eq(billingWebhookEvents.externalKey, externalKey));
     return Response.json({ ok: true });
   } catch (error) {
-    console.error('Mercado Pago webhook processing failed', error instanceof Error ? error.name : 'unknown');
+    if (error instanceof MercadoPagoRequestError && error.status === 404) {
+      // Dashboard tests use a synthetic resource ID. It has no provider record to reconcile.
+      const db = billingDb();
+      await db.update(billingWebhookEvents).set({ processedAt: Date.now(), outcome: 'provider_resource_not_found' })
+        .where(eq(billingWebhookEvents.externalKey, externalKey)).catch(() => {});
+      return Response.json({ ok: true });
+    }
+    console.error('Mercado Pago webhook processing failed', error instanceof Error ? error.message : 'unknown');
     return Response.json({ error: 'retry' }, { status: 503 });
   }
 }

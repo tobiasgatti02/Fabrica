@@ -28,17 +28,30 @@ export default function BillingPage() {
   const [sdkReady, setSdkReady] = useState(false);
   const [selectedPlan, setSelectedPlan] = useState<Plan | null>(null);
   const [message, setMessage] = useState('');
+  const [loadError, setLoadError] = useState('');
   const refreshStatus = useCallback(() => {
-    void fetch('/api/billing/status').then((response) => response.json() as Promise<BillingData>).then(setStatus);
+    void fetch('/api/billing/status').then(async (response) => {
+      if (!response.ok) throw new Error(response.status === 401
+        ? 'Iniciá sesión para ver la facturación.' : 'No se pudo cargar la facturación.');
+      return response.json() as Promise<BillingData>;
+    }).then(setStatus).catch((error: Error) => setLoadError(error.message));
   }, []);
   useEffect(() => {
     void Promise.all([
-      fetch('/api/billing/status').then((response) => response.json() as Promise<BillingData>).then(setStatus),
-      fetch('/api/billing/plans').then((response) => response.json() as Promise<PlansData>).then((data) => {
+      fetch('/api/billing/status').then(async (response) => {
+        if (!response.ok) throw new Error(response.status === 401
+          ? 'Iniciá sesión para ver la facturación.' : 'No se pudo cargar la facturación.');
+        return response.json() as Promise<BillingData>;
+      }).then(setStatus),
+      fetch('/api/billing/plans').then(async (response) => {
+        if (!response.ok) throw new Error('No se pudieron cargar los planes.');
+        return response.json() as Promise<PlansData>;
+      }).then((data) => {
         setPlans(data.plans || []); setPublicKey(data.publicKey); setTestMode(data.testMode);
       }),
-    ]);
+    ]).catch((error: Error) => setLoadError(error.message));
   }, []);
+  if (loadError) return <main className="billing-page"><p className="billing-alert">{loadError}</p><a href="/estudio">Ir al estudio</a></main>;
   if (!status) return <main className="billing-page"><p>Cargando facturación...</p></main>;
   const days = Math.max(0, Math.ceil((status.trialEnds - Date.now()) / 86400000));
   return <main className="billing-page">

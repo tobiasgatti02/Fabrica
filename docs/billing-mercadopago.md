@@ -2,6 +2,13 @@
 
 La integración usa planes asociados de Mercado Pago: un plan externo por versión de precio y una suscripción `preapproval` por estudio. Los derechos se calculan desde `billing_accounts` y `billing_price_versions`; el proveedor no es la fuente única de permisos.
 
+## Estado de Test (2026-09-23)
+
+- La rama Neon `test` del proyecto `fabrica` tiene aplicadas las migraciones `0000` a `0016` (17 en total). Se verificaron las 7 tablas de billing, los 4 planes locales y los 7 triggers de cuotas. La rama `main` no se migró en esta operación.
+- El worker Cloudflare `fabrica-test` usa la conexión pooled de Neon `test` y tiene configurados `APP_BASE_URL`, las credenciales y el secreto de webhook de Mercado Pago, los tres IDs de planes y `MERCADOPAGO_TEST_MODE=true`.
+- El despliegue de Test corresponde a la versión de Cloudflare `98326f96-8966-455d-8c0d-5d178f23b6bb`. El endpoint del webhook rechazó una firma inválida con HTTP 401.
+- Aún falta una prueba de suscripción con un comprador y una tarjeta de prueba para confirmar la entrega del webhook y la activación del período pagado. Esta comprobación puede crear un cargo de prueba y no se ejecutó durante la migración.
+
 ## Información confirmada por MCP
 
 - Para Argentina, los tópicos de Suscripciones son `subscription_preapproval`, `subscription_authorized_payment` y `subscription_preapproval_plan`.
