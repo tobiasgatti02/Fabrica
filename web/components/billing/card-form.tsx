@@ -65,8 +65,8 @@ export function BillingCardForm({ plan, amountCents, publicKey, onComplete }: {
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ plan, cardTokenId: token, payerEmail: cardholderEmail }),
             });
-            const result = await response.json() as { error?: string; providerStatus?: string; providerCodes?: string[] };
-            if (!response.ok) throw new Error(`${result.error || 'No se pudo crear la suscripción.'}${result.providerCodes?.length ? ` (${result.providerCodes.join(', ')})` : ''}`);
+            const result = await response.json() as { error?: string; providerStatus?: string; providerCodes?: string[]; providerMessages?: string[] };
+            if (!response.ok) throw new Error(`${result.error || 'No se pudo crear la suscripción.'}${result.providerCodes?.length ? ` (${result.providerCodes.join(', ')})` : ''}${result.providerMessages?.length ? ` ${result.providerMessages.join(' ')}` : ''}`);
             onComplete(`Suscripción enviada a Mercado Pago (${result.providerStatus || 'pendiente'}). Estamos verificando el pago.`);
           } catch (caught) {
             if (!disposed) setError(caught instanceof Error ? caught.message : 'No se pudo crear la suscripción.');

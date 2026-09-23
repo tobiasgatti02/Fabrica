@@ -32,6 +32,7 @@ export function billingFailure(error: unknown) {
     return billingJson({
       error: 'Mercado Pago rechazó la suscripción. Revisá los datos del comprador y la tarjeta de prueba.',
       ...(env.MERCADOPAGO_TEST_MODE === 'true' && error.codes.length ? { providerCodes: error.codes } : {}),
+      ...(env.MERCADOPAGO_TEST_MODE === 'true' && error.messages.length ? { providerMessages: error.messages } : {}),
     }, 422);
   }
   console.error('Billing request failed', error instanceof Error ? error.name : 'unknown');

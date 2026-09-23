@@ -5,7 +5,11 @@ const API = 'https://api.mercadopago.com';
 type ProviderResponse = Record<string, unknown>;
 
 export class MercadoPagoRequestError extends Error {
-  constructor(public readonly status: number, public readonly codes: string[]) {
+  constructor(
+    public readonly status: number,
+    public readonly codes: string[],
+    public readonly messages: string[],
+  ) {
     super(`billing_provider_http_${status}`);
   }
 }
@@ -19,6 +23,16 @@ function providerErrorCodes(body: ProviderResponse) {
     if (typeof value === 'number' && Number.isSafeInteger(value)) return [String(value)];
     return typeof value === 'string' && /^[a-zA-Z0-9_.-]{1,80}$/.test(value) ? [value] : [];
   });
+}
+
+function providerErrorMessages(body: ProviderResponse) {
+  const values = [
+    body.message,
+    ...(Array.isArray(body.cause) ? body.cause.map((cause: unknown) =>
+      cause && typeof cause === 'object' ? (cause as Record<string, unknown>).description : null) : []),
+  ];
+  return values.filter((value): value is string => typeof value === 'string' && value.length > 0)
+    .map((value) => value.slice(0, 200));
 }
 
 function accessToken() {
@@ -41,8 +55,9 @@ async function request(path: string, init: RequestInit = {}, idempotencyKey?: st
   const body = (await response.json().catch(() => ({}))) as ProviderResponse;
   if (!response.ok) {
     const codes = providerErrorCodes(body);
-    console.error('Mercado Pago request failed', response.status, codes.join(','));
-    throw new MercadoPagoRequestError(response.status, codes);
+    const messages = providerErrorMessages(body);
+    console.error('Mercado Pago request failed', response.status, codes.join(','), messages.join(' | '));
+    throw new MercadoPagoRequestError(response.status, codes, messages);
   }
   return body;
 }
