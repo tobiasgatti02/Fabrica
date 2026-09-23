@@ -1,3 +1,4 @@
+import { env } from 'cloudflare:workers';
 import { eq } from 'drizzle-orm';
 import { billingAccounts, billingCharges, billingSubscriptions, billingWebhookEvents } from '@/db/schema';
 import { getAuthorizedPayment, getSubscription, MercadoPagoRequestError, verifyWebhook } from '@/features/billing/mercadopago';
@@ -9,6 +10,10 @@ function dateValue(value: unknown) {
   if (typeof value !== 'string') return null;
   const timestamp = Date.parse(value);
   return Number.isFinite(timestamp) ? timestamp : null;
+}
+
+function resourceValue(value: unknown) {
+  return typeof value === 'string' || typeof value === 'number' ? String(value) : null;
 }
 
 export async function POST(request: Request) {
@@ -39,7 +44,8 @@ export async function POST(request: Request) {
 
     const payment = topic === 'subscription_authorized_payment'
       ? await getAuthorizedPayment(resourceId) : null;
-    const externalSubscriptionId = payment ? String(payment.preapproval_id || '') : resourceId;
+    const externalSubscriptionId = payment ? resourceValue(payment.preapproval_id) : resourceId;
+    if (!externalSubscriptionId) throw new Error('billing_provider_invalid_subscription_id');
     const [subscription] = await db.select().from(billingSubscriptions)
       .where(eq(billingSubscriptions.externalId, externalSubscriptionId)).limit(1);
     if (!subscription) {
@@ -49,8 +55,8 @@ export async function POST(request: Request) {
       return Response.json({ error: 'subscription_not_ready' }, { status: 503 });
     }
     const provider = await getSubscription(externalSubscriptionId);
-    const providerStatus = String(provider.status || 'pending');
-    const paymentStatus = payment ? String(payment.status || 'pending') : null;
+    const providerStatus = resourceValue(provider.status) || 'pending';
+    const paymentStatus = payment ? resourceValue(payment.status) || 'pending' : null;
     const now = Date.now();
     const paidThrough = dateValue(provider.next_payment_date);
     const [account] = await db.select().from(billingAccounts)
@@ -84,17 +90,18 @@ export async function POST(request: Request) {
     }).where(eq(billingAccounts.id, subscription.account));
     if (payment) await db.insert(billingCharges).values({
       id: crypto.randomUUID(), subscription: subscription.id,
-      externalId: String(payment.id || resourceId), providerStatus: paymentStatus || 'pending',
+      externalId: resourceValue(payment.id) || resourceId, providerStatus: paymentStatus || 'pending',
       amountCents: Math.round(Number(payment.transaction_amount || 0) * 100),
-      currency: String(payment.currency_id || subscription.currency),
+      currency: resourceValue(payment.currency_id) || subscription.currency,
       occurredAt: dateValue(payment.date_created) || now, created: now,
     }).onConflictDoUpdate({ target: billingCharges.externalId, set: { providerStatus: paymentStatus || 'pending' } });
     await db.update(billingWebhookEvents).set({ processedAt: now, outcome: 'processed' })
       .where(eq(billingWebhookEvents.externalKey, externalKey));
     return Response.json({ ok: true });
   } catch (error) {
-    if (error instanceof MercadoPagoRequestError && error.status === 404) {
-      // Dashboard tests use a synthetic resource ID. It has no provider record to reconcile.
+    if (error instanceof MercadoPagoRequestError && error.status === 404 &&
+      env.MERCADOPAGO_TEST_MODE === 'true' && resourceId === '123456') {
+      // The dashboard's documented test payload uses this synthetic resource ID.
       const db = billingDb();
       await db.update(billingWebhookEvents).set({ processedAt: Date.now(), outcome: 'provider_resource_not_found' })
         .where(eq(billingWebhookEvents.externalKey, externalKey)).catch(() => {});
