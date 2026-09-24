@@ -21,6 +21,11 @@ type PublicPlan = { key: string; amountCents: number; currency: string; rights: 
 } };
 const planNames: Record<string, string> = { prueba: 'Prueba', inicial: 'Inicial', estudio: 'Estudio', equipo: 'Equipo' };
 const price = new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 });
+const productScreens = [
+  { title: 'Panel del estudio', detail: 'Proyectos, entregas y pendientes en una vista clara.', image: '/images/product-panel.webp' },
+  { title: 'Mesa de trabajo', detail: 'Ordená ideas y referencias junto a tu equipo.', image: '/images/product-mesa.webp' },
+  { title: 'Modelo 3D', detail: 'Compartí el modelo y conversá sobre cada entrega.', image: '/images/product-modelo.webp' },
+];
 function FallbackHouse({ progress }: { progress: number }) {
   const stage = fallbackStageAt.reduce((current, at, index) => progress >= at ? index : current, 0);
   return <>{stageRenders.map((name, i) => <Image key={name} className="fallback-render" style={{ opacity: i === stage ? 1 : 0, transition: 'opacity .7s ease' }} src={`/images/casa-patio-${name}.webp`} width={1600} height={1000} alt="" />)}</>;
@@ -42,6 +47,7 @@ export default function Landing() {
   const [ready, setReady] = useState(false);
   const [failed, setFailed] = useState(false);
   const [plans, setPlans] = useState<PublicPlan[]>([]);
+  const [screenIndex, setScreenIndex] = useState(0);
   const [plansError, setPlansError] = useState(false);
   const sceneFailed = useRef(false);
   const markReady = useCallback(() => setReady(true), []);
@@ -143,6 +149,20 @@ export default function Landing() {
         </div>
         <a className="studio-open action-button action-button--primary" href="/estudio" onClick={hardNavigate}>Conocer el estudio <ArrowUpRight size={17} /></a>
         <p className="demo-note">Podés explorar Casa Patio, un proyecto de muestra.</p>
+      </div>
+      <div className="product-tour" aria-label="Pantallas del estudio">
+        <div className="product-tour-copy">
+          <p className="eyebrow">Fabrica / Por dentro</p>
+          <h3>{productScreens[screenIndex].title}</h3>
+          <p>{productScreens[screenIndex].detail}</p>
+          <div className="product-tour-tabs" role="tablist" aria-label="Elegí una pantalla">
+            {productScreens.map((screen, index) => <button key={screen.title} role="tab" aria-selected={screenIndex === index} aria-controls="product-screen" onClick={() => setScreenIndex(index)}><span>0{index + 1}</span>{screen.title}</button>)}
+          </div>
+        </div>
+        <div className="product-screen" id="product-screen" role="tabpanel" aria-label={productScreens[screenIndex].title}>
+          <div className="product-screen-bar"><i /><i /><i /><span>fabrica / estudio</span></div>
+          <Image key={productScreens[screenIndex].image} src={productScreens[screenIndex].image} alt={`Pantalla de ${productScreens[screenIndex].title} en Fabrica`} width={1280} height={720} />
+        </div>
       </div>
       <section id="precios" className="pricing-section" aria-labelledby="pricing-title">
         <div className="pricing-intro"><p className="eyebrow">Fabrica / Precios</p><h2 id="pricing-title">Un plan para cada<br /><em>forma de crear.</em></h2><p>Empezá con 14 días de prueba. Elegí más capacidad cuando tu estudio la necesite.</p></div>
