@@ -2332,6 +2332,7 @@ export default function Studio({
       <StudioHeader
         label={account?.name || (accessMode === 'professional' ? 'Estudio local' : viewerName)}
         shareEnabled={Boolean(professional && accountOwner && activeProject)}
+        loading={dataLoading}
         project={
           <StudioProjectSwitcher
             name={account?.name || viewerName || 'Estudio'}

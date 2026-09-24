@@ -262,6 +262,7 @@ export default function Workspace({
       <StudioHeader
         label={data?.viewer.name || 'Estudio local'}
         shareEnabled={Boolean(data && !loading && !error && !share && !data.viewer.external && data.viewer.accountOwner)}
+        loading={loading || !data}
         project={
           <StudioProjectSwitcher
             name={data?.viewer.name || 'Estudio'}

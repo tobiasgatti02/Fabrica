@@ -1,14 +1,14 @@
 'use client';
 
-import { createContext, useContext, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react';
+import { createContext, useContext, useMemo, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react';
 import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
 import { Box, LayoutDashboard, Lightbulb, Share2, UserRound, UsersRound } from 'lucide-react';
 import { StudioTourTrigger } from './studio-tour';
 
 type ChromeControls = {
-  projectSlot: HTMLDivElement | null;
   setProjectLabel: Dispatch<SetStateAction<string>>;
+  setProjectRegistration: Dispatch<SetStateAction<{ node: ReactNode; path: string } | null>>;
   setShareEnabled: Dispatch<SetStateAction<boolean>>;
 };
 const StudioChromeControls = createContext<ChromeControls | null>(null);
@@ -24,9 +24,10 @@ const areas = [
 export function StudioChrome({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const search = useSearchParams();
-  const [projectSlot, setProjectSlot] = useState<HTMLDivElement | null>(null);
   const [projectLabel, setProjectLabel] = useState('Estudio local');
+  const [projectRegistration, setProjectRegistration] = useState<{ node: ReactNode; path: string } | null>(null);
   const [shareEnabled, setShareEnabled] = useState(false);
+  const controls = useMemo(() => ({ setProjectLabel, setProjectRegistration, setShareEnabled }), []);
   const isWorkspace = pathname === '/estudio' || areas.some((area) => area.path === pathname);
   const params = new URLSearchParams();
   for (const key of ['project', 'share', 'invite']) {
@@ -35,15 +36,15 @@ export function StudioChrome({ children }: { children: ReactNode }) {
   }
   const query = params.toString();
 
-  return <StudioChromeControls.Provider value={{ projectSlot, setProjectLabel, setShareEnabled }}>
+  return <StudioChromeControls.Provider value={controls}>
     {isWorkspace && <header className="studio-shared-header studio-static-header">
       <div className="studio-shared-header-leading">
         <Link href="/" className="studio-shared-brand" aria-label="Fabrica, volver al inicio">
           <span className="wordmark">fabrica<span aria-hidden="true">®</span></span>
         </Link>
         <span className="studio-shared-divider" aria-hidden="true" />
-        <div className="studio-static-project" ref={setProjectSlot}>
-          <span className="studio-project-loading"><span>{projectLabel}</span><span className="studio-loading-dot" aria-label="Cargando proyectos" /></span>
+        <div className={`studio-static-project${projectRegistration && projectRegistration.path !== pathname ? ' is-switching' : ''}`} aria-busy={projectRegistration ? projectRegistration.path !== pathname : true}>
+          {projectRegistration?.node || <span className="studio-project-loading"><span>{projectLabel}</span><span className="studio-loading-dot" aria-label="Cargando proyectos" /></span>}
         </div>
       </div>
       <nav className="studio-area-nav" aria-label="Áreas del estudio">
