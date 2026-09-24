@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
 import { Box, LayoutDashboard, Lightbulb, Share2, UserRound, UsersRound } from 'lucide-react';
 import { StudioTourTrigger } from './studio-tour';
+import { hardNavigate } from './hard-navigation';
 
 type ChromeControls = {
   setProjectLabel: Dispatch<SetStateAction<string>>;
@@ -49,12 +50,13 @@ export function StudioChrome({ children }: { children: ReactNode }) {
       </div>
       <nav className="studio-area-nav" aria-label="Áreas del estudio">
         <div className="studio-area-nav-links">
-          {areas.map(({ id, label, path, icon: Icon }) => <Link
+          {areas.map(({ id, label, path, icon: Icon }) => <a
             key={id}
             href={`${path}${query ? `?${query}` : ''}`}
             data-tour={id}
+            onClick={hardNavigate}
             aria-current={path === pathname ? 'page' : undefined}
-          ><Icon size={16} aria-hidden="true" /><span>{label}</span></Link>)}
+          ><Icon size={16} aria-hidden="true" /><span>{label}</span></a>)}
         </div>
       </nav>
       <div className="studio-static-actions">

@@ -2,13 +2,13 @@
 
 import dynamic from 'next/dynamic';
 import Image from 'next/image';
-import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowUpRight, ArrowDown } from 'lucide-react';
 import { gsap } from 'gsap';
 import { ScrollTrigger } from 'gsap/ScrollTrigger';
 import { chapters, chapterAt, clamp, INTERIOR_START } from './timeline';
 import type { SceneController } from './scene/house-scene';
+import { hardNavigate } from './hard-navigation';
 
 const HouseScene = dynamic(() => import('./scene/house-scene'), { ssr: false });
 export function Wordmark() { return <span className="wordmark">fabrica<span aria-hidden="true">®</span></span>; }
@@ -92,7 +92,7 @@ export default function Landing() {
       <nav aria-label="Navegación principal">
         <a className="header-nav-link" href="#para-estudios">El estudio</a>
         <a className="header-nav-link" href="#precios">Precios</a>
-        <Link className="header-cta action-button action-button--primary" href="/estudio">Entrar al estudio <ArrowUpRight size={17} /></Link>
+        <a className="header-cta action-button action-button--primary" href="/estudio" onClick={hardNavigate}>Entrar al estudio <ArrowUpRight size={17} /></a>
       </nav>
     </header>
 
@@ -119,7 +119,7 @@ export default function Landing() {
         <footer id="interior" className={`interior-footer ${inside ? 'is-visible' : ''}`} aria-hidden={!inside} inert={!inside}>
           <div className="interior-top"><span className="eyebrow">03 / Bienvenido a Casa Patio</span><span>Estar · Una nueva perspectiva</span></div>
           <div className="interior-content"><p className="eyebrow">Fabrica / Tu estudio online</p><h2>Tu trabajo,<br /><em>en contexto.</em></h2><p>Presentá cada proyecto con claridad.<br />Invitá a tus clientes a recorrerlo y decidir.</p>
-            <div className="interior-actions"><Link className="solid-link action-button action-button--primary" href="/estudio">Entrar al estudio <ArrowUpRight size={18} /></Link><a className="action-button action-button--secondary" href="#para-estudios">Ver cómo funciona <ArrowDown size={17} /></a></div>
+            <div className="interior-actions"><a className="solid-link action-button action-button--primary" href="/estudio" onClick={hardNavigate}>Entrar al estudio <ArrowUpRight size={18} /></a><a className="action-button action-button--secondary" href="#para-estudios">Ver cómo funciona <ArrowDown size={17} /></a></div>
           </div>
 
         </footer>
@@ -141,7 +141,7 @@ export default function Landing() {
           <div><span>02</span><h3>Entregas</h3><p>Publicá versiones y mantené a mano lo que cambió.</p></div>
           <div><span>03</span><h3>Conversaciones</h3><p>Comentarios sobre el espacio, con su contexto y su historial.</p></div>
         </div>
-        <Link className="studio-open action-button action-button--primary" href="/estudio">Conocer el estudio <ArrowUpRight size={17} /></Link>
+        <a className="studio-open action-button action-button--primary" href="/estudio" onClick={hardNavigate}>Conocer el estudio <ArrowUpRight size={17} /></a>
         <p className="demo-note">Podés explorar Casa Patio, un proyecto de muestra.</p>
       </div>
       <section id="precios" className="pricing-section" aria-labelledby="pricing-title">
@@ -153,12 +153,12 @@ export default function Landing() {
             <h3>{planNames[plan.key] || plan.key}</h3>
             <p className="pricing-amount">{trial ? 'Gratis' : price.format(plan.amountCents / 100)}{!trial && <small> / mes</small>}</p>
             <ul><li>{plan.rights.projects} {plan.rights.projects === 1 ? 'proyecto' : 'proyectos'}</li><li>{plan.rights.storageBytes / 1024 ** 3} GB para modelos y mesa de trabajo</li><li>{plan.rights.professionals} profesionales</li><li>{plan.rights.clients === null ? 'Clientes ilimitados' : `${plan.rights.clients} clientes`}</li>{plan.rights.teamPermissions && <li>Permisos por área</li>}{plan.rights.advancedAdmin && <li>Administración avanzada</li>}{plan.rights.prioritySupport && <li>Soporte prioritario</li>}</ul>
-            <Link className="pricing-link action-button action-button--secondary" href={trial ? '/estudio' : `/estudio/facturacion?plan=${encodeURIComponent(plan.key)}`}>{trial ? 'Empezar prueba' : 'Elegir plan'} <ArrowUpRight size={17} /></Link>
+            <a className="pricing-link action-button action-button--secondary" href={trial ? '/estudio' : `/estudio/facturacion?plan=${encodeURIComponent(plan.key)}`} onClick={hardNavigate}>{trial ? 'Empezar prueba' : 'Elegir plan'} <ArrowUpRight size={17} /></a>
           </article>;
         })}{!plans.length && <p className="pricing-loading">{plansError ? 'No pudimos cargar los precios. Intentá más tarde.' : 'Cargando planes y precios actuales…'}</p>}</div>
         <p className="pricing-note">Cobro mensual mediante Mercado Pago. Tus límites y el estado de la suscripción se actualizan en el estudio.</p>
       </section>
-      <div className="studio-footer"><Wordmark /><span>Un espacio propio para cada proyecto.</span><Link className="action-button action-button--secondary" href="/estudio">Entrar al estudio <ArrowUpRight size={16} /></Link></div>
+      <div className="studio-footer"><Wordmark /><span>Un espacio propio para cada proyecto.</span><a className="action-button action-button--secondary" href="/estudio" onClick={hardNavigate}>Entrar al estudio <ArrowUpRight size={16} /></a></div>
     </section>
   </main>;
 }
