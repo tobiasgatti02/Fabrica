@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { CalendarClock, Link2, RotateCcw, Share2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -15,8 +15,10 @@ import type { WorkspaceProject } from '@/features/workspace/client';
 
 export function WorkspaceShareControl({
   project,
+  showTrigger = true,
 }: {
   project: WorkspaceProject;
+  showTrigger?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [token, setToken] = useState(project.share || '');
@@ -25,6 +27,11 @@ export function WorkspaceShareControl({
   const [days, setDays] = useState(30);
   const [busy, setBusy] = useState(false);
   const [checkedAt, setCheckedAt] = useState(0);
+  useEffect(() => {
+    const openShare = () => { setCheckedAt(Date.now()); setOpen(true); };
+    window.addEventListener('fabrica:open-share', openShare);
+    return () => window.removeEventListener('fabrica:open-share', openShare);
+  }, []);
   const active =
     enabled && Boolean(token) && (!expires || expires > checkedAt);
   const link = (value: string) =>
@@ -79,13 +86,13 @@ export function WorkspaceShareControl({
 
   return (
     <>
-      <button
+      {showTrigger && <button
         type="button"
         className="studio-nav-share"
       onClick={() => { setCheckedAt(Date.now()); setOpen(true); }}
       >
         <Share2 aria-hidden="true" /> Compartir
-      </button>
+      </button>}
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="small-studio-dialog share-access-dialog">
           <DialogTitle>Compartir con el cliente</DialogTitle>

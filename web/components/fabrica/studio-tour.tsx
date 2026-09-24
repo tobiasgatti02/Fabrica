@@ -38,15 +38,15 @@ const steps = [
   },
   {
     area: 'modelo',
-    target: 'import',
+    target: 'model-tools',
     title: 'Importá tu primer modelo',
-    text: 'Usá Importar modelo para subir el archivo y sus recursos. Al guardarlos se crea la primera versión del proyecto, lista para explorar y revisar.',
+    text: 'Abrí Herramientas → Importar modelo para subir el archivo y sus recursos. Al guardarlos se crea la primera versión del proyecto, lista para explorar y revisar.',
   },
   {
     area: 'modelo',
-    target: 'versions',
+    target: 'model-tools',
     title: 'Guardá cada avance',
-    text: 'Después de importar, Nueva versión crea un borrador a partir de la versión actual. Dale un nombre y una descripción para conservar el historial sin perder las entregas anteriores.',
+    text: 'Después de importar, abrí Herramientas → Nueva versión para crear un borrador a partir de la versión actual. Dale un nombre y una descripción para conservar el historial.',
   },
   {
     area: 'inspiracion',
@@ -58,11 +58,13 @@ const steps = [
 
 const restartEvent = 'fabrica:restart-studio-tour';
 
-export function StudioTourTrigger() {
+export function StudioTourTrigger({ disabled = false }: { disabled?: boolean }) {
   return (
     <button
       type="button"
       className="studio-tour-trigger"
+      title="Recorrido guiado"
+      disabled={disabled}
       onClick={() => window.dispatchEvent(new Event(restartEvent))}
     >
       <Compass size={16} />

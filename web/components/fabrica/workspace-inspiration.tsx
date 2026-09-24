@@ -2538,10 +2538,7 @@ function WorktableCanvas({
   return (
     <div className="workspace-content inspiration-page">
       <section className="workspace-section inspiration-board-section">
-        <div className="inspiration-command-bar">
-          <div className="inspiration-board-title">
-            <h1>{board?.title || 'Mesa principal'}</h1>
-          </div>
+        <div className="inspiration-canvas-wrap">
           <div className="inspiration-presence" aria-label="Personas en esta mesa">
             <div className="inspiration-presence-heading">
               <UsersRound size={15} aria-hidden="true" />
@@ -2560,8 +2557,6 @@ function WorktableCanvas({
               </div>
             ))}
           </div>
-        </div>
-        <div className="inspiration-canvas-wrap">
           <div
             className="inspiration-tools"
             role="toolbar"
@@ -4408,7 +4403,7 @@ export default function Inspiration(props: WorkspaceViewProps) {
       {
         id: 'default',
         project,
-        title: 'Mesa principal',
+        title: 'Mesa 1',
         template: 'blank',
         created: 0,
       },

@@ -7,13 +7,14 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowUpRight, ArrowDown } from 'lucide-react';
 import { gsap } from 'gsap';
 import { ScrollTrigger } from 'gsap/ScrollTrigger';
-import { chapters, chapterAt, clamp } from './timeline';
+import { chapters, chapterAt, clamp, INTERIOR_START } from './timeline';
 import type { SceneController } from './scene/house-scene';
 
 const HouseScene = dynamic(() => import('./scene/house-scene'), { ssr: false });
 export function Wordmark() { return <span className="wordmark">fabrica<span aria-hidden="true">®</span></span>; }
 
 const stageRenders = ['terrain', 'foundation', 'framing', 'shell', 'finishes', 'exterior', 'interior'];
+const fallbackStageAt = [0, .1, .28, .5, .62, .76, INTERIOR_START];
 type PublicPlan = { key: string; amountCents: number; currency: string; rights: {
   projects: number; storageBytes: number; professionals: number; clients: number | null;
   teamPermissions: boolean; advancedAdmin: boolean; prioritySupport: boolean;
@@ -21,8 +22,16 @@ type PublicPlan = { key: string; amountCents: number; currency: string; rights: 
 const planNames: Record<string, string> = { prueba: 'Prueba', inicial: 'Inicial', estudio: 'Estudio', equipo: 'Equipo' };
 const price = new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 });
 function FallbackHouse({ progress }: { progress: number }) {
-  const stage = progress >= .965 ? 6 : Math.min(5, chapterAt(progress));
+  const stage = fallbackStageAt.reduce((current, at, index) => progress >= at ? index : current, 0);
   return <>{stageRenders.map((name, i) => <Image key={name} className="fallback-render" style={{ opacity: i === stage ? 1 : 0, transition: 'opacity .7s ease' }} src={`/images/casa-patio-${name}.webp`} width={1600} height={1000} alt="" />)}</>;
+}
+
+function FallingTitle({ first, second }: { first: string; second: string }) {
+  const renderWords = (line: string, start: number) => line.split(' ').map((word, index, words) => <span key={`${start}-${index}`} className="title-word" style={{ animationDelay: `${(start + index) * 135 + 120}ms` }}>{word}{index < words.length - 1 ? '\u00a0' : ''}</span>);
+  return <h2 aria-label={`${first} ${second}`} className="falling-title">
+    <span className="title-line" aria-hidden="true">{renderWords(first, 0)}</span>
+    <em className="title-line" aria-hidden="true">{renderWords(second, first.split(' ').length)}</em>
+  </h2>;
 }
 
 export default function Landing() {
@@ -38,7 +47,7 @@ export default function Landing() {
   const markReady = useCallback(() => setReady(true), []);
   const markFailed = useCallback(() => { sceneFailed.current = true; setFailed(true); setProgress(controller.current.progress); }, []);
   const chapter = chapterAt(progress);
-  const inside = progress > .965;
+  const inside = progress >= INTERIOR_START;
   const goTo = useCallback((p: number) => {
     if (!story.current) return;
     const element = story.current;
@@ -68,7 +77,7 @@ export default function Landing() {
         if (sceneFailed.current) setProgress(p);
       },
     });
-    const hash = () => { const index = chapters.findIndex(c => `#${c.id}` === window.location.hash); if (index >= 0) goTo(index === 6 ? 1 : chapters[index].at + .025); };
+    const hash = () => { const index = chapters.findIndex(c => `#${c.id}` === window.location.hash); if (index >= 0) goTo(chapters[index].at + (index === 0 ? 0 : .02)); };
     window.addEventListener('hashchange', hash);
     const refresh = requestAnimationFrame(() => { ScrollTrigger.refresh(); hash(); });
     return () => { cancelAnimationFrame(refresh); trigger.kill(); media.removeEventListener('change', motion); window.removeEventListener('hashchange', hash); };
@@ -97,18 +106,18 @@ export default function Landing() {
         <div className="scene-vignette" aria-hidden="true" />
         <div className="hero-ghost" aria-hidden="true" style={{ opacity: 1 - Math.min(1, progress / .14), transform: `translateY(${progress * 180}px)` }}>fabrica</div>
 
-        <div className="story-copy" style={{ opacity: progress > .80 ? Math.max(0, 1 - (progress - .80) / .06) : 1 }} aria-hidden={progress > .86} inert={progress > .86}>
+        <div className="story-copy" style={{ opacity: progress > .84 ? Math.max(0, 1 - (progress - .84) / .05) : 1 }} aria-hidden={progress > .89} inert={progress > .89}>
           <div key={chapter} className={`chapter-copy ${reduced ? 'no-motion' : ''}`}>
             <p className="eyebrow"><span>{chapters[chapter].number} /</span> {chapters[chapter].label}</p>
-            {chapter === 0 ? <h2>Tu estudio.<br /><em>En su mejor lugar.</em></h2> : <h2>{chapters[chapter].title[0]}<br /><em>{chapters[chapter].title[1]}</em></h2>}
+            <FallingTitle first={chapters[chapter].title[0]} second={chapters[chapter].title[1]} />
             <p className="chapter-description">{chapters[chapter].text}</p>
-            {chapter === 0 && <button className="round-link action-button action-button--secondary" onClick={() => goTo(.18)}><span className="round-icon"><ArrowDown size={20} /></span>Conocé el estudio</button>}
+            {chapter === 0 && <button className="round-link action-button action-button--secondary" onClick={() => goTo(chapters[1].at + .02)}><span className="round-icon"><ArrowDown size={20} /></span>Conocé el estudio</button>}
           </div>
         </div>
         {failed && <output className="loading-label">Recorrido en imágenes · Deslizá para avanzar</output>}
 
         <footer id="interior" className={`interior-footer ${inside ? 'is-visible' : ''}`} aria-hidden={!inside} inert={!inside}>
-          <div className="interior-top"><span className="eyebrow">06 / Bienvenido a Casa Patio</span><span>Estar · Una nueva perspectiva</span></div>
+          <div className="interior-top"><span className="eyebrow">03 / Bienvenido a Casa Patio</span><span>Estar · Una nueva perspectiva</span></div>
           <div className="interior-content"><p className="eyebrow">Fabrica / Tu estudio online</p><h2>Tu trabajo,<br /><em>en contexto.</em></h2><p>Presentá cada proyecto con claridad.<br />Invitá a tus clientes a recorrerlo y decidir.</p>
             <div className="interior-actions"><Link className="solid-link action-button action-button--primary" href="/estudio">Entrar al estudio <ArrowUpRight size={18} /></Link><a className="action-button action-button--secondary" href="#para-estudios">Ver cómo funciona <ArrowDown size={17} /></a></div>
           </div>
@@ -118,7 +127,7 @@ export default function Landing() {
         <div className={`journey-bottom ${inside ? 'at-end' : ''}`}>
           <div className="journey-meta"><span>DE UNA IDEA A UN LUGAR</span><span>{String(Math.round(progress * 100)).padStart(2, '0')}%</span></div>
           <nav className="chapter-nav" aria-label="Etapas de construcción">
-            {chapters.map((c, i) => <button key={c.id} aria-current={chapter === i ? 'step' : undefined} aria-label={`${c.number}: ${c.label}`} onClick={() => goTo(i === 6 ? 1 : c.at + .025)}><span className="chapter-line"><i style={{ transform: `scaleX(${clamp((progress - c.at) / ((chapters[i + 1]?.at ?? 1) - c.at))})` }} /></span><span className="chapter-number">{c.number}</span><span className="chapter-name">{c.label}</span></button>)}
+            {chapters.map((c, i) => <button key={c.id} aria-current={chapter === i ? 'step' : undefined} aria-label={`${c.number}: ${c.label}`} onClick={() => goTo(c.at + (i === 0 ? 0 : .02))}><span className="chapter-line"><i style={{ transform: `scaleX(${clamp((progress - c.at) / ((chapters[i + 1]?.at ?? 1) - c.at))})` }} /></span><span className="chapter-number">{c.number}</span><span className="chapter-name">{c.label}</span></button>)}
           </nav>
         </div>
       </div>
