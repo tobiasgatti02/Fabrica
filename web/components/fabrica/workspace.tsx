@@ -2,16 +2,12 @@
 
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
-import { StudioTourTrigger } from './studio-tour';
-import { StudioAreaNav } from './studio-area-nav';
 import { WorkspaceShareControl } from './workspace-share-control';
 import {
-  StudioAccount,
   StudioHeader,
   StudioProjectSwitcher,
 } from './studio-header';
 import { useCallback, useEffect, useState } from 'react';
-import { ArrowLeft } from 'lucide-react';
 import {
   workspaceRequest,
   type WorkspaceData,
@@ -55,6 +51,28 @@ function ViewSkeleton() {
   );
 }
 
+const workspaceViewCache = new Map<string, WorkspaceData>();
+const cacheKey = (
+  section: WorkspaceSection,
+  project: string,
+  share: string,
+  invite: string,
+) => [section, project, share, invite].join('|');
+function cacheWorkspaceView(
+  section: WorkspaceSection,
+  project: string,
+  share: string,
+  invite: string,
+  next: WorkspaceData,
+) {
+  const key = cacheKey(section, project, share, invite);
+  workspaceViewCache.delete(key);
+  workspaceViewCache.set(key, next);
+  if (workspaceViewCache.size > 6) {
+    workspaceViewCache.delete(workspaceViewCache.keys().next().value!);
+  }
+}
+
 export default function Workspace({
   section,
   initialProject,
@@ -69,8 +87,11 @@ export default function Workspace({
   authenticated: boolean;
 }) {
   const [project, setProject] = useState(initialProject);
-  const [data, setData] = useState<WorkspaceData | null>(null);
-  const [loading, setLoading] = useState(true);
+  const cached = workspaceViewCache.get(
+    cacheKey(section, initialProject, share, invite),
+  );
+  const [data, setData] = useState<WorkspaceData | null>(cached || null);
+  const [loading, setLoading] = useState(!cached);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [invitePending, setInvitePending] = useState(
@@ -89,6 +110,7 @@ export default function Workspace({
         invite,
       );
       setData(next);
+      cacheWorkspaceView(section, selected, share, invite, next);
       setError('');
       return next;
     },
@@ -110,6 +132,7 @@ export default function Workspace({
       .then((next) => {
         if (!controller.signal.aborted) {
           setData(next);
+          cacheWorkspaceView(section, project, share, invite, next);
           setError('');
         }
       })
@@ -237,16 +260,12 @@ export default function Workspace({
       }
     >
       <StudioHeader
+        label={data?.viewer.name || 'Estudio local'}
+        shareEnabled={Boolean(data && !loading && !error && !share && !data.viewer.external && data.viewer.accountOwner)}
         project={
           <StudioProjectSwitcher
-            name={data?.project.name || 'Cargando…'}
-            description={
-              data
-                ? data.viewer.guest
-                  ? 'Vista del cliente'
-                  : `${data.projects.length} ${data.projects.length === 1 ? 'proyecto' : 'proyectos'} en el estudio`
-                : ''
-            }
+            name={data?.viewer.name || 'Estudio'}
+            description={data?.viewer.guest ? 'Vista del cliente' : 'Cambiar proyecto'}
             selectedId={data?.project.id || project}
             projects={data?.projects || []}
             groups={
@@ -275,63 +294,60 @@ export default function Workspace({
                 : data?.clients.length || 0
             }
             onSelect={openProject}
-            actions={data?.viewer.accountOwner ? (close) => <button type="button" disabled={busy} onClick={async () => {
-              close();
-              if (!data || !window.confirm(`¿Eliminar “${data.project.name}” y todos sus archivos? Esta acción no se puede deshacer.`)) return;
-              setBusy(true);
-              try {
-                const response = await fetch(`/api/studio?project=${encodeURIComponent(data.project.id)}`, {
-                  method: 'POST', headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ action: 'delete-project', id: data.project.id }),
-                });
-                const result = await response.json() as { error?: string };
-                if (!response.ok) throw new Error(result.error || 'No se pudo eliminar el proyecto.');
-                window.location.href = '/estudio';
-              } catch (caught) {
-                showErrorToast((caught as Error).message);
-                setBusy(false);
-              }
-            }}>Eliminar proyecto actual</button> : undefined}
-          />
-        }
-        actions={
-          data && !loading && !error && !share && data.viewer.accountOwner ? (
-            <StudioTourTrigger />
-          ) : null
-        }
-        account={
-          <StudioAccount
-            name={data?.viewer.name || 'Estudio'}
-            href={
-              data?.viewer.external
-                ? undefined
-                : `/estudio?${new URLSearchParams({ ...(data?.project.id ? { project: data.project.id } : {}), account: '1' }).toString()}`
+            actions={
+              data?.viewer.accountOwner
+                ? (close) => (
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={async () => {
+                        close();
+                        if (
+                          !data ||
+                          !window.confirm(
+                            `¿Eliminar “${data.project.name}” y todos sus archivos? Esta acción no se puede deshacer.`,
+                          )
+                        )
+                          return;
+                        setBusy(true);
+                        try {
+                          const response = await fetch(
+                            `/api/studio?project=${encodeURIComponent(data.project.id)}`,
+                            {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({
+                                action: 'delete-project',
+                                id: data.project.id,
+                              }),
+                            },
+                          );
+                          const result = (await response.json()) as {
+                            error?: string;
+                          };
+                          if (!response.ok)
+                            throw new Error(
+                              result.error ||
+                                'No se pudo eliminar el proyecto.',
+                            );
+                          window.location.href = '/estudio';
+                        } catch (caught) {
+                          showErrorToast((caught as Error).message);
+                          setBusy(false);
+                        }
+                      }}
+                    >
+                      Eliminar proyecto actual
+                    </button>
+                  )
+                : undefined
             }
           />
         }
       />
-      <StudioAreaNav
-        area={section}
-        project={project || data?.project.id || ''}
-        share={share}
-        invite={invite}
-        showTeam={!share && !data?.viewer.external}
-        showModel={!data?.viewer.external}
-        permissions={data?.viewer.permissions}
-        action={
-          data &&
-          !loading &&
-          !error &&
-          !share &&
-          !data.viewer.external &&
-          data.viewer.accountOwner ? (
-            <WorkspaceShareControl
-              key={data.project.id}
-              project={data.project}
-            />
-          ) : undefined
-        }
-      />
+      {data && !loading && !error && !share && !data.viewer.external && data.viewer.accountOwner && (
+        <WorkspaceShareControl key={data.project.id} project={data.project} showTrigger={false} />
+      )}
       {error && (
         <div className="workspace-error" role="alert">
           <span>{error}</span>
@@ -366,7 +382,6 @@ export default function Workspace({
         </div>
       )}
       <footer className="workspace-footer">
-        
         <span>Un lugar para cada decisión.</span>
       </footer>
     </main>

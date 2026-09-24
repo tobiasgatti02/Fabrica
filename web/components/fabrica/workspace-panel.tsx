@@ -28,10 +28,11 @@ import {
   type WorkspaceTask,
 } from '@/features/workspace/client';
 
-type PanelView = PortalView | 'proyectos' | 'tareas' | 'presupuesto';
+type PanelView = PortalView | 'proyectos' | 'general' | 'tareas' | 'presupuesto';
 const panelViews = [
   { id: 'resumen', label: 'Resumen', icon: ListTodo },
   { id: 'proyectos', label: 'Proyectos', icon: FolderPlus },
+  { id: 'general', label: 'General', icon: Circle },
   { id: 'tareas', label: 'Tareas', icon: Check },
   { id: 'calendario', label: 'Calendario', icon: CalendarDays },
   { id: 'cronograma', label: 'Cronograma', icon: Clock3 },
@@ -104,6 +105,7 @@ export default function Panel({
   openProject,
 }: WorkspaceViewProps) {
   const [view, setView] = useState<PanelView>('resumen');
+  const [level, setLevel] = useState<'studio' | 'project'>('studio');
   const [viewOrder, setViewOrder] = useState<PanelView[]>(defaultViewOrder);
   const [hiddenViews, setHiddenViews] = useState<PanelView[]>([]);
   const [customizeOpen, setCustomizeOpen] = useState(false);
@@ -189,7 +191,17 @@ export default function Panel({
   const soon = openTasks.filter(
     (item) => item.dueDate && item.dueDate <= dates.nextWeek,
   );
-  const totalDone = data.tasks.filter((item) => item.status === 'done').length;
+  const overdue = openTasks.filter((item) => item.dueDate && item.dueDate < dates.today);
+  const attentionTask = [...soon].sort((a, b) => (a.dueDate || '').localeCompare(b.dueDate || ''))[0];
+  const weekDeliveries = data.projects.filter((item) => item.dueDate && item.dueDate >= dates.today && item.dueDate <= dates.nextWeek);
+  const featuredProjects = [...data.projects]
+    .sort((a, b) => (a.dueDate || '9999').localeCompare(b.dueDate || '9999'))
+    .slice(0, 3);
+  const openPanelProject = (id: string, next: PanelView = 'avance') => {
+    openProject(id);
+    setLevel('project');
+    setView(next);
+  };
   const budgetItems = data.budgetItems;
   const budgetPlanned = budgetItems.reduce(
     (sum, item) => sum + item.planned,
@@ -359,41 +371,43 @@ export default function Panel({
     <div className="workspace-content panel-page">
       <header className="panel-page-header">
         <div>
-          <p className="workspace-eyebrow">
-            ESPACIO DE TRABAJO / {data.project.name}
-          </p>
-          <h1>{data.project.name}</h1>
-          <p>
-            {data.project.description ||
-              'Organizá el trabajo, las fechas y las decisiones del proyecto.'}
-          </p>
+          {level === 'project' ? (
+            <nav className="panel-breadcrumb" aria-label="Ruta del proyecto">
+              <button type="button" onClick={() => { setLevel('studio'); setView('proyectos'); }}>Proyectos</button>
+              <span aria-hidden="true">/</span>
+              <span aria-current="page">{data.project.name}</span>
+            </nav>
+          ) : <p className="workspace-eyebrow">{data.viewer.name}</p>}
+          <div className="panel-title-line">
+            <h1>{level === 'studio' ? 'Resumen del estudio' : data.project.name}</h1>
+            {level === 'project' && <span className="panel-stage-badge">{stageLabels[data.project.stage] || 'Proyecto'}</span>}
+          </div>
+          {level === 'project' && <p>{clientNameFor(data.project.client)}</p>}
         </div>
-        <div className="panel-page-header-meta">
-          <span>{stageLabels[data.project.stage] || 'Proyecto'}</span>
-          {data.project.dueDate && (
-            <small>Entrega {shortDate(data.project.dueDate)}</small>
-          )}
-        </div>
+        {level === 'studio' && <div className="panel-overview-stats" aria-label="Indicadores del estudio">
+          <div><strong>{data.projects.length}</strong><span>proyectos activos</span></div>
+          <div><strong>{overdue.length}</strong><span>{overdue.length === 1 ? 'tarea vencida' : 'tareas vencidas'}</span></div>
+          <div><strong>{weekDeliveries.length}</strong><span>entregas esta semana</span></div>
+        </div>}
       </header>
       <div className="panel-views-bar">
-        <nav className="panel-views" aria-label="Vistas del panel">
-          {viewOrder
-            .filter((id) => !hiddenViews.includes(id))
-            .map((id) => {
-              const item = panelViews.find((candidate) => candidate.id === id)!;
-              const Icon = item.icon;
-              return (
-                <button
-                  key={id}
-                  type="button"
-                  aria-current={view === id ? 'page' : undefined}
-                  onClick={() => setView(id)}
-                >
-                  <Icon size={15} aria-hidden="true" />
-                  {item.label}
-                </button>
-              );
-            })}
+        <nav className="panel-views" aria-label={level === 'studio' ? 'Panel del estudio' : 'Proyecto'}>
+          {(level === 'studio'
+            ? [
+                { id: 'resumen', label: 'Resumen' },
+                { id: 'proyectos', label: 'Proyectos' },
+                { id: 'calendario', label: 'Agenda' },
+              ]
+            : [
+                { id: 'general', label: 'General' },
+                { id: 'tareas', label: 'Trabajo' },
+                { id: 'avance', label: 'Seguimiento' },
+                { id: 'presupuesto', label: 'Presupuesto' },
+              ]).map((item) => (
+                <button key={item.id} type="button"
+                  aria-current={(item.id === view || (item.id === 'tareas' && view === 'calendario' && level === 'project') || (item.id === 'avance' && view === 'cronograma')) ? 'page' : undefined}
+                  onClick={() => setView(item.id as PanelView)}>{item.label}</button>
+              ))}
         </nav>
         <div className="panel-view-customize">
           <button
@@ -447,31 +461,37 @@ export default function Panel({
           )}
         </div>
       </div>
+      {level === 'project' && (view === 'tareas' || view === 'calendario' || view === 'avance' || view === 'cronograma') && (
+        <nav className="panel-subviews" aria-label={view === 'tareas' || view === 'calendario' ? 'Vistas de trabajo' : 'Vistas de seguimiento'}>
+          {(view === 'tareas' || view === 'calendario'
+            ? [{ id: 'tareas', label: 'Lista' }, { id: 'calendario', label: 'Calendario' }]
+            : [{ id: 'avance', label: 'Avance y etapas' }, { id: 'cronograma', label: 'Hitos y cronograma' }]
+          ).map((item) => <button key={item.id} type="button" aria-current={view === item.id ? 'page' : undefined} onClick={() => setView(item.id as PanelView)}>{item.label}</button>)}
+        </nav>
+      )}
       {view === 'resumen' && (
-        <section className="panel-metrics" aria-label="Resumen del estudio">
-          <div>
-            <span>01 / PROYECTOS</span>
-            <strong>{data.projects.length.toString().padStart(2, '0')}</strong>
-            <small>En tu cartera</small>
-          </div>
-          <div>
-            <span>02 / PENDIENTES</span>
-            <strong>{openTasks.length.toString().padStart(2, '0')}</strong>
-            <small>En todos los proyectos</small>
-          </div>
-          <div className={soon.length ? 'attention' : ''}>
-            <span>03 / PRÓXIMOS 7 DÍAS</span>
-            <strong>{soon.length.toString().padStart(2, '0')}</strong>
-            <small>
-              {soon.length ? 'Vencidos o por vencer' : 'Sin urgencias'}
-            </small>
-          </div>
-          <div>
-            <span>04 / COMPLETADAS</span>
-            <strong>{totalDone.toString().padStart(2, '0')}</strong>
-            <small>Tareas cerradas</small>
-          </div>
-        </section>
+        <div className="panel-overview-grid">
+          <section className="panel-overview-projects" aria-label="Proyectos recientes">
+            <div className="panel-overview-table-head"><span>Proyecto</span><span>Etapa</span><span>Próxima entrega</span><span className="sr-only">Abrir</span></div>
+            {featuredProjects.length ? featuredProjects.map((item) => (
+              <button key={item.id} type="button" className="panel-overview-row" onClick={() => openPanelProject(item.id)}>
+                <strong>{item.name}</strong>
+                <span className="panel-stage-badge">{stageLabels[item.stage] || 'Proyecto'}</span>
+                <span>{item.dueDate ? shortDate(item.dueDate) : 'Sin fecha'}</span>
+                <ArrowRight size={16} aria-hidden="true" />
+              </button>
+            )) : <div className="panel-overview-empty">Todavía no hay proyectos. Creá el primero desde Proyectos.</div>}
+          </section>
+          <aside className="panel-attention" aria-label="Necesita atención">
+            <h2>Necesita atención</h2>
+            {attentionTask ? <>
+              <strong>{attentionTask.title}</strong>
+              <span className="panel-attention-date">{attentionTask.dueDate && attentionTask.dueDate < dates.today ? 'Vencida' : 'Próxima'} · {shortDate(attentionTask.dueDate)}</span>
+              <p>{data.projects.find((item) => item.id === attentionTask.project)?.name || 'Proyecto'}</p>
+              <button type="button" onClick={() => openPanelProject(attentionTask.project, 'tareas')}>Ver tarea <ArrowRight size={15} aria-hidden="true" /></button>
+            </> : <p>Todo al día. Las tareas próximas aparecerán acá.</p>}
+          </aside>
+        </div>
       )}
       {view === 'proyectos' && (
         <section className="workspace-section">
@@ -495,7 +515,7 @@ export default function Panel({
                 key={item.id}
                 type="button"
                 className={`panel-project-card ${item.id === data.project.id ? 'selected' : ''}`}
-                onClick={() => openProject(item.id)}
+                onClick={() => openPanelProject(item.id)}
               >
                 <div className="panel-project-top">
                   <span>
@@ -532,12 +552,12 @@ export default function Panel({
           </div>
         </section>
       )}
-      {view === 'resumen' && (
+      {view === 'general' && (
         <section className="workspace-section panel-detail" id="project-detail">
           <div className="workspace-section-head">
             <div>
-              <p className="workspace-eyebrow">PROYECTO SELECCIONADO</p>
-              <h2>{data.project.name}</h2>
+              <p className="workspace-eyebrow">Proyecto</p>
+              <h2>Información general</h2>
               <p className="workspace-muted">
                 {data.viewer.guest
                   ? 'Seguimiento del proyecto'
@@ -554,7 +574,7 @@ export default function Panel({
                   <Copy size={15} /> Copiar resumen
                 </button>
                 <button
-                  className="workspace-secondary"
+                  className="workspace-primary"
                   onClick={() => {
                     setProjectDraft({
                       stage: data.project.stage,
@@ -570,7 +590,7 @@ export default function Panel({
                   }}
                 >
                   <Pencil size={15} />{' '}
-                  {editingProject ? 'Cerrar edición' : 'Editar seguimiento'}
+                  {editingProject ? 'Cerrar edición' : 'Editar proyecto'}
                 </button>
               </div>
             )}
@@ -664,42 +684,17 @@ export default function Panel({
           )}
           <div className="panel-project-summary">
             <div>
-              <span>ETAPA ACTUAL</span>
-              <strong>{stageLabels[data.project.stage] || 'Idea'}</strong>
-            </div>
-            <div>
-              <span>INICIO</span>
+              <span>Inicio</span>
               <strong>{shortDate(data.project.startDate)}</strong>
             </div>
             <div>
-              <span>ENTREGA PREVISTA</span>
+              <span>Entrega prevista</span>
               <strong>{shortDate(data.project.dueDate)}</strong>
-            </div>
-            <div>
-              <span>AVANCE</span>
-              <strong>
-                {progress(data.project.id) === null
-                  ? 'Sin definir'
-                  : `${progress(data.project.id)}%`}
-              </strong>
             </div>
           </div>
           {data.project.description && (
             <p className="panel-description">{data.project.description}</p>
           )}
-          <div className="panel-stage-track" aria-label="Etapas del proyecto">
-            {stageOrder.map((stage, index) => (
-              <span
-                key={stage}
-                className={
-                  index <= stageOrder.indexOf(data.project.stage)
-                    ? 'active'
-                    : ''
-                }
-                title={stageLabels[stage]}
-              />
-            ))}
-          </div>
         </section>
       )}
       {view === 'presupuesto' && (
@@ -708,9 +703,6 @@ export default function Panel({
             <div>
               <p className="workspace-eyebrow">CONTROL DEL PROYECTO</p>
               <h2>Presupuesto y decisiones</h2>
-              <p className="workspace-muted">
-                Lo que se define en el diseño, sin perder de vista su impacto.
-              </p>
             </div>
             {data.viewer.permissions.panel === 'edit' && (
               <button
@@ -1226,7 +1218,45 @@ export default function Panel({
           )}
         </section>
       )}
-      {portalViews.includes(view) && (
+      {view === 'avance' && (
+        <section className="panel-followup" aria-label="Seguimiento del proyecto">
+          <div className="panel-followup-head">
+            <h2>Seguimiento</h2>
+            {data.viewer.permissions.panel === 'edit' && <button type="button" className="workspace-primary" onClick={() => { setEditingProject(true); setView('general'); }}>Actualizar avance</button>}
+          </div>
+          <div className="panel-followup-grid">
+            <div className="panel-followup-main">
+              <h3>Etapas del proyecto</h3>
+              <div className="panel-stage-list">
+                {stageOrder.map((stage, index) => {
+                  const current = stageOrder.indexOf(data.project.stage);
+                  return <div key={stage} className={index < current ? 'done' : index === current ? 'current' : ''}>
+                    <span className="panel-stage-dot">{index < current ? <Check size={13} aria-hidden="true" /> : null}</span>
+                    <strong>{stageLabels[stage]}</strong>
+                    <small>{index < current ? 'Completada' : index === current ? 'En curso' : 'Pendiente'}</small>
+                  </div>;
+                })}
+              </div>
+              <div className="panel-milestones">
+                <h3>Próximos hitos</h3>
+                {projectTasks.length ? <>
+                  <div className="panel-milestone-head"><span>Hito</span><span>Fecha</span><span>Estado</span></div>
+                  {projectTasks.slice(0, 4).map((task) => <div className="panel-milestone-row" key={task.id}>
+                    <span>{task.title}</span><span>{shortDate(task.dueDate)}</span><span>{task.status === 'done' ? 'Completado' : 'Pendiente'}</span>
+                  </div>)}
+                </> : <p>Todavía no hay hitos. Agregá tareas desde Trabajo para empezar el seguimiento.</p>}
+              </div>
+            </div>
+            <aside className="panel-followup-status">
+              <h3>Estado actual</h3>
+              <div><span>Avance</span><strong>{progress(data.project.id) === null ? 'Sin definir' : `${progress(data.project.id)}%`}</strong><span className="panel-progress"><span style={{ width: `${progress(data.project.id) ?? 0}%` }} /></span></div>
+              <div><span>Próxima entrega</span><strong>{shortDate(data.project.dueDate)}</strong></div>
+              <div><span>Cliente</span><strong>{clientNameFor(data.project.client)}</strong></div>
+            </aside>
+          </div>
+        </section>
+      )}
+      {portalViews.includes(view) && view !== 'avance' && (
         <ClientPortal
           data={data}
           selectedView={view as PortalView}

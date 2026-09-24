@@ -1,0 +1,74 @@
+'use client';
+
+import { createContext, useContext, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react';
+import Link from 'next/link';
+import { usePathname, useSearchParams } from 'next/navigation';
+import { Box, LayoutDashboard, Lightbulb, Share2, UserRound, UsersRound } from 'lucide-react';
+import { StudioTourTrigger } from './studio-tour';
+
+type ChromeControls = {
+  projectSlot: HTMLDivElement | null;
+  setProjectLabel: Dispatch<SetStateAction<string>>;
+  setShareEnabled: Dispatch<SetStateAction<boolean>>;
+};
+const StudioChromeControls = createContext<ChromeControls | null>(null);
+export const useStudioChromeControls = () => useContext(StudioChromeControls);
+
+const areas = [
+  { id: 'panel', label: 'Panel', path: '/estudio/panel', icon: LayoutDashboard },
+  { id: 'inspiracion', label: 'Mesa de trabajo', path: '/estudio/inspiracion', icon: Lightbulb },
+  { id: 'modelo', label: 'Modelo 3D', path: '/estudio', icon: Box },
+  { id: 'equipo', label: 'Equipo', path: '/estudio/equipo', icon: UsersRound },
+] as const;
+
+export function StudioChrome({ children }: { children: ReactNode }) {
+  const pathname = usePathname();
+  const search = useSearchParams();
+  const [projectSlot, setProjectSlot] = useState<HTMLDivElement | null>(null);
+  const [projectLabel, setProjectLabel] = useState('Estudio local');
+  const [shareEnabled, setShareEnabled] = useState(false);
+  const isWorkspace = pathname === '/estudio' || areas.some((area) => area.path === pathname);
+  const params = new URLSearchParams();
+  for (const key of ['project', 'share', 'invite']) {
+    const value = search.get(key);
+    if (value) params.set(key, value);
+  }
+  const query = params.toString();
+
+  return <StudioChromeControls.Provider value={{ projectSlot, setProjectLabel, setShareEnabled }}>
+    {isWorkspace && <header className="studio-shared-header studio-static-header">
+      <div className="studio-shared-header-leading">
+        <Link href="/" className="studio-shared-brand" aria-label="Fabrica, volver al inicio">
+          <span className="wordmark">fabrica<span aria-hidden="true">®</span></span>
+        </Link>
+        <span className="studio-shared-divider" aria-hidden="true" />
+        <div className="studio-static-project" ref={setProjectSlot}>
+          <span className="studio-project-loading"><span>{projectLabel}</span><span className="studio-loading-dot" aria-label="Cargando proyectos" /></span>
+        </div>
+      </div>
+      <nav className="studio-area-nav" aria-label="Áreas del estudio">
+        <div className="studio-area-nav-links">
+          {areas.map(({ id, label, path, icon: Icon }) => <Link
+            key={id}
+            href={`${path}${query ? `?${query}` : ''}`}
+            data-tour={id}
+            aria-current={path === pathname ? 'page' : undefined}
+          ><Icon size={16} aria-hidden="true" /><span>{label}</span></Link>)}
+        </div>
+      </nav>
+      <div className="studio-static-actions">
+        <StudioTourTrigger disabled={Boolean(search.get('share') || search.get('invite'))} />
+        <button type="button" className="studio-nav-share" title="Compartir proyecto" disabled={!shareEnabled} onClick={() => window.dispatchEvent(new Event('fabrica:open-share'))}>
+          <Share2 aria-hidden="true" /> Compartir
+        </button>
+      </div>
+      <Link
+        className="studio-static-account"
+        href={`/estudio?${new URLSearchParams({ ...(params.get('project') ? { project: params.get('project')! } : {}), account: '1' }).toString()}`}
+        aria-label="Abrir perfil y configuración"
+        onClick={() => window.dispatchEvent(new Event('fabrica:open-account'))}
+      ><UserRound size={17} aria-hidden="true" /></Link>
+    </header>}
+    {children}
+  </StudioChromeControls.Provider>;
+}

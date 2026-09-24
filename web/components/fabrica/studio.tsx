@@ -40,6 +40,7 @@ import {
   LogOut,
   Box,
   CopyPlus,
+  ChevronDown,
   FileText,
   Files,
   Ruler,
@@ -47,6 +48,15 @@ import {
   X,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
@@ -88,10 +98,7 @@ import {
   viewFormats,
 } from './model-import';
 import { StudioAuthPanel } from './studio-auth-panel';
-import { StudioTourTrigger } from './studio-tour';
-import { StudioAreaNav } from './studio-area-nav';
 import {
-  StudioAccount,
   StudioHeader,
   StudioProjectSwitcher,
 } from './studio-header';
@@ -1400,6 +1407,14 @@ export default function Studio({
   const [accountOpen, setAccountOpen] = useState(
     !accessMode || initialAccountOpen,
   );
+  useEffect(() => {
+    if (initialAccountOpen) setAccountOpen(true);
+  }, [initialAccountOpen]);
+  useEffect(() => {
+    const openAccount = () => setAccountOpen(true);
+    window.addEventListener('fabrica:open-account', openAccount);
+    return () => window.removeEventListener('fabrica:open-account', openAccount);
+  }, []);
   const [importOpen, setImportOpen] = useState(false);
   const [versions, setVersions] = useState<StoredVersion[]>([]);
   const [clients, setClients] = useState<StoredClient[]>([]);
@@ -1440,6 +1455,12 @@ export default function Studio({
   const [followPeerId, setFollowPeerId] = useState<string | null>(null);
   const [canEdit, setCanEdit] = useState(false);
   const [accountOwner, setAccountOwner] = useState(false);
+  useEffect(() => {
+    if (accessMode !== 'professional' || !accountOwner || !activeProject) return;
+    const openShare = () => setShareDialogOpen(true);
+    window.addEventListener('fabrica:open-share', openShare);
+    return () => window.removeEventListener('fabrica:open-share', openShare);
+  }, [accessMode, accountOwner, activeProject]);
   const [saving, setSaving] = useState(false);
   const [inspector, setInspector] = useState<
     'objects' | 'measurements' | 'plans' | null
@@ -1917,15 +1938,33 @@ export default function Studio({
   };
   const deleteProject = async () => {
     if (!activeProject || saving) return;
-    const name = projects.find((item) => item.id === activeProject)?.name || 'este proyecto';
-    if (!window.confirm(`¿Eliminar “${name}” y todos sus modelos, planos y archivos? Esta acción no se puede deshacer.`)) return;
+    const name =
+      projects.find((item) => item.id === activeProject)?.name ||
+      'este proyecto';
+    if (
+      !window.confirm(
+        `¿Eliminar “${name}” y todos sus modelos, planos y archivos? Esta acción no se puede deshacer.`,
+      )
+    )
+      return;
     setSaving(true);
     try {
-      await studioRequest({ action: 'delete-project', id: activeProject }, '', activeProject);
-      const nextId = projects.find((item) => item.id !== activeProject)?.id || '';
+      await studioRequest(
+        { action: 'delete-project', id: activeProject },
+        '',
+        activeProject,
+      );
+      const nextId =
+        projects.find((item) => item.id !== activeProject)?.id || '';
       const next = await refresh(nextId, '');
       const nextProject = next.project?.id || nextId;
-      window.history.replaceState({}, '', nextProject ? `/estudio?project=${encodeURIComponent(nextProject)}` : '/estudio');
+      window.history.replaceState(
+        {},
+        '',
+        nextProject
+          ? `/estudio?project=${encodeURIComponent(nextProject)}`
+          : '/estudio',
+      );
       changeVersion((next.versions as StoredVersion[]).at(-1)?.id || '');
       showToast('Proyecto y archivos eliminados');
     } catch (error) {
@@ -2291,9 +2330,11 @@ export default function Studio({
       }`}
     >
       <StudioHeader
+        label={account?.name || (accessMode === 'professional' ? 'Estudio local' : viewerName)}
+        shareEnabled={Boolean(professional && accountOwner && activeProject)}
         project={
           <StudioProjectSwitcher
-            name={activeProjectName}
+            name={account?.name || viewerName || 'Estudio'}
             description={
               professional
                 ? `${activeClient?.name || 'Sin cliente asignado'} · ${activeVersion?.name || 'Sin entregas'}`
@@ -2347,7 +2388,14 @@ export default function Studio({
                       >
                         <FolderPlus /> Nuevo proyecto
                       </button>
-                      <button type="button" disabled={saving} onClick={() => { close(); void deleteProject(); }}>
+                      <button
+                        type="button"
+                        disabled={saving}
+                        onClick={() => {
+                          close();
+                          void deleteProject();
+                        }}
+                      >
                         Eliminar proyecto actual
                       </button>
                     </>
@@ -2356,75 +2404,6 @@ export default function Studio({
             }
           />
         }
-        actions={
-          <>
-            {professional &&
-              accountOwner &&
-              !dataLoading &&
-              !storageError &&
-              activeProject && <StudioTourTrigger />}
-            {professional && canEdit && (
-              <>
-                <Button
-                  variant="outline"
-                  className="studio-new-version"
-                  data-tour="versions"
-                  disabled={!activeVersion}
-                  onClick={() => {
-                    setVersionName(
-                      activeVersion
-                        ? `Iteración ${String(activeVersion.sequence + 1).padStart(2, '0')}`
-                        : '',
-                    );
-                    setVersionDialogOpen(true);
-                  }}
-                >
-                  <CopyPlus /> Nueva versión
-                </Button>
-                <Button
-                  className="studio-import"
-                  data-tour="import"
-                  onClick={() => setImportOpen(true)}
-                >
-                  <Upload /> Importar modelo
-                </Button>
-              </>
-            )}
-            {!professional && !signedIn && sharedToken && (
-              <Button
-                variant="outline"
-                className="studio-share guest-account"
-                onClick={() => setAccountOpen(true)}
-              >
-                <UserPlus /> Crear cuenta
-              </Button>
-            )}
-          </>
-        }
-        account={
-          <StudioAccount
-            name={account?.name || viewerName}
-            onClick={() => setAccountOpen(true)}
-          />
-        }
-      />
-
-      <StudioAreaNav
-        area="modelo"
-        project={activeProject}
-        share={sharedToken}
-        action={
-          professional && accountOwner && activeProject ? (
-            <button
-              type="button"
-              className="studio-nav-share"
-              onClick={() => setShareDialogOpen(true)}
-            >
-              <Share2 aria-hidden="true" /> Compartir
-            </button>
-          ) : undefined
-        }
-        showTeam={accessMode === 'professional'}
       />
 
       <section className="studio-workspace">
@@ -2452,47 +2431,104 @@ export default function Studio({
             />
           </div>
 
-          <nav className="project-tool-tabs" aria-label="Datos de la versión">
-            {[
-              {
-                id: 'objects' as const,
-                label: 'Objetos',
-                icon: <Box />,
-                count: hiddenObjects.length,
-              },
-              {
-                id: 'measurements' as const,
-                label: 'Medidas',
-                icon: <Ruler />,
-                count: versionMeasurements.length,
-              },
-              {
-                id: 'plans' as const,
-                label: 'Planos',
-                icon: <Files />,
-                count: versionPlans.length,
-              },
-            ].map((item) => (
-              <button
-                type="button"
-                key={item.id}
-                className={inspector === item.id ? 'active' : ''}
-                disabled={
-                  !activeVersion || (item.id === 'objects' && !modelReady)
-                }
-                onClick={() => {
-                  setInspector((value) => (value === item.id ? null : item.id));
-                  setPanelOpen(false);
-                }}
-                aria-expanded={inspector === item.id}
-                aria-controls="version-inspector"
-              >
-                {item.icon}
-                <span>{item.label}</span>
-                {!!item.count && <b>{item.count}</b>}
-              </button>
-            ))}
-          </nav>
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              className="model-tools-trigger"
+              data-tour="model-tools"
+              aria-label="Abrir herramientas del modelo"
+            >
+              <Box size={17} aria-hidden="true" />
+              <span>Herramientas</span>
+              <ChevronDown
+                size={15}
+                className="model-tools-chevron"
+                aria-hidden="true"
+              />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              align="end"
+              sideOffset={8}
+              className="model-tools-menu"
+            >
+              <DropdownMenuGroup>
+                <DropdownMenuLabel>Modelo 3D</DropdownMenuLabel>
+                {[
+                  {
+                    id: 'objects' as const,
+                    label: 'Objetos',
+                    icon: <Box />,
+                    count: hiddenObjects.length,
+                  },
+                  {
+                    id: 'measurements' as const,
+                    label: 'Medidas',
+                    icon: <Ruler />,
+                    count: versionMeasurements.length,
+                  },
+                  {
+                    id: 'plans' as const,
+                    label: 'Planos',
+                    icon: <Files />,
+                    count: versionPlans.length,
+                  },
+                ].map((item) => (
+                  <DropdownMenuItem
+                    key={item.id}
+                    className="model-tools-item"
+                    disabled={
+                      !activeVersion || (item.id === 'objects' && !modelReady)
+                    }
+                    onClick={() => {
+                      setInspector((value) =>
+                        value === item.id ? null : item.id,
+                      );
+                      setPanelOpen(false);
+                    }}
+                  >
+                    {item.icon}
+                    <span>{item.label}</span>
+                    {!!item.count && (
+                      <b className="model-tools-count">{item.count}</b>
+                    )}
+                    {inspector === item.id && (
+                      <Check
+                        size={15}
+                        className="model-tools-check"
+                        aria-hidden="true"
+                      />
+                    )}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuGroup>
+              {professional && canEdit && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    className="model-tools-item"
+                    data-tour="versions"
+                    disabled={!activeVersion}
+                    onClick={() => {
+                      setVersionName(
+                        activeVersion
+                          ? `Iteración ${String(activeVersion.sequence + 1).padStart(2, '0')}`
+                          : '',
+                      );
+                      setVersionDialogOpen(true);
+                    }}
+                  >
+                    <CopyPlus /> Nueva versión
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    className="model-tools-item model-tools-import"
+                    data-tour="import"
+                    onClick={() => setImportOpen(true)}
+                  >
+                    <Upload /> Importar modelo
+                  </DropdownMenuItem>
+                </>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
 
           <button
             className="mobile-panel-toggle"
@@ -3522,7 +3558,7 @@ export default function Studio({
               {account && account.provider !== 'chatgpt' && (
                 <AccountSettings account={account} onUpdated={setAccount} />
               )}
-              
+
               <a className="role-back" href="/">
                 Volver a Fabrica
               </a>
