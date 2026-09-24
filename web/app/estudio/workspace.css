@@ -1685,6 +1685,15 @@
 .free-canvas.hand-tool {
   cursor: grab;
 }
+.free-canvas.hand-tool .inspiration-board-card,
+.free-canvas.hand-tool .inspiration-board-card * {
+  cursor: grab !important;
+  user-select: none;
+}
+.free-canvas.hand-tool.is-dragging .inspiration-board-card,
+.free-canvas.hand-tool.is-dragging .inspiration-board-card * {
+  cursor: grabbing !important;
+}
 .free-canvas.shape-tool {
   cursor: crosshair;
 }
