@@ -143,6 +143,7 @@ export default function Panel({
   const selectPortalView = (next: PortalView) => setView(next);
   const [editingProject, setEditingProject] = useState(false);
   const [projectDraft, setProjectDraft] = useState({
+    name: data.project.name,
     stage: data.project.stage,
     description: data.project.description,
     progress:
@@ -254,7 +255,7 @@ export default function Panel({
     try {
       await run({ action: 'update-project', ...projectDraft });
       setEditingProject(false);
-      notify('Seguimiento actualizado');
+      notify('Proyecto actualizado');
     } catch {
       /* run shows the error */
     }
@@ -557,6 +558,7 @@ export default function Panel({
                   className="workspace-secondary"
                   onClick={() => {
                     setProjectDraft({
+                      name: data.project.name,
                       stage: data.project.stage,
                       description: data.project.description,
                       progress:
@@ -577,6 +579,17 @@ export default function Panel({
           </div>
           {editingProject && (
             <div className="workspace-form-card">
+              <label>
+                Nombre del proyecto
+                <input
+                  required
+                  maxLength={120}
+                  value={projectDraft.name}
+                  onChange={(event) =>
+                    setProjectDraft({ ...projectDraft, name: event.target.value })
+                  }
+                />
+              </label>
               <div className="workspace-form-grid">
                 <label>
                   Etapa
@@ -658,7 +671,7 @@ export default function Panel({
                 disabled={busy}
                 onClick={() => void saveProject()}
               >
-                Guardar seguimiento
+                Guardar cambios
               </button>
             </div>
           )}

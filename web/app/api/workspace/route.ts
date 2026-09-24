@@ -967,6 +967,7 @@ export async function POST(request: Request) {
       await db
         .update(studioProjects)
         .set({
+          name: required(body.name, 120),
           stage: choice(body.stage, stages),
           progress,
           description: string(body.description, 2000),
