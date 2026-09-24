@@ -1,7 +1,6 @@
 'use client';
 
 import { createContext, useContext, useMemo, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react';
-import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
 import { Box, LayoutDashboard, Lightbulb, Share2, UserRound, UsersRound } from 'lucide-react';
 import { StudioTourTrigger } from './studio-tour';
@@ -40,9 +39,9 @@ export function StudioChrome({ children }: { children: ReactNode }) {
   return <StudioChromeControls.Provider value={controls}>
     {isWorkspace && <header className="studio-shared-header studio-static-header">
       <div className="studio-shared-header-leading">
-        <Link href="/" className="studio-shared-brand" aria-label="Fabrica, volver al inicio">
+        <a href="/" onClick={hardNavigate} className="studio-shared-brand" aria-label="Fabrica, volver al inicio">
           <span className="wordmark">fabrica<span aria-hidden="true">®</span></span>
-        </Link>
+        </a>
         <span className="studio-shared-divider" aria-hidden="true" />
         <div className={`studio-static-project${projectRegistration && projectRegistration.path !== pathname ? ' is-switching' : ''}`} aria-busy={projectRegistration ? projectRegistration.path !== pathname : true}>
           {projectRegistration?.node || <span className="studio-project-loading"><span>{projectLabel}</span><span className="studio-loading-dot" aria-label="Cargando proyectos" /></span>}
@@ -65,12 +64,12 @@ export function StudioChrome({ children }: { children: ReactNode }) {
           <Share2 aria-hidden="true" /> Compartir
         </button>
       </div>
-      <Link
+      <a
         className="studio-static-account"
         href={`/estudio?${new URLSearchParams({ ...(params.get('project') ? { project: params.get('project')! } : {}), account: '1' }).toString()}`}
         aria-label="Abrir perfil y configuración"
-        onClick={() => window.dispatchEvent(new Event('fabrica:open-account'))}
-      ><UserRound size={17} aria-hidden="true" /></Link>
+        onClick={hardNavigate}
+      ><UserRound size={17} aria-hidden="true" /></a>
     </header>}
     {children}
   </StudioChromeControls.Provider>;

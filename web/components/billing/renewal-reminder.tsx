@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import Link from 'next/link';
+import { hardNavigate } from '@/components/fabrica/hard-navigation';
 
 type Status = { state: string; trialEnds: number; paidThrough: number | null; cancelAt: number | null; subscription: { nextChargeAt: number | null } | null };
 
@@ -18,6 +18,6 @@ export function RenewalReminder() {
   if (days < 0 || days > 3) return null;
   return <aside className="billing-reminder" role="status">
     <span>{status.state === 'trialing' ? 'Tu prueba' : status.state === 'canceling' ? 'Tu acceso' : 'Tu próximo cobro'} {days === 0 ? 'vence hoy' : `vence en ${days} ${days === 1 ? 'día' : 'días'}`}.</span>
-    <Link href="/estudio/facturacion">Ver facturación →</Link>
+    <a href="/estudio/facturacion" onClick={hardNavigate}>Ver facturación →</a>
   </aside>;
 }

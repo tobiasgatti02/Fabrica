@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { usePathname, useRouter } from 'next/navigation';
+import { usePathname } from 'next/navigation';
 import { Dialog } from '@base-ui/react/dialog';
 import { Compass, ArrowRight, X } from 'lucide-react';
 
@@ -74,7 +74,6 @@ export function StudioTourTrigger({ disabled = false }: { disabled?: boolean }) 
 }
 
 export function StudioTour({ account }: { account: string }) {
-  const router = useRouter();
   const pathname = usePathname();
   const area = pathname === '/estudio' ? 'modelo' : pathname.split('/')[2];
   const [index, setIndex] = useState<number | null>(null);
@@ -179,7 +178,7 @@ export function StudioTour({ account }: { account: string }) {
       const project = url.searchParams.get('project');
       const params = new URLSearchParams({ tour: String(next) });
       if (project) params.set('project', project);
-      router.push(`${path}?${params}`);
+      window.location.assign(`${path}?${params}`);
     } else {
       window.history.replaceState(window.history.state, '', url);
     }

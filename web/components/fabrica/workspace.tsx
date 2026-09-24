@@ -1,7 +1,7 @@
 'use client';
 
 import dynamic from 'next/dynamic';
-import Link from 'next/link';
+import { hardNavigate } from './hard-navigation';
 import { WorkspaceShareControl } from './workspace-share-control';
 import {
   StudioHeader,
@@ -213,9 +213,9 @@ export default function Workspace({
     return (
       <main className="workspace-auth-page">
         <div className="workspace-auth-card">
-          <Link href="/" className="workspace-logo">
+          <a href="/" onClick={hardNavigate} className="workspace-logo">
             f4brica<span>estudio</span>
-          </Link>
+          </a>
           <h1>
             {invite ? 'Te invitaron a colaborar' : 'Tu estudio empieza acá'}
           </h1>
@@ -379,7 +379,7 @@ export default function Workspace({
         <div className="workspace-empty">
           <h1>No pudimos abrir el estudio</h1>
           <p>Revisá el enlace o volvé a ingresar.</p>
-          <Link href="/estudio">Ir al estudio</Link>
+          <a href="/estudio" onClick={hardNavigate}>Ir al estudio</a>
         </div>
       )}
       <footer className="workspace-footer">

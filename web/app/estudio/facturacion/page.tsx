@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import Script from 'next/script';
-import Link from 'next/link';
+import { hardNavigate } from '@/components/fabrica/hard-navigation';
 import { ArrowRight, Check, CheckCircle2, Clock3, HardDrive, UsersRound, X } from 'lucide-react';
 import { BillingCardForm } from '@/components/billing/card-form';
 
@@ -121,7 +121,7 @@ export default function BillingPage() {
 
   return <main className="billing-page">
     <Script src="https://sdk.mercadopago.com/js/v2" strategy="afterInteractive" onReady={() => setSdkReady(true)} />
-    <nav className="billing-back"><Link href="/estudio">← Volver al estudio</Link><span>Cuenta / Facturación</span></nav>
+    <nav className="billing-back"><a href="/estudio" onClick={hardNavigate}>← Volver al estudio</a><span>Cuenta / Facturación</span></nav>
     <header className="billing-hero"><div><p className="workspace-eyebrow">TU MEMBRESÍA</p><h1>Un estudio que crece<br /><em>con tus proyectos.</em></h1><p>Revisá tu capacidad, los próximos cobros y tu plan en un solo lugar.</p></div><div className="billing-status-card"><span>PLAN ACTUAL</span><strong>{names[status.plan] || status.plan}</strong><p><i className={`billing-dot billing-dot--${status.state}`} />{states[status.state] || status.state}</p>{expiry && <small>{status.state === 'trialing' ? 'Prueba hasta el ' : 'Próxima fecha: '}{date(expiry)}</small>}</div></header>
     {warning && <div className="billing-notice" role="status"><Clock3 size={20} /><p>{status.state === 'trialing' ? 'Tu prueba' : status.state === 'canceling' ? 'Tu acceso' : 'Tu próximo cobro'} {daysUntil(expiry) === 0 ? 'vence hoy' : `vence en ${daysUntil(expiry)} ${daysUntil(expiry) === 1 ? 'día' : 'días'}`}. {status.state === 'trialing' ? 'Elegí un plan para seguir trabajando.' : status.state === 'canceling' ? 'Podés volver a suscribirte para continuar.' : 'Verificá tu medio de pago para evitar interrupciones.'}</p></div>}
     {['grace_period', 'expired', 'canceled', 'paused'].includes(status.state) && <div className="billing-notice billing-notice--urgent" role="alert"><Clock3 size={20} /><p>El acceso de edición está suspendido. Elegí un plan para volver a trabajar en el estudio.</p></div>}
@@ -152,6 +152,6 @@ export default function BillingPage() {
 
     <section className="billing-footer"><div><h2>Próximo cobro</h2><p>{status.subscription?.nextChargeAt ? `${date(status.subscription.nextChargeAt)} · ${money(status.subscription.amountCents, status.subscription.currency)}` : 'Todavía no hay un cobro programado.'}</p><small>{status.lastCharge ? `Último movimiento: ${status.lastCharge.status === 'approved' ? 'aprobado' : status.lastCharge.status} · ${date(status.lastCharge.occurredAt)}` : 'Aún no hay pagos registrados.'}</small></div>{active && <button type="button" disabled={busy} onClick={async () => { if (!window.confirm('¿Cancelar la renovación? Conservás el acceso hasta el final del período abonado.')) return; setBusy(true); try { const response = await fetch('/api/billing/cancel', { method: 'POST' }); const result = await response.json() as { error?: string }; if (!response.ok) throw new Error(result.error || 'No se pudo cancelar.'); await refreshStatus(); setMessage('La renovación fue cancelada. Conservás el acceso hasta el final del período abonado.'); } catch (error) { setMessage(error instanceof Error ? error.message : 'No se pudo cancelar.'); } finally { setBusy(false); } }}>Cancelar renovación</button>}</section>
     {!publicKey && <p className="billing-test-note">Los pagos no están configurados en este entorno.</p>}
-    {successOpen && <div className="billing-modal-backdrop" role="presentation" onMouseDown={() => setSuccessOpen(false)}><div className="billing-success-modal" role="dialog" aria-modal="true" aria-labelledby="billing-success-title" onMouseDown={(event) => event.stopPropagation()}><CheckCircle2 size={48} aria-hidden="true" /><p className="workspace-eyebrow">PAGO CONFIRMADO</p><h2 id="billing-success-title">Todo salió bien.</h2><p>Mercado Pago confirmó tu pago y tu plan ya está activo. Tu estudio está listo para seguir creando.</p><Link href="/estudio" className="billing-primary">Ir al estudio <ArrowRight size={18} /></Link></div></div>}
+    {successOpen && <div className="billing-modal-backdrop" role="presentation" onMouseDown={() => setSuccessOpen(false)}><div className="billing-success-modal" role="dialog" aria-modal="true" aria-labelledby="billing-success-title" onMouseDown={(event) => event.stopPropagation()}><CheckCircle2 size={48} aria-hidden="true" /><p className="workspace-eyebrow">PAGO CONFIRMADO</p><h2 id="billing-success-title">Todo salió bien.</p><a href="/estudio" onClick={hardNavigate} className="billing-primary">Ir al estudio <ArrowRight size={18} /></a></div></div>}
   </main>;
 }
