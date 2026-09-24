@@ -3522,11 +3522,7 @@ export default function Studio({
               {account && account.provider !== 'chatgpt' && (
                 <AccountSettings account={account} onUpdated={setAccount} />
               )}
-              <p className="role-note">
-                {sharedToken
-                  ? 'El modo cliente sólo se habilita desde un enlace privado de revisión.'
-                  : 'El acceso sin enlace privado corresponde siempre al espacio profesional.'}
-              </p>
+              
               <a className="role-back" href="/">
                 Volver a Fabrica
               </a>

@@ -1,4 +1,5 @@
 import { env } from 'cloudflare:workers';
+import { validRequestOrigin } from '@/features/auth/core';
 import { and, desc, eq } from 'drizzle-orm';
 import { billingPriceVersions, billingSubscriptions } from '@/db/schema';
 import { getBillingStatus } from '@/features/billing/server';
@@ -7,6 +8,7 @@ import { billingFailure, billingJson, requireBillingOwner } from '@/features/bil
 
 export async function POST(request: Request) {
   try {
+    if (!validRequestOrigin(request)) return billingJson({ error: 'Origen de solicitud inválido.' }, 403);
     const { db, user } = await requireBillingOwner(request);
     const body = await request.json() as { plan?: unknown; cardTokenId?: unknown; payerEmail?: unknown };
     if (typeof body.plan !== 'string' || typeof body.cardTokenId !== 'string' || !body.cardTokenId ||

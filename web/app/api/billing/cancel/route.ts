@@ -1,4 +1,5 @@
 import { desc, eq } from 'drizzle-orm';
+import { validRequestOrigin } from '@/features/auth/core';
 import { billingAccounts, billingChanges, billingSubscriptions } from '@/db/schema';
 import { getBillingStatus } from '@/features/billing/server';
 import { updateSubscription } from '@/features/billing/mercadopago';
@@ -6,6 +7,7 @@ import { billingFailure, billingJson, requireBillingOwner } from '@/features/bil
 
 export async function POST(request: Request) {
   try {
+    if (!validRequestOrigin(request)) return billingJson({ error: 'Origen de solicitud inválido.' }, 403);
     const { db, user } = await requireBillingOwner(request);
     const { account } = await getBillingStatus(db, user.userId);
     const [subscription] = await db.select().from(billingSubscriptions)

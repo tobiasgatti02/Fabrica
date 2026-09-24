@@ -1,4 +1,5 @@
 import { and, desc, eq } from 'drizzle-orm';
+import { validRequestOrigin } from '@/features/auth/core';
 import { billingAccounts, billingChanges, billingPriceVersions, billingSubscriptions } from '@/db/schema';
 import { fitsPlan, getBillingStatus } from '@/features/billing/server';
 import { updateSubscription } from '@/features/billing/mercadopago';
@@ -6,6 +7,7 @@ import { billingFailure, billingJson, requireBillingOwner } from '@/features/bil
 
 export async function POST(request: Request) {
   try {
+    if (!validRequestOrigin(request)) return billingJson({ error: 'Origen de solicitud inválido.' }, 403);
     const { db, user } = await requireBillingOwner(request);
     const body = await request.json() as { plan?: unknown };
     if (typeof body.plan !== 'string' || body.plan === 'prueba') return billingJson({ error: 'Elegí un plan válido.' }, 400);

@@ -90,8 +90,8 @@ export function BillingCardForm({ plan, amountCents, publicKey, onComplete }: {
     <label>Banco emisor<select id="billing-card-issuer" aria-label="Banco emisor" /></label>
     <label>Cuotas<select id="billing-card-installments" aria-label="Cuotas" /></label>
     <label>Tipo de documento<select id="billing-card-document-type" aria-label="Tipo de documento" /></label>
-    <label>Número de documento<input id="billing-card-document-number" required /></label>
-    <label>Correo del comprador<input id="billing-card-email" type="email" required /></label>
+    <label>Número de documento<input id="billing-card-document-number" inputMode="numeric" required /></label>
+    <label>Correo del comprador<input id="billing-card-email" type="email" autoComplete="email" required /></label>
     {error && <p role="alert" className="billing-alert">{error}</p>}
     <button type="submit" disabled={busy}>{busy ? 'Procesando…' : 'Confirmar suscripción'}</button>
   </form>;
