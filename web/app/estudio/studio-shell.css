@@ -445,7 +445,7 @@
 .studio-static-header { height: 68px; gap: clamp(10px, 1.6vw, 20px); }
 .studio-static-header .studio-shared-header-leading { flex: 0 1 290px; gap: 18px; }
 .studio-static-project { min-width: 0; max-width: 165px; position: relative; }
-.studio-static-project:has(.studio-project-selector) .studio-project-loading { display: none; }
+.studio-static-project.is-switching { pointer-events: none; }
 .studio-project-loading { display: inline-flex; align-items: center; gap: 9px; min-height: 36px; white-space: nowrap; color: var(--text-secondary); font: 600 13px/1 var(--font-body); }
 .studio-loading-dot { width: 9px; height: 9px; border: 1.5px solid var(--line-strong); border-top-color: var(--accent); border-radius: 50%; animation: studio-loading-spin .7s linear infinite; }
 @keyframes studio-loading-spin { to { transform: rotate(360deg); } }

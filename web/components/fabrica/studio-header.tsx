@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
-import { createPortal } from 'react-dom';
+import { usePathname } from 'next/navigation';
 import { Check, ChevronDown } from 'lucide-react';
 import { useStudioChromeControls } from './studio-chrome';
 
@@ -142,14 +142,20 @@ export function StudioHeader({
   project,
   label,
   shareEnabled,
+  loading = false,
 }: {
   project: ReactNode;
   label: string;
   shareEnabled: boolean;
+  loading?: boolean;
 }) {
   const chrome = useStudioChromeControls();
+  const pathname = usePathname();
   useEffect(() => { chrome?.setProjectLabel(label); }, [chrome?.setProjectLabel, label]);
   useEffect(() => { chrome?.setShareEnabled(shareEnabled); }, [chrome?.setShareEnabled, shareEnabled]);
   useEffect(() => () => { chrome?.setShareEnabled(false); }, [chrome?.setShareEnabled]);
-  return chrome?.projectSlot ? createPortal(project, chrome.projectSlot) : null;
+  useEffect(() => {
+    if (!loading) chrome?.setProjectRegistration({ node: project, path: pathname });
+  }, [chrome?.setProjectRegistration, loading, pathname, project]);
+  return null;
 }
