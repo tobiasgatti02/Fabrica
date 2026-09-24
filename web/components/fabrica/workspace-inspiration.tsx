@@ -1968,7 +1968,14 @@ function WorktableCanvas({
     const node = viewport.current;
     if (!node) return;
     const wheel = (event: WheelEvent) => {
-      if (editableTarget(event.target)) return;
+      // The note text has no internal scrolling; keep the board wheel gesture
+      // available over it. Inputs and the active canvas text editor still own
+      // their wheel events.
+      if (
+        editableTarget(event.target) &&
+        !(event.target as HTMLElement).closest('.post-it .inspiration-note-text')
+      )
+        return;
       event.preventDefault();
       setFollowPeerId(null);
       const bounds = node.getBoundingClientRect();
@@ -1979,12 +1986,20 @@ function WorktableCanvas({
             ? node.clientHeight
             : 1;
       setCamera((current) => {
-        if (event.ctrlKey || event.metaKey) {
+        const mouseWheel =
+          event.deltaMode !== 0 ||
+          (Math.abs(event.deltaY) >= 40 && Math.abs(event.deltaX) < 1);
+        if (event.ctrlKey || event.metaKey || mouseWheel) {
           const zoom = Math.min(
             4,
             Math.max(
               0.05,
-              current.zoom * Math.exp(-event.deltaY * factor * 0.008),
+              current.zoom *
+                Math.exp(
+                  -event.deltaY *
+                    factor *
+                    (event.ctrlKey || event.metaKey ? 0.008 : 0.0018),
+                ),
             ),
           );
           const x = event.clientX - bounds.left,
@@ -3286,6 +3301,18 @@ function WorktableCanvas({
             onCopy={copy}
             onDragOver={(event) => event.preventDefault()}
             onDrop={drop}
+            onPointerDownCapture={(event) => {
+              if (!(hand || space)) return;
+              const target = event.target as HTMLElement;
+              if (
+                target.closest(
+                  '.inspiration-context-menu, .inspiration-raw-text-editor',
+                )
+              )
+                return;
+              const card = target.closest<HTMLElement>('[data-card]');
+              if (card) startGesture(event, card.dataset.card);
+            }}
             onPointerDown={(event) => {
               const target = event.target as HTMLElement;
               if (target.closest('.inspiration-raw-text-editor')) return;
