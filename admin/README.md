@@ -4,7 +4,7 @@ Private Cloudflare Worker at `admin.f4brica.app`. Neon provides account, billing
 
 ## Local development
 
-Create `admin/.dev.vars` with `DATABASE_URL`, `ADMIN_USERNAME`, `ADMIN_PASSWORD_HASH`, `ADMIN_PASSWORD_SALT`, `ADMIN_SESSION_SECRET`, and optionally `POSTHOG_PERSONAL_API_KEY`. The password hash is base64url encoded PBKDF2-SHA256 with 310,000 iterations over the UTF-8 salt. Run `npm ci && npm run dev`.
+Create `admin/.dev.vars` with `DATABASE_URL`, `ADMIN_USERNAME`, `ADMIN_PASSWORD_HASH`, `ADMIN_PASSWORD_SALT`, `ADMIN_SESSION_SECRET`, and optionally `POSTHOG_PERSONAL_API_KEY`. The password hash is base64url encoded PBKDF2-SHA256 with 100,000 iterations over the UTF-8 salt (Cloudflare Workers' maximum). Run `npm ci && npm run dev`.
 
 ## Deployment
 

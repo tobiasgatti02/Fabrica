@@ -16,7 +16,7 @@ async function hmacKey(secret: string): Promise<CryptoKey> {
 
 export async function validPassword(input: string, salt: string, expected: string): Promise<boolean> {
   const key = await crypto.subtle.importKey('raw', encoder.encode(input), 'PBKDF2', false, ['deriveBits']);
-  const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', salt: encoder.encode(salt), iterations: 310_000, hash: 'SHA-256' }, key, 256);
+  const bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', salt: encoder.encode(salt), iterations: 100_000, hash: 'SHA-256' }, key, 256);
   const actual = new Uint8Array(bits);
   const target = unb64(expected);
   if (actual.length !== target.length) return false;
