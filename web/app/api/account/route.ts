@@ -17,6 +17,7 @@ import {
   studioComments,
   studioInspiration,
   studioInspirationComments,
+  studioInspirationReactions,
   studioWorktables,
   studioMeasurements,
   studioPlans,
@@ -30,7 +31,13 @@ import {
   studioUploads,
   studioUsers,
   studioVersions,
+  billingAccounts,
+  billingChanges,
+  billingCharges,
+  billingStudios,
+  billingSubscriptions,
 } from '@/db/schema';
+import { getSubscription, updateSubscription } from '@/features/billing/mercadopago';
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -93,6 +100,30 @@ async function clearProjectFiles(projectIds: string[]) {
 
 async function deleteAccount(userId: string) {
   const database = getDb(env.DATABASE_URL);
+  const [studio] = await database.select({ id: billingStudios.id })
+    .from(billingStudios).where(eq(billingStudios.owner, `fabrica:${userId}`)).limit(1);
+  const [billingAccount] = studio
+    ? await database.select({ id: billingAccounts.id }).from(billingAccounts)
+        .where(eq(billingAccounts.studio, studio.id)).limit(1)
+    : [];
+  const subscriptions = billingAccount
+    ? await database.select().from(billingSubscriptions)
+        .where(eq(billingSubscriptions.account, billingAccount.id))
+    : [];
+
+  // Keep the account and its billing records if the provider cannot confirm
+  // cancellation. Repeating this request is safe after a partial cancellation.
+  for (const subscription of subscriptions) {
+    if (!subscription.externalId) continue;
+    const current = await getSubscription(subscription.externalId);
+    if (current.status !== 'canceled' && current.status !== 'cancelled') {
+      await updateSubscription(subscription.externalId, { status: 'canceled' }, `delete-account:${subscription.id}`);
+      const verified = await getSubscription(subscription.externalId);
+      if (verified.status !== 'canceled' && verified.status !== 'cancelled')
+        throw new Error('billing_subscription_cancellation_unconfirmed');
+    }
+  }
+
   const projects = await database
     .select({ id: studioProjects.id })
     .from(studioProjects)
@@ -118,6 +149,7 @@ async function deleteAccount(userId: string) {
       database.delete(studioBudgetItems).where(inArray(studioBudgetItems.project, projectIds)),
       database.delete(studioTasks).where(inArray(studioTasks.project, projectIds)),
       database.delete(studioInspirationComments).where(inArray(studioInspirationComments.project, projectIds)),
+      database.delete(studioInspirationReactions).where(inArray(studioInspirationReactions.project, projectIds)),
       database.delete(studioInspiration).where(inArray(studioInspiration.project, projectIds)),
       database.delete(studioWorktables).where(inArray(studioWorktables.project, projectIds)),
       database.delete(studioTeamMembers).where(inArray(studioTeamMembers.project, projectIds)),
@@ -135,8 +167,21 @@ async function deleteAccount(userId: string) {
     await database.batch(statements as [typeof statements[number], ...typeof statements]);
   }
 
+  if (billingAccount) {
+    const subscriptionIds = subscriptions.map((subscription) => subscription.id);
+    if (subscriptionIds.length)
+      await database.delete(billingCharges).where(inArray(billingCharges.subscription, subscriptionIds));
+    await database.delete(billingChanges).where(eq(billingChanges.account, billingAccount.id));
+    await database.delete(billingSubscriptions).where(eq(billingSubscriptions.account, billingAccount.id));
+    await database.delete(billingAccounts).where(eq(billingAccounts.id, billingAccount.id));
+  }
+  if (studio) await database.delete(billingStudios).where(eq(billingStudios.id, studio.id));
+
   // Remove participation in other accounts' work, then the user's own records.
   await database.batch([
+    database.delete(studioInspirationReactions).where(eq(studioInspirationReactions.actor, `fabrica:${userId}`)),
+    database.delete(studioInspirationComments).where(eq(studioInspirationComments.actor, `fabrica:${userId}`)),
+    database.delete(studioComments).where(eq(studioComments.actor, `fabrica:${userId}`)),
     database
       .delete(studioTeamMembers)
       .where(

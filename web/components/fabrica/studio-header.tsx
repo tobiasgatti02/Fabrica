@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useEffectEvent, useId, useRef, useState, type ReactNode } from 'react';
 import { usePathname } from 'next/navigation';
 import { Check, ChevronDown } from 'lucide-react';
 import { useStudioChromeControls } from './studio-chrome';
@@ -143,19 +143,27 @@ export function StudioHeader({
   label,
   shareEnabled,
   loading = false,
+  projectSignature,
 }: {
   project: ReactNode;
   label: string;
   shareEnabled: boolean;
   loading?: boolean;
+  projectSignature: string;
 }) {
   const chrome = useStudioChromeControls();
   const pathname = usePathname();
-  useEffect(() => { chrome?.setProjectLabel(label); }, [chrome?.setProjectLabel, label]);
-  useEffect(() => { chrome?.setShareEnabled(shareEnabled); }, [chrome?.setShareEnabled, shareEnabled]);
-  useEffect(() => () => { chrome?.setShareEnabled(false); }, [chrome?.setShareEnabled]);
+  const setProjectLabel = chrome?.setProjectLabel;
+  const setShareEnabled = chrome?.setShareEnabled;
+  const setProjectRegistration = chrome?.setProjectRegistration;
+  useEffect(() => { setProjectLabel?.(label); }, [setProjectLabel, label]);
+  useEffect(() => { setShareEnabled?.(shareEnabled); }, [setShareEnabled, shareEnabled]);
+  useEffect(() => () => { setShareEnabled?.(false); }, [setShareEnabled]);
+  const registerProject = useEffectEvent(() => {
+    if (!loading) setProjectRegistration?.({ node: project, path: pathname });
+  });
   useEffect(() => {
-    if (!loading) chrome?.setProjectRegistration({ node: project, path: pathname });
-  }, [chrome?.setProjectRegistration, loading, pathname, project]);
+    registerProject();
+  }, [setProjectRegistration, loading, pathname, projectSignature]);
   return null;
 }

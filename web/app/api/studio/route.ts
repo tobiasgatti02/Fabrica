@@ -11,6 +11,7 @@ import {
   studioBudgetItems,
   studioInspiration,
   studioInspirationComments,
+  studioInspirationReactions,
   studioMeasurements,
   studioPlans,
   studioProjects,
@@ -115,14 +116,12 @@ async function guestCommentsBelongToViewer(
 }
 
 function commentBelongsToViewer(
-  comment: { actor: string | null; author: string },
+  comment: { actor: string | null },
   userId: string,
-  displayName: string,
   guestActor: string | null,
 ) {
-  return comment.actor
-    ? comment.actor === userId || comment.actor === guestActor
-    : comment.author === displayName;
+  return comment.actor !== null &&
+    (comment.actor === userId || comment.actor === guestActor);
 }
 
 export async function context(request: Request) {
@@ -454,7 +453,7 @@ export async function GET(request: Request) {
       versions,
       comments: comments.map(({ actor, ...comment }) => ({
         ...comment,
-        mine: commentBelongsToViewer({ actor, author: comment.author }, identity.userId, identity.displayName, guestActor),
+        mine: commentBelongsToViewer({ actor }, identity.userId, guestActor),
       })),
       measurements,
       plans,
@@ -617,7 +616,7 @@ export async function POST(request: Request) {
       const guestActor = await guestCommentsBelongToViewer(database, project.client, identity.userId)
         ? `guest:${project.id}`
         : null;
-      if (!commentBelongsToViewer(comment, identity.userId, identity.displayName, guestActor))
+      if (!commentBelongsToViewer(comment, identity.userId, guestActor))
         throw new Error('403');
       await database.delete(studioComments).where(and(
         eq(studioComments.project, project.id),
@@ -648,6 +647,7 @@ export async function POST(request: Request) {
         await database.delete(studioProposals).where(inArray(studioProposals.id, proposalIds));
       }
       await database.delete(studioInspirationComments).where(eq(studioInspirationComments.project, project.id));
+      await database.delete(studioInspirationReactions).where(eq(studioInspirationReactions.project, project.id));
       await database.delete(studioInspiration).where(eq(studioInspiration.project, project.id));
       await database.delete(studioWorktables).where(eq(studioWorktables.project, project.id));
       await database.delete(studioAssets).where(eq(studioAssets.project, project.id));

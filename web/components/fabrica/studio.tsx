@@ -2177,6 +2177,7 @@ export default function Studio({
         label={account?.name || (accessMode === 'professional' ? 'Estudio local' : viewerName)}
         shareEnabled={Boolean(professional && accountOwner && activeProject)}
         loading={dataLoading}
+        projectSignature={JSON.stringify([account?.name, viewerName, activeProject, projects, clients, activeVersion?.name, professional, accountOwner])}
         project={
           <StudioProjectSwitcher
             name={account?.name || viewerName || 'Estudio'}

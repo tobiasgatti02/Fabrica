@@ -395,6 +395,12 @@ async function getWorkspaceView(request: Request, knownUser?: FabricaUser | null
     const ctx = await context(request, knownUser);
     const db = database();
     const params = new URL(request.url).searchParams;
+    if (params.get('view') === 'nav') return json({
+      accountOwner: ctx.accountOwner,
+      guest: ctx.guest,
+      external: ctx.external,
+      permissions: ctx.permissions,
+    });
     if (params.has('asset')) {
       if (ctx.permissions.inspiracion === 'none') throw new Error('403');
       const [asset] = await db
@@ -638,7 +644,7 @@ async function getWorkspaceView(request: Request, knownUser?: FabricaUser | null
       worktables,
       inspirationComments: inspirationComments.map(({ actor, ...comment }) => ({
         ...comment,
-        mine: actor ? actor === (ctx.userId || `invite:${ctx.name}`) : comment.author === ctx.name,
+        mine: actor !== null && actor === (ctx.userId || `invite:${ctx.name}`),
       })),
       inspirationReactions: inspirationReactions.map(({ actor, ...reaction }) => ({
         ...reaction,
@@ -918,7 +924,7 @@ export async function POST(request: Request) {
         .limit(1);
       if (!comment) throw new Error('404');
       const actor = ctx.userId || `invite:${ctx.name}`;
-      if (!ctx.accountOwner && (comment.actor ? comment.actor !== actor : comment.author !== ctx.name))
+      if (!ctx.accountOwner && comment.actor !== actor)
         throw new Error('403');
       await db.delete(studioInspirationComments)
         .where(and(eq(studioInspirationComments.id, id), eq(studioInspirationComments.project, project.id)));

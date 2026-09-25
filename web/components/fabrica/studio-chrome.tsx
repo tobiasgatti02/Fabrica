@@ -33,6 +33,12 @@ const areas = [
   { id: 'modelo', label: 'Modelo 3D', path: '/estudio/modelo', icon: Box },
   { id: 'equipo', label: 'Equipo', path: '/estudio/equipo', icon: UsersRound },
 ] as const;
+type NavigationAccess = {
+  accountOwner: boolean;
+  guest: boolean;
+  external: boolean;
+  permissions: Record<'panel' | 'inspiracion' | 'modelo', 'none' | 'view' | 'edit'>;
+};
 
 const gib = 1024 ** 3;
 const gbFormat = new Intl.NumberFormat('es-AR', { maximumFractionDigits: 2 });
@@ -95,6 +101,7 @@ export function StudioChrome({ children }: { children: ReactNode }) {
   const [accountDialogOpen, setAccountDialogOpen] = useState(false);
   const [pendingArea, setPendingArea] = useState<string | null>(null);
   const [account, setAccount] = useState<Account | null | undefined>(undefined);
+  const [navigationAccess, setNavigationAccess] = useState<{ key: string; value: NavigationAccess } | null>(null);
   const profileRef = useRef<HTMLDivElement>(null);
   const controls = useMemo(() => ({ setProjectLabel, setProjectRegistration, setShareEnabled, setAccount }), []);
   const isWorkspace = pathname === '/estudio/modelo' || areas.some((area) => area.path === pathname);
@@ -104,6 +111,22 @@ export function StudioChrome({ children }: { children: ReactNode }) {
     if (value) params.set(key, value);
   }
   const query = params.toString();
+  const navigationKey = `${pathname}?${query}`;
+  const access = navigationAccess?.key === navigationKey ? navigationAccess.value : null;
+  useEffect(() => {
+    if (!isWorkspace) return;
+    const controller = new AbortController();
+    const navParams = new URLSearchParams(query);
+    navParams.set('view', 'nav');
+    void fetch(`/api/workspace?${navParams}`, { signal: controller.signal })
+      .then((response) => {
+        if (!response.ok) throw new Error('navigation_access_unavailable');
+        return response.json() as Promise<NavigationAccess>;
+      })
+      .then((value) => setNavigationAccess({ key: navigationKey, value }))
+      .catch(() => { if (!controller.signal.aborted) setNavigationAccess(null); });
+    return () => controller.abort();
+  }, [isWorkspace, navigationKey, query]);
   const logout = () => {
     setProfileOpen(false);
     setAccountDialogOpen(false);
@@ -159,7 +182,11 @@ export function StudioChrome({ children }: { children: ReactNode }) {
       </div>
       <nav className="studio-area-nav" aria-label="Áreas del estudio">
         <div className="studio-area-nav-links">
-          {areas.map(({ id, label, path, icon: Icon }) => <Link
+          {areas.filter(({ id }) => access && (id === 'equipo'
+            ? !access.guest && !access.external
+            : id === 'modelo' && access.external
+              ? false
+              : access.permissions[id] !== 'none')).map(({ id, label, path, icon: Icon }) => <Link
             key={id}
             href={`${path}${query ? `?${query}` : ''}`}
             data-tour={id}
@@ -168,7 +195,7 @@ export function StudioChrome({ children }: { children: ReactNode }) {
           ><Icon size={16} aria-hidden="true" /><span>{label}</span></Link>)}
         </div>
       </nav>
-      <StudioStorageUsage />
+      {access?.accountOwner && <StudioStorageUsage />}
       <div className="studio-static-actions">
         <StudioTourTrigger disabled={Boolean(search.get('share') || search.get('invite'))} />
         <button type="button" className="studio-nav-share" title="Compartir proyecto" disabled={!shareEnabled} onClick={() => window.dispatchEvent(new Event('fabrica:open-share'))}>

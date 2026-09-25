@@ -51,7 +51,12 @@ export async function POST(request: Request) {
     if (!subscription) {
       // The provider may notify us before subscribe has committed the local row.
       // A real resource must be retried; the dashboard's fictitious ID returns 404.
-      await getSubscription(externalSubscriptionId);
+      const provider = await getSubscription(externalSubscriptionId);
+      if (provider.status === 'canceled' || provider.status === 'cancelled') {
+        await db.update(billingWebhookEvents).set({ processedAt: Date.now(), outcome: 'subscription_canceled_or_deleted' })
+          .where(eq(billingWebhookEvents.externalKey, externalKey));
+        return Response.json({ ok: true });
+      }
       return Response.json({ error: 'subscription_not_ready' }, { status: 503 });
     }
     const provider = await getSubscription(externalSubscriptionId);
