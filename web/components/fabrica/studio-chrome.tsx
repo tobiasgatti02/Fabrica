@@ -178,6 +178,7 @@ export function StudioChrome({ children }: { children: ReactNode }) {
             href={`${path}${query ? `?${query}` : ''}`}
             data-tour={id}
             prefetch={false}
+            onClickCapture={path === pathname ? undefined : hardNavigate}
             aria-current={path === pathname ? 'page' : undefined}
           ><Icon size={16} aria-hidden="true" /><span>{label}</span></Link>)}
         </div>
