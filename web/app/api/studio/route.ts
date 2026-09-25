@@ -100,6 +100,31 @@ function db() {
   return getDb(env.DATABASE_URL);
 }
 
+async function guestCommentsBelongToViewer(
+  database: ReturnType<typeof db>,
+  clientId: string | null,
+  userId: string,
+) {
+  if (!clientId) return false;
+  const [client] = await database
+    .select({ id: studioClients.id })
+    .from(studioClients)
+    .where(and(eq(studioClients.id, clientId), eq(studioClients.account, userId)))
+    .limit(1);
+  return Boolean(client);
+}
+
+function commentBelongsToViewer(
+  comment: { actor: string | null; author: string },
+  userId: string,
+  displayName: string,
+  guestActor: string | null,
+) {
+  return comment.actor
+    ? comment.actor === userId || comment.actor === guestActor
+    : comment.author === displayName;
+}
+
 export async function context(request: Request) {
   const database = db();
   const share = new URL(request.url).searchParams.get('share');
@@ -368,7 +393,8 @@ export async function GET(request: Request) {
           eq(studioVersions.published, 1),
         ),
       );
-    const versions = await database
+    const [versions, comments, measurements, plans] = await Promise.all([
+      database
       .select()
       .from(studioVersions)
       .where(
@@ -379,8 +405,8 @@ export async function GET(request: Request) {
               eq(studioVersions.published, 1),
             ),
       )
-      .orderBy(asc(studioVersions.sequence), asc(studioVersions.created));
-    const comments = await database
+      .orderBy(asc(studioVersions.sequence), asc(studioVersions.created)),
+      database
       .select()
       .from(studioComments)
       .where(
@@ -394,8 +420,8 @@ export async function GET(request: Request) {
               ),
             ),
       )
-      .orderBy(asc(studioComments.created));
-    const measurements = await database
+      .orderBy(asc(studioComments.created)),
+      database
       .select()
       .from(studioMeasurements)
       .where(
@@ -406,8 +432,8 @@ export async function GET(request: Request) {
               inArray(studioMeasurements.version, publishedVersionIds),
             ),
       )
-      .orderBy(asc(studioMeasurements.created));
-    const plans = await database
+      .orderBy(asc(studioMeasurements.created)),
+      database
       .select()
       .from(studioPlans)
       .where(
@@ -418,11 +444,18 @@ export async function GET(request: Request) {
               inArray(studioPlans.version, publishedVersionIds),
             ),
       )
-      .orderBy(asc(studioPlans.created));
+      .orderBy(asc(studioPlans.created)),
+    ]);
 
+    const guestActor = await guestCommentsBelongToViewer(database, project.client, identity.userId)
+      ? `guest:${project.id}`
+      : null;
     return json({
       versions,
-      comments,
+      comments: comments.map(({ actor, ...comment }) => ({
+        ...comment,
+        mine: commentBelongsToViewer({ actor, author: comment.author }, identity.userId, identity.displayName, guestActor),
+      })),
       measurements,
       plans,
       share:
@@ -556,6 +589,7 @@ export async function POST(request: Request) {
         project: project.id,
         version: commentVersion,
         author: identity.displayName,
+        actor: identity.userId,
         text: body.text.trim(),
         anchor,
         parent:
@@ -569,6 +603,27 @@ export async function POST(request: Request) {
         state: 'abierto',
         created: Date.now(),
       });
+      return json({ ok: true, anchor });
+    }
+
+    if (body.action === 'delete-comment') {
+      if (typeof body.id !== 'string' || !body.id) throw new Error('400');
+      const [comment] = await database
+        .select({ id: studioComments.id, actor: studioComments.actor, author: studioComments.author })
+        .from(studioComments)
+        .where(and(eq(studioComments.project, project.id), eq(studioComments.id, body.id)))
+        .limit(1);
+      if (!comment) throw new Error('404');
+      const guestActor = await guestCommentsBelongToViewer(database, project.client, identity.userId)
+        ? `guest:${project.id}`
+        : null;
+      if (!commentBelongsToViewer(comment, identity.userId, identity.displayName, guestActor))
+        throw new Error('403');
+      await database.delete(studioComments).where(and(
+        eq(studioComments.project, project.id),
+        eq(studioComments.id, comment.id),
+        comment.actor ? eq(studioComments.actor, comment.actor) : isNull(studioComments.actor),
+      ));
       return json({ ok: true });
     }
 

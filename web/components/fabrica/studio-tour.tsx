@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { Dialog } from '@base-ui/react/dialog';
 import { Compass, ArrowRight, X } from 'lucide-react';
 
@@ -75,7 +75,8 @@ export function StudioTourTrigger({ disabled = false }: { disabled?: boolean }) 
 
 export function StudioTour({ account }: { account: string }) {
   const pathname = usePathname();
-  const area = pathname === '/estudio' ? 'modelo' : pathname.split('/')[2];
+  const router = useRouter();
+  const area = pathname === '/estudio/modelo' ? 'modelo' : pathname.split('/')[2];
   const [index, setIndex] = useState<number | null>(null);
   const [navigating, setNavigating] = useState(false);
   const [rect, setRect] = useState<{
@@ -173,12 +174,12 @@ export function StudioTour({ account }: { account: string }) {
     if (steps[next].area !== area) {
       const path =
         steps[next].area === 'modelo'
-          ? '/estudio'
+          ? '/estudio/modelo'
           : `/estudio/${steps[next].area}`;
       const project = url.searchParams.get('project');
       const params = new URLSearchParams({ tour: String(next) });
       if (project) params.set('project', project);
-      window.location.assign(`${path}?${params}`);
+      router.push(`${path}?${params}`);
     } else {
       window.history.replaceState(window.history.state, '', url);
     }

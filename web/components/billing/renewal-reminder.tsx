@@ -2,14 +2,14 @@
 
 import { useEffect, useState } from 'react';
 import { hardNavigate } from '@/components/fabrica/hard-navigation';
+import { readBillingStatus } from '@/features/billing/client';
 
 type Status = { state: string; trialEnds: number; paidThrough: number | null; cancelAt: number | null; subscription: { nextChargeAt: number | null } | null };
 
 export function RenewalReminder() {
   const [status, setStatus] = useState<Status | null>(null);
   useEffect(() => {
-    void fetch('/api/billing/status', { cache: 'no-store' }).then((response) => response.ok ? response.json() as Promise<Status> : null)
-      .then(setStatus).catch(() => {});
+    void readBillingStatus<Status>().then(setStatus).catch(() => {});
   }, []);
   if (!status || !['trialing', 'active', 'canceling'].includes(status.state)) return null;
   const due = status.state === 'trialing' ? status.trialEnds : status.cancelAt || status.subscription?.nextChargeAt || status.paidThrough;

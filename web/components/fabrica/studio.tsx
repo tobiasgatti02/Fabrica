@@ -59,17 +59,6 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
-import { Input } from '@/components/ui/input';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription as AlertDialogDescriptionUi,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle as AlertDialogTitleUi,
-} from '@/components/ui/alert-dialog';
 import {
   Dialog,
   DialogContent,
@@ -98,6 +87,7 @@ import {
   viewFormats,
 } from './model-import';
 import { StudioAuthPanel } from './studio-auth-panel';
+import { AccountSettings, type Account } from './account-settings';
 import {
   StudioHeader,
   StudioProjectSwitcher,
@@ -127,6 +117,7 @@ type Viewpoint = {
 
 type Comment = {
   id: string | number;
+  mine: boolean;
   anchor: string;
   parent?: string | null;
   author: string;
@@ -155,205 +146,6 @@ type Measurement = Omit<StoredMeasurement, 'startPoint' | 'endPoint'> & {
   endPoint: [number, number, number];
 };
 
-type Account = {
-  name: string;
-  email: string;
-  provider: 'chatgpt' | 'google' | 'fabrica';
-  created?: number;
-};
-
-function AccountSettings({
-  account,
-  onUpdated,
-}: {
-  account: Account;
-  onUpdated: (account: Account) => void;
-}) {
-  const [name, setName] = useState(account.name);
-  const [email, setEmail] = useState(account.email);
-  const [password, setPassword] = useState('');
-  const [confirmation, setConfirmation] = useState('');
-  const [message, setMessage] = useState('');
-  const [savingProfile, setSavingProfile] = useState(false);
-  const [savingPassword, setSavingPassword] = useState(false);
-  const [deleting, setDeleting] = useState(false);
-  const [deleteOpen, setDeleteOpen] = useState(false);
-
-  const request = async (body: Record<string, string>) => {
-    const response = await fetch('/api/account', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    const data = (await response.json()) as {
-      error?: string;
-      name?: string;
-      email?: string;
-    };
-    if (!response.ok)
-      throw new Error(data.error || 'No pudimos completar la acción.');
-    return data;
-  };
-
-  return (
-    <section className="account-settings" aria-label="Configuración de cuenta">
-      <div className="account-settings-heading">
-        <h3>Configuración</h3>
-        <p>Actualizá los datos con los que accedés a Fabrica.</p>
-        {typeof account.created === 'number' && (
-          <p>
-            Cuenta creada el{' '}
-            {new Intl.DateTimeFormat('es-AR', {
-              dateStyle: 'long',
-              timeZone: 'America/Argentina/Buenos_Aires',
-            }).format(account.created)}
-            .
-          </p>
-        )}
-      </div>
-      <form
-        className="account-settings-card"
-        onSubmit={(event) => {
-          event.preventDefault();
-          setSavingProfile(true);
-          setMessage('');
-          void request({ action: 'update-profile', name, email })
-            .then((data) => {
-              onUpdated({
-                ...account,
-                name: data.name || name,
-                email: data.email || email,
-              });
-              setMessage('Datos actualizados.');
-            })
-            .catch((error: Error) => setMessage(error.message))
-            .finally(() => setSavingProfile(false));
-        }}
-      >
-        <strong>Datos personales</strong>
-        <label>
-          Nombre
-          <Input
-            value={name}
-            onChange={(event) => setName(event.target.value)}
-            autoComplete="name"
-            required
-          />
-        </label>
-        <label>
-          Email
-          <Input
-            type="email"
-            value={email}
-            onChange={(event) => setEmail(event.target.value)}
-            autoComplete="email"
-            required
-          />
-        </label>
-        <Button type="submit" variant="outline" disabled={savingProfile}>
-          {savingProfile ? 'Guardando…' : 'Guardar cambios'}
-        </Button>
-      </form>
-      {account.provider === 'fabrica' ? (
-        <form
-          className="account-settings-card"
-          onSubmit={(event) => {
-            event.preventDefault();
-            setSavingPassword(true);
-            setMessage('');
-            void request({ action: 'update-password', password })
-              .then(() => {
-                setPassword('');
-                setMessage('Contraseña actualizada.');
-              })
-              .catch((error: Error) => setMessage(error.message))
-              .finally(() => setSavingPassword(false));
-          }}
-        >
-          <strong>Contraseña</strong>
-          <p>
-            Usá 10 o más caracteres, mayúsculas, minúsculas y un número o
-            símbolo.
-          </p>
-          <label>
-            Nueva contraseña
-            <Input
-              type="password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              autoComplete="new-password"
-              required
-            />
-          </label>
-          <Button type="submit" variant="outline" disabled={savingPassword}>
-            {savingPassword ? 'Actualizando…' : 'Cambiar contraseña'}
-          </Button>
-        </form>
-      ) : account.provider === 'google' ? (
-        <div className="account-settings-card account-provider-note">
-          <strong>Contraseña</strong>
-          <p>Tu cuenta usa Google. La contraseña se administra desde allí.</p>
-        </div>
-      ) : null}
-      <div className="account-settings-card account-danger">
-        <strong>Eliminar cuenta</strong>
-        <p>
-          Se eliminarán definitivamente tus proyectos, archivos y datos
-          asociados. Esta acción no se puede deshacer.
-        </p>
-        <Button
-          type="button"
-          variant="outline"
-          onClick={() => setDeleteOpen(true)}
-        >
-          Eliminar cuenta
-        </Button>
-      </div>
-      {message && (
-        <p className="account-settings-message" role="status">
-          {message}
-        </p>
-      )}
-      <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitleUi>¿Eliminar tu cuenta?</AlertDialogTitleUi>
-            <AlertDialogDescriptionUi>
-              Esta acción elimina todo el contenido de tu cuenta de forma
-              permanente. Escribí <strong>ELIMINAR</strong> para confirmarla.
-            </AlertDialogDescriptionUi>
-          </AlertDialogHeader>
-          <Input
-            value={confirmation}
-            onChange={(event) => setConfirmation(event.target.value)}
-            placeholder="ELIMINAR"
-            aria-label="Confirmación para eliminar cuenta"
-          />
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={deleting}>Cancelar</AlertDialogCancel>
-            <AlertDialogAction
-              type="button"
-              variant="destructive"
-              disabled={confirmation !== 'ELIMINAR' || deleting}
-              onClick={() => {
-                setDeleting(true);
-                void request({ action: 'delete-account', confirmation })
-                  .then(() => window.location.assign('/'))
-                  .catch((error: Error) => {
-                    setMessage(error.message);
-                    setDeleteOpen(false);
-                  })
-                  .finally(() => setDeleting(false));
-              }}
-            >
-              {deleting ? 'Eliminando…' : 'Eliminar definitivamente'}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </section>
-  );
-}
 
 const stages = [
   { number: '01', label: 'Idea', detail: 'Volumen y orientación' },
@@ -1367,7 +1159,6 @@ function HouseScene({
           ),
       )}
       <div className="canvas-help">
-        <MousePointer2 size={14} />
         {interactionMode === 'comment'
           ? 'Elegí el punto de referencia en una superficie'
           : interactionMode === 'measure'
@@ -1531,6 +1322,7 @@ export default function Studio({
             anchor: string;
             parent?: string | null;
             author: string;
+            mine: boolean;
             text: string;
             created: number;
             scope?: 'point' | 'project';
@@ -1606,6 +1398,27 @@ export default function Studio({
   const [draft, setDraft] = useState('');
   const [comments, setComments] = useState<Comment[]>([]);
   const [toast, setToast] = useState('');
+
+  useEffect(() => {
+    if (!panelOpen) return;
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      const target = event.target;
+      if (
+        target instanceof Element &&
+        target.closest('.comments-panel, .surface-pin, [data-comments-toggle]')
+      ) return;
+      setPanelOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setPanelOpen(false);
+    };
+    document.addEventListener('pointerdown', closeOnOutsidePointer, true);
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('pointerdown', closeOnOutsidePointer, true);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [panelOpen]);
 
   useEffect(() => {
     if (signedIn || localPreview || initialSharedToken)
@@ -1727,8 +1540,8 @@ export default function Studio({
       return;
     }
     setSelection(next);
-    if (interactionMode === 'navigate') return;
     setCommentScope('point');
+    if (interactionMode === 'navigate') return;
     setInteractionMode('navigate');
     setInspector(null);
     setPanelOpen(true);
@@ -1739,7 +1552,7 @@ export default function Studio({
       return;
     setSaving(true);
     try {
-      await studioRequest(
+      const result = await studioRequest(
         {
           action: 'comment',
           scope: commentScope,
@@ -1753,6 +1566,9 @@ export default function Studio({
         sharedToken,
         activeProject,
       );
+      if (commentScope === 'point' && selection && result.anchor) {
+        setSelection({ ...selection, anchor: result.anchor });
+      }
       setDraft('');
       await refresh(activeProject);
       showToast(
@@ -1777,6 +1593,23 @@ export default function Studio({
       );
       await refresh(activeProject);
       showToast('Comentario resuelto');
+    } catch (error) {
+      showToast((error as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+  const deleteComment = async (id: string | number) => {
+    if (saving) return;
+    setSaving(true);
+    try {
+      await studioRequest(
+        { action: 'delete-comment', id: String(id) },
+        sharedToken,
+        activeProject,
+      );
+      await refresh(activeProject);
+      showToast('Comentario eliminado');
     } catch (error) {
       showToast((error as Error).message);
     } finally {
@@ -1893,7 +1726,7 @@ export default function Studio({
       window.history.replaceState(
         {},
         '',
-        `/estudio?project=${encodeURIComponent(id)}`,
+        `/estudio/modelo?project=${encodeURIComponent(id)}`,
       );
       const available = (data.versions as StoredVersion[]).filter(
         (item) => item.published || accessMode === 'professional',
@@ -1962,8 +1795,8 @@ export default function Studio({
         {},
         '',
         nextProject
-          ? `/estudio?project=${encodeURIComponent(nextProject)}`
-          : '/estudio',
+          ? `/estudio/modelo?project=${encodeURIComponent(nextProject)}`
+          : '/estudio/modelo',
       );
       changeVersion((next.versions as StoredVersion[]).at(-1)?.id || '');
       showToast('Proyecto y archivos eliminados');
@@ -2225,9 +2058,20 @@ export default function Studio({
         body: JSON.stringify({ action: 'logout' }),
       });
     } finally {
-      window.location.assign('/estudio');
+      window.location.assign('/estudio/panel');
     }
   };
+  useEffect(() => {
+    const handleLogout = () => {
+      if (account?.provider === 'chatgpt') {
+        window.location.assign('/signout-with-chatgpt?return_to=%2Festudio');
+      } else {
+        void logout();
+      }
+    };
+    window.addEventListener('fabrica:logout', handleLogout);
+    return () => window.removeEventListener('fabrica:logout', handleLogout);
+  }, [account]);
   const activeVersion = versions.find((item) => item.id === version);
   const professional = accessMode === 'professional' && canEdit;
   const shownVersions = versions.filter(
@@ -2534,6 +2378,7 @@ export default function Studio({
           <button
             className="mobile-panel-toggle"
             data-tour="comments"
+            data-comments-toggle
             type="button"
             onClick={() => {
               setInspector(null);
@@ -3282,15 +3127,27 @@ export default function Studio({
                               : activeVersion?.name ||
                                 comment.version.toUpperCase()}
                           </span>
-                          {professional && comment.state === 'abierto' && (
-                            <button
-                              type="button"
-                              disabled={saving}
-                              onClick={() => void resolveComment(comment.id)}
-                            >
-                              <Check /> Resolver
-                            </button>
-                          )}
+                          <span className="comment-actions">
+                            {professional && comment.state === 'abierto' && (
+                              <button
+                                type="button"
+                                disabled={saving}
+                                onClick={() => void resolveComment(comment.id)}
+                              >
+                                <Check /> Resolver
+                              </button>
+                            )}
+                            {comment.mine && (
+                              <button
+                                type="button"
+                                disabled={saving}
+                                aria-label={`Eliminar comentario de ${comment.author}`}
+                                onClick={() => void deleteComment(comment.id)}
+                              >
+                                <Trash2 /> Eliminar
+                              </button>
+                            )}
+                          </span>
                         </div>
                       </div>
                     </article>

@@ -1,6 +1,6 @@
 import type { MouseEvent } from 'react';
 
-/** Use a document navigation while Vinext's client router is unavailable. */
+/** Explicit document navigation for entry, billing, and session transitions. */
 export function hardNavigate(event: MouseEvent<HTMLAnchorElement>) {
   if (
     event.button !== 0 ||

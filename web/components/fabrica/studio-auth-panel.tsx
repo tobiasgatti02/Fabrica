@@ -32,8 +32,8 @@ export function StudioAuthPanel({
     [checks.letters, checks.number, checks.symbol].filter(Boolean).length >= 2;
   const passwordsMatch = confirmation.length > 0 && password === confirmation;
   const returnTo = returnToOverride || (sharedToken
-    ? `/estudio?share=${encodeURIComponent(sharedToken)}`
-    : '/estudio');
+    ? `/estudio/modelo?share=${encodeURIComponent(sharedToken)}`
+    : '/estudio/panel');
   const googleHref = `/api/auth/google?return_to=${encodeURIComponent(returnTo)}`;
 
   const changeMode = (next: AuthMode) => {

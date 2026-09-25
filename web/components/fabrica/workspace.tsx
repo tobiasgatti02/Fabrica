@@ -1,13 +1,16 @@
 'use client';
 
 import dynamic from 'next/dynamic';
+import Panel from './workspace-panel';
+import Team from './workspace-team';
 import { hardNavigate } from './hard-navigation';
+import { WorkspaceSkeleton } from './workspace-skeleton';
 import { WorkspaceShareControl } from './workspace-share-control';
 import {
   StudioHeader,
   StudioProjectSwitcher,
 } from './studio-header';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   workspaceRequest,
   type WorkspaceData,
@@ -15,17 +18,11 @@ import {
 } from '@/features/workspace/client';
 import { showErrorToast, showToast } from '@/lib/notifications';
 
-const Panel = dynamic(() => import('./workspace-panel'), {
-  loading: () => <ViewSkeleton />,
-});
 const StudioAuthPanel = dynamic(() =>
   import('./studio-auth-panel').then((module) => module.StudioAuthPanel),
 );
 const Inspiration = dynamic(() => import('./workspace-inspiration'), {
-  loading: () => <ViewSkeleton />,
-});
-const Team = dynamic(() => import('./workspace-team'), {
-  loading: () => <ViewSkeleton />,
+  loading: () => <WorkspaceSkeleton />,
 });
 
 export type WorkspaceViewProps = {
@@ -37,19 +34,14 @@ export type WorkspaceViewProps = {
   run: <T = { ok: boolean; invite?: string }>(
     body: Record<string, unknown>,
   ) => Promise<T>;
+  runCanvas: <T = { ok: boolean }>(
+    body: Record<string, unknown>,
+    optimistic?: (data: WorkspaceData) => WorkspaceData,
+    scope?: string,
+  ) => Promise<T>;
   notify: (message: string) => void;
   openProject: (id: string) => void;
 };
-
-function ViewSkeleton() {
-  return (
-    <div className="workspace-skeleton" aria-label="Cargando vista">
-      <span />
-      <span />
-      <span />
-    </div>
-  );
-}
 
 const workspaceViewCache = new Map<string, WorkspaceData>();
 const cacheKey = (
@@ -75,23 +67,42 @@ function cacheWorkspaceView(
 
 export default function Workspace({
   section,
+  initialData,
   initialProject,
   share,
   invite,
   authenticated,
+  authError,
 }: {
   section: WorkspaceSection;
+  initialData?: WorkspaceData | null;
   initialProject: string;
   share: string;
   invite: string;
   authenticated: boolean;
+  authError: string;
 }) {
   const [project, setProject] = useState(initialProject);
   const cached = workspaceViewCache.get(
     cacheKey(section, initialProject, share, invite),
   );
-  const [data, setData] = useState<WorkspaceData | null>(cached || null);
-  const [loading, setLoading] = useState(!cached);
+  const [data, setData] = useState<WorkspaceData | null>(initialData || cached || null);
+  const serverData = useRef<WorkspaceData | null>(initialData || cached || null);
+  // The default URL has no project query, but the response selects a project.
+  const visibleProject = project || data?.project.id || '';
+  const activeKey = useRef(cacheKey(section, visibleProject, share, invite));
+  activeKey.current = cacheKey(section, visibleProject, share, invite);
+  const canvasUpdates = useRef(new Map<number, {
+    key: string;
+    apply: (data: WorkspaceData) => WorkspaceData;
+    settled: boolean;
+  }>());
+  const canvasUpdateId = useRef(0);
+  const canvasQueues = useRef(new Map<string, Promise<void>>());
+  const canvasSyncTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const canvasSyncing = useRef(false);
+  const [loading, setLoading] = useState(!initialData && !cached);
+  const initialRequest = useRef(initialData ? cacheKey(section, initialProject, share, invite) : '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [invitePending, setInvitePending] = useState(
@@ -99,8 +110,18 @@ export default function Workspace({
   );
   const [requiresAuth, setRequiresAuth] = useState(false);
   const notify = (message: string) => showToast(message);
+  const publishData = useCallback((next: WorkspaceData, key: string) => {
+    if (activeKey.current !== key) return;
+    serverData.current = next;
+    let visible = next;
+    for (const update of canvasUpdates.current.values()) {
+      if (update.key === key) visible = update.apply(visible);
+    }
+    setData(visible);
+  }, []);
   const refresh = useCallback(
-    async (selected: string, signal?: AbortSignal) => {
+    async (selected: string, signal?: AbortSignal, acknowledged: number[] = []) => {
+      const key = cacheKey(section, selected, share, invite);
       const next = await workspaceRequest<WorkspaceData>(
         undefined,
         selected,
@@ -109,17 +130,83 @@ export default function Workspace({
         section,
         invite,
       );
-      setData(next);
+      acknowledged.forEach((id) => canvasUpdates.current.delete(id));
+      publishData(next, key);
       cacheWorkspaceView(section, selected, share, invite, next);
-      setError('');
+      if (activeKey.current === key) setError('');
       return next;
     },
-    [share, section, invite],
+    [share, section, invite, publishData],
   );
+  function scheduleCanvasSync(selected: string, key: string, delay = 120) {
+    if (canvasSyncTimer.current) clearTimeout(canvasSyncTimer.current);
+    canvasSyncTimer.current = setTimeout(() => {
+      canvasSyncTimer.current = null;
+      if (canvasSyncing.current) {
+        scheduleCanvasSync(selected, key, 250);
+        return;
+      }
+      const acknowledged = [...canvasUpdates.current]
+        .filter(([, update]) => update.key === key && update.settled)
+        .map(([id]) => id);
+      if (!acknowledged.length) return;
+      canvasSyncing.current = true;
+      let failed = false;
+      void refresh(selected, undefined, acknowledged)
+        .catch(() => {
+          // Keep successful writes visible and retry reconciliation later.
+          failed = true;
+        })
+        .finally(() => {
+          canvasSyncing.current = false;
+          if ([...canvasUpdates.current.values()].some((update) => update.key === key && update.settled))
+            scheduleCanvasSync(selected, key, failed ? 2000 : 120);
+        });
+    }, delay);
+  }
+  const runCanvas: WorkspaceViewProps['runCanvas'] = async <T,>(
+    body: Record<string, unknown>,
+    optimistic?: (data: WorkspaceData) => WorkspaceData,
+    scope?: string,
+  ): Promise<T> => {
+    const selected = data?.project.id || project;
+    const key = cacheKey(section, selected, share, invite);
+    const id = ++canvasUpdateId.current;
+    canvasUpdates.current.set(id, { key, apply: optimistic || ((current) => current), settled: false });
+    if (optimistic && serverData.current) publishData(serverData.current, key);
+    const queueKey = scope ? `${selected}:${scope}` : '';
+    const previous = queueKey ? canvasQueues.current.get(queueKey) : undefined;
+    const request = previous
+      ? previous.then(() => workspaceRequest<T>(body, selected, share, undefined, undefined, invite))
+      : workspaceRequest<T>(body, selected, share, undefined, undefined, invite);
+    if (queueKey) {
+      const tail = request.then(() => {}, () => {});
+      canvasQueues.current.set(queueKey, tail);
+      void tail.then(() => {
+        if (canvasQueues.current.get(queueKey) === tail) canvasQueues.current.delete(queueKey);
+      });
+    }
+    try {
+      const result = await request;
+      const update = canvasUpdates.current.get(id);
+      if (update) update.settled = true;
+      if (activeKey.current === key) scheduleCanvasSync(selected, key);
+      else canvasUpdates.current.delete(id);
+      return result;
+    } catch (requestError) {
+      canvasUpdates.current.delete(id);
+      if (optimistic && serverData.current) publishData(serverData.current, key);
+      showErrorToast((requestError as Error).message);
+      throw requestError;
+    }
+  };
 
   useEffect(() => {
     if (invitePending) return;
     if (!authenticated && !share && !invite) return;
+    if (initialRequest.current === cacheKey(section, project, share, invite)) {
+      return;
+    }
     const controller = new AbortController();
     void workspaceRequest<WorkspaceData>(
       undefined,
@@ -131,7 +218,7 @@ export default function Workspace({
     )
       .then((next) => {
         if (!controller.signal.aborted) {
-          setData(next);
+          publishData(next, cacheKey(section, project, share, invite));
           cacheWorkspaceView(section, project, share, invite, next);
           setError('');
         }
@@ -146,7 +233,7 @@ export default function Workspace({
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [project, share, invite, authenticated, invitePending, section]);
+  }, [project, share, invite, authenticated, invitePending, section, publishData]);
 
   useEffect(() => {
     if (!invitePending || !authenticated) return;
@@ -177,6 +264,7 @@ export default function Workspace({
 
   const openProject = (id: string) => {
     if (id === data?.project.id) return;
+    initialRequest.current = '';
     setLoading(true);
     setProject(id);
     window.history.replaceState(
@@ -226,6 +314,15 @@ export default function Workspace({
           </p>
           <StudioAuthPanel
             sharedToken=""
+            initialError={
+              authError === 'google_unavailable'
+                ? 'El acceso con Google todavía no está configurado.'
+                : authError === 'google_cancelled'
+                  ? 'No se completó el acceso con Google.'
+                  : authError === 'google_failed'
+                    ? 'No pudimos ingresar con Google. Intentá nuevamente.'
+                    : ''
+            }
             returnTo={`/estudio/${section}${invite ? `?invite=${encodeURIComponent(invite)}` : ''}`}
           />
         </div>
@@ -241,6 +338,7 @@ export default function Workspace({
         invite,
         busy,
         run,
+        runCanvas,
         notify,
         openProject,
       }
@@ -331,7 +429,7 @@ export default function Workspace({
                               result.error ||
                                 'No se pudo eliminar el proyecto.',
                             );
-                          window.location.href = '/estudio';
+                          window.location.href = '/estudio/panel';
                         } catch (caught) {
                           showErrorToast((caught as Error).message);
                           setBusy(false);
@@ -366,7 +464,7 @@ export default function Workspace({
         </div>
       )}
       {loading || invitePending ? (
-        <ViewSkeleton />
+        <WorkspaceSkeleton />
       ) : props ? (
         section === 'panel' ? (
           <Panel key={props.data.project.id} {...props} />
@@ -379,7 +477,7 @@ export default function Workspace({
         <div className="workspace-empty">
           <h1>No pudimos abrir el estudio</h1>
           <p>Revisá el enlace o volvé a ingresar.</p>
-          <a href="/estudio" onClick={hardNavigate}>Ir al estudio</a>
+          <a href="/estudio/panel" onClick={hardNavigate}>Ir al estudio</a>
         </div>
       )}
       <footer className="workspace-footer">

@@ -63,9 +63,20 @@ export type WorkspaceWorktable = {
 export type WorkspaceInspirationComment = {
   id: string;
   project: string;
-  inspiration: string;
+  inspiration: string | null;
+  element: string | null;
+  worktable: string | null;
   author: string;
+  mine: boolean;
   text: string;
+  created: number;
+};
+export type WorkspaceInspirationReaction = {
+  id: string;
+  project: string;
+  inspiration: string;
+  emoji: string;
+  mine: boolean;
   created: number;
 };
 export type WorkspaceProposal = {
@@ -140,6 +151,7 @@ export type WorkspaceData = {
   inspiration: WorkspaceInspiration[];
   worktables: WorkspaceWorktable[];
   inspirationComments: WorkspaceInspirationComment[];
+  inspirationReactions: WorkspaceInspirationReaction[];
   proposals: WorkspaceProposal[];
   options: WorkspaceOption[];
   feedback: WorkspaceFeedback[];
@@ -176,8 +188,19 @@ export async function workspaceRequest<
     signal,
   });
   const result = (await response.json()) as T & { error?: string };
-  if (!response.ok)
+  if (!response.ok) {
+    if (import.meta.env.DEV)
+      console.error('Workspace request failed', {
+        action: body?.action,
+        status: response.status,
+        error: result.error,
+        id: body?.id,
+        worktable: body?.worktable,
+        sticky: body?.sticky,
+        category: body?.category,
+      });
     throw new Error(result.error || 'No se pudo completar la operación.');
+  }
   return result;
 }
 
@@ -332,9 +355,10 @@ export const shortDate = (value: string | null | number | undefined) =>
     ? new Intl.DateTimeFormat('es-AR', {
         day: 'numeric',
         month: 'short',
+        timeZone: 'America/Argentina/Buenos_Aires',
       }).format(
         typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)
-          ? new Date(`${value}T12:00:00`)
+          ? new Date(`${value}T12:00:00Z`)
           : new Date(value),
       )
     : 'Sin fecha';

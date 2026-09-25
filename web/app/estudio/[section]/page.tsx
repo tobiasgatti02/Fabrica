@@ -5,6 +5,9 @@ import { getFabricaUser } from '@/features/auth/server';
 import { ownerAccessBlocked } from '@/features/billing/access';
 import { redirect } from 'next/navigation';
 import type { WorkspaceSection } from '@/features/workspace/client';
+import type { WorkspaceData } from '@/features/workspace/client';
+import { getWorkspaceViewForUser } from '@/app/api/workspace/route';
+import { headers } from 'next/headers';
 import '../studio.css';
 import '../workspace.css';
 
@@ -45,7 +48,7 @@ export default async function WorkspacePage({
   searchParams,
 }: {
   params: Promise<{ section: string }>;
-  searchParams: Promise<{ project?: string; share?: string; invite?: string }>;
+  searchParams: Promise<{ project?: string; share?: string; invite?: string; auth_error?: string }>;
 }) {
   const { section } = await params;
   if (!['panel', 'inspiracion', 'equipo'].includes(section))
@@ -54,13 +57,23 @@ export default async function WorkspacePage({
   const user = await getFabricaUser();
   if (user && !query.share && !query.invite && await ownerAccessBlocked(user.userId))
     redirect('/estudio/facturacion');
+  let initialData: WorkspaceData | null = null;
+  if ((user || import.meta.env.DEV) && !query.share && !query.invite) {
+    const url = new URL('https://fabrica.local/api/workspace');
+    url.searchParams.set('view', section);
+    if (query.project) url.searchParams.set('project', query.project);
+    const response = await getWorkspaceViewForUser(new Request(url, { headers: await headers() }), user);
+    if (response.ok) initialData = await response.json() as WorkspaceData;
+  }
   return (
     <Workspace
       section={section as WorkspaceSection}
+      initialData={initialData}
       initialProject={query.project || ''}
       share={query.share || ''}
       invite={query.invite || ''}
       authenticated={Boolean(user) || import.meta.env.DEV}
+      authError={query.auth_error || ''}
     />
   );
 }

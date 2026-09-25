@@ -37,7 +37,7 @@ export async function GET(request: Request) {
       authErrorRedirect(
         request,
         'google_cancelled',
-        oauth?.returnTo || '/estudio',
+        oauth?.returnTo || '/estudio/panel',
       ),
       request,
     );
@@ -57,7 +57,7 @@ export async function GET(request: Request) {
       authErrorRedirect(
         request,
         'google_failed',
-        oauth?.returnTo || '/estudio',
+        oauth?.returnTo || '/estudio/panel',
       ),
       request,
     );

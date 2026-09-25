@@ -1,0 +1,1 @@
+ALTER TABLE "studio_inspiration_comments" ADD COLUMN "actor" text;

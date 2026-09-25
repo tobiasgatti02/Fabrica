@@ -2,7 +2,8 @@ import type { Metadata } from 'next';
 import { getFabricaUser } from '@/features/auth/server';
 import { StudioTour } from '@/components/fabrica/studio-tour';
 import { RenewalReminder } from '@/components/billing/renewal-reminder';
-import { StudioChrome } from '@/components/fabrica/studio-chrome';
+import { StudioChrome, StudioAccountRegistration } from '@/components/fabrica/studio-chrome';
+import { Suspense } from 'react';
 import './studio.css';
 import './studio-shell.css';
 
@@ -14,19 +15,29 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false, nocache: true },
 };
 
-export default async function StudioLayout({
+async function StudioAccountExtras() {
+  const user = await getFabricaUser();
+  return <>
+    <StudioAccountRegistration account={user ? {
+      name: user.displayName,
+      email: user.email,
+      provider: user.provider,
+      created: user.created,
+    } : null} />
+    {user && <RenewalReminder />}
+    {(user || import.meta.env.DEV) && <StudioTour account={user?.userId || 'local-preview'} />}
+  </>;
+}
+
+export default function StudioLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const user = await getFabricaUser();
   return (
-    <>
-      <StudioChrome>{children}</StudioChrome>
-      {user && <RenewalReminder />}
-      {(user || import.meta.env.DEV) && (
-        <StudioTour account={user?.userId || 'local-preview'} />
-      )}
-    </>
+    <StudioChrome>
+      {children}
+      <Suspense fallback={null}><StudioAccountExtras /></Suspense>
+    </StudioChrome>
   );
 }

@@ -237,15 +237,33 @@ export const studioInspirationComments = pgTable(
       .notNull()
       .references(() => studioProjects.id),
     inspiration: text('inspiration')
-      .notNull()
       .references(() => studioInspiration.id),
+    element: text('element'),
+    worktable: text('worktable'),
     author: text('author').notNull(),
+    actor: text('actor'),
     text: text('text').notNull(),
     created: bigint('created', { mode: 'number' }).notNull(),
   },
   (table) => [
     index('studio_inspiration_comments_project').on(table.project),
     index('studio_inspiration_comments_inspiration').on(table.inspiration),
+  ],
+);
+
+export const studioInspirationReactions = pgTable(
+  'studio_inspiration_reactions',
+  {
+    id: text('id').primaryKey(),
+    project: text('project').notNull().references(() => studioProjects.id),
+    inspiration: text('inspiration').notNull().references(() => studioInspiration.id),
+    actor: text('actor').notNull(),
+    emoji: text('emoji').notNull(),
+    created: bigint('created', { mode: 'number' }).notNull(),
+  },
+  (table) => [
+    uniqueIndex('studio_inspiration_reactions_actor_unique').on(table.inspiration, table.actor),
+    index('studio_inspiration_reactions_project').on(table.project),
   ],
 );
 
@@ -336,6 +354,7 @@ export const studioComments = pgTable(
       .references(() => studioProjects.id),
     version: text('version').notNull(),
     author: text('author').notNull(),
+    actor: text('actor'),
     text: text('text').notNull(),
     anchor: text('anchor').notNull().default(''),
     parent: text('parent'),

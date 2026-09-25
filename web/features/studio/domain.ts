@@ -52,6 +52,7 @@ export type StoredVersion = {
 
 export type StoredComment = {
   id: string;
+  mine: boolean;
   anchor: string;
   parent: string | null;
   author: string;
@@ -89,6 +90,7 @@ export type StoredPlan = {
 
 export type StudioResponse = {
   error?: string;
+  anchor?: string;
   client?: StoredClient;
   id: string;
   partSize: number;

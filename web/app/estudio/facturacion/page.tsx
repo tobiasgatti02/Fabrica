@@ -1,10 +1,11 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Script from 'next/script';
 import { hardNavigate } from '@/components/fabrica/hard-navigation';
 import { ArrowRight, Check, CheckCircle2, Clock3, HardDrive, UsersRound, X } from 'lucide-react';
 import { BillingCardForm } from '@/components/billing/card-form';
+import { readBillingStatus } from '@/features/billing/client';
 
 type Rights = { projects: number; storageBytes: number; professionals: number; clients: number | null; teamPermissions?: boolean; advancedAdmin?: boolean; prioritySupport?: boolean };
 type BillingData = {
@@ -21,12 +22,6 @@ const money = (amount: number, currency = 'ARS') => new Intl.NumberFormat('es-AR
 const bytes = (value: number) => value >= 1024 ** 3 ? `${(value / 1024 ** 3).toFixed(value >= 10 * 1024 ** 3 ? 0 : 1)} GB` : `${Math.round(value / 1024 ** 2)} MB`;
 const date = (value: number) => new Intl.DateTimeFormat('es-AR', { day: 'numeric', month: 'long', year: 'numeric' }).format(value);
 const daysUntil = (value: number) => Math.max(0, Math.ceil((value - Date.now()) / 86_400_000));
-
-async function readStatus(): Promise<BillingData> {
-  const response = await fetch('/api/billing/status', { cache: 'no-store' });
-  if (!response.ok) throw new Error(response.status === 401 ? 'Iniciá sesión para ver tu facturación.' : 'No pudimos cargar la facturación.');
-  return response.json() as Promise<BillingData>;
-}
 
 function Usage({ label, used, limit, formatted }: { label: string; used: number; limit: number | null; formatted?: boolean }) {
   const percent = limit ? Math.min(100, Math.round(used / limit * 100)) : 0;
@@ -48,16 +43,12 @@ export default function BillingPage() {
   const [successOpen, setSuccessOpen] = useState(false);
   const [message, setMessage] = useState('');
   const [loadError, setLoadError] = useState('');
-  const refreshStatus = useCallback(async () => { const data = await readStatus(); setStatus(data); return data; }, []);
+  const [plansError, setPlansError] = useState('');
+  const scrolledToPlans = useRef(false);
+  const refreshStatus = useCallback(async (fresh = false) => { const data = await readBillingStatus<BillingData>({ fresh }); setStatus(data); return data; }, []);
 
   useEffect(() => {
-    void Promise.all([refreshStatus(), fetch('/api/billing/plans').then(async (response) => {
-      if (!response.ok) throw new Error('No pudimos cargar los planes.');
-      return response.json() as Promise<PlansData>;
-    })]).then(([initial, data]) => {
-      setPlans(data.plans || []); setPublicKey(data.publicKey); setTestMode(data.testMode);
-      const chosen = new URLSearchParams(window.location.search).get('plan');
-      if (chosen) setSelectedPlan(data.plans.find((plan) => plan.key === chosen) || null);
+    void refreshStatus().then((initial) => {
       setPendingPayment(sessionStorage.getItem('fabrica-payment-pending') === '1');
       if (initial.state === 'active' && initial.lastCharge?.status === 'approved' &&
         Date.now() - initial.lastCharge.occurredAt < 15 * 60_000 &&
@@ -66,14 +57,28 @@ export default function BillingPage() {
         setSuccessOpen(true);
       }
     }).catch((error: Error) => setLoadError(error.message));
+    void fetch('/api/billing/plans').then(async (response) => {
+      if (!response.ok) throw new Error('No pudimos cargar los planes.');
+      return response.json() as Promise<PlansData>;
+    }).then((data) => {
+      setPlans(data.plans || []); setPublicKey(data.publicKey); setTestMode(data.testMode);
+      const chosen = new URLSearchParams(window.location.search).get('plan');
+      if (chosen) setSelectedPlan(data.plans.find((plan) => plan.key === chosen) || null);
+    }).catch((error: Error) => setPlansError(error.message));
   }, [refreshStatus]);
+
+  useEffect(() => {
+    if (!status || !plans.length || scrolledToPlans.current || window.location.hash !== '#planes') return;
+    scrolledToPlans.current = true;
+    requestAnimationFrame(() => document.getElementById('planes')?.scrollIntoView());
+  }, [status, plans.length]);
 
   useEffect(() => {
     if (!pendingPayment && status?.subscription?.state !== 'pending') return;
     let active = true;
     const check = async () => {
       try {
-        const next = await refreshStatus();
+        const next = await refreshStatus(true);
         if (!active) return;
         if (pendingPayment && next.state === 'active' && next.lastCharge?.status === 'approved') {
           sessionStorage.removeItem('fabrica-payment-pending');
@@ -96,11 +101,11 @@ export default function BillingPage() {
     sessionStorage.setItem('fabrica-payment-pending', '1');
     setPendingPayment(true); setSelectedPlan(null);
     setMessage('Mercado Pago recibió la solicitud. Estamos verificando la acreditación.');
-    void refreshStatus();
+    void refreshStatus(true);
   }, [refreshStatus]);
 
   if (loadError) return <main className="billing-page"><div className="billing-empty" role="alert"><h1>No pudimos abrir facturación</h1><p>{loadError}</p><button type="button" onClick={() => window.location.reload()}>Reintentar</button></div></main>;
-  if (!status) return <main className="billing-page"><div className="billing-empty">Cargando tu facturación…</div></main>;
+  if (!status) return <main className="billing-page billing-skeleton" aria-busy="true"><output className="sr-only">Cargando tu facturación…</output><div className="billing-skeleton-title" /><div className="billing-skeleton-card" /><div className="billing-skeleton-grid"><span /><span /><span /></div></main>;
 
   const expiry = status.state === 'trialing' ? status.trialEnds : status.cancelAt || status.subscription?.nextChargeAt || status.paidThrough;
   const warning = expiry && ['trialing', 'active', 'canceling'].includes(status.state) && daysUntil(expiry) <= 3;
@@ -114,18 +119,18 @@ export default function BillingPage() {
       const result = await response.json() as { error?: string };
       if (!response.ok) throw new Error(result.error || 'No se pudo cambiar el plan.');
       setSelectedPlan(null); setMessage('Tu plan se actualizó. Los nuevos límites ya están disponibles.');
-      await refreshStatus();
+      await refreshStatus(true);
     } catch (error) { setMessage(error instanceof Error ? error.message : 'No se pudo cambiar el plan.'); }
     finally { setBusy(false); }
   };
 
   return <main className="billing-page">
-    <Script src="https://sdk.mercadopago.com/js/v2" strategy="afterInteractive" onReady={() => setSdkReady(true)} />
-    <nav className="billing-back"><a href="/estudio" onClick={hardNavigate}>← Volver al estudio</a><span>Cuenta / Facturación</span></nav>
+    {selectedPlan && publicKey && !sdkReady && <Script src="https://sdk.mercadopago.com/js/v2" strategy="afterInteractive" onReady={() => setSdkReady(true)} />}
+    <nav className="billing-back"><a href="/estudio/panel" onClick={hardNavigate}>← Volver al estudio</a><span>Cuenta / Facturación</span></nav>
     <header className="billing-hero"><div><p className="workspace-eyebrow">TU MEMBRESÍA</p><h1>Un estudio que crece<br /><em>con tus proyectos.</em></h1><p>Revisá tu capacidad, los próximos cobros y tu plan en un solo lugar.</p></div><div className="billing-status-card"><span>PLAN ACTUAL</span><strong>{names[status.plan] || status.plan}</strong><p><i className={`billing-dot billing-dot--${status.state}`} />{states[status.state] || status.state}</p>{expiry && <small>{status.state === 'trialing' ? 'Prueba hasta el ' : 'Próxima fecha: '}{date(expiry)}</small>}</div></header>
     {warning && <div className="billing-notice" role="status"><Clock3 size={20} /><p>{status.state === 'trialing' ? 'Tu prueba' : status.state === 'canceling' ? 'Tu acceso' : 'Tu próximo cobro'} {daysUntil(expiry) === 0 ? 'vence hoy' : `vence en ${daysUntil(expiry)} ${daysUntil(expiry) === 1 ? 'día' : 'días'}`}. {status.state === 'trialing' ? 'Elegí un plan para seguir trabajando.' : status.state === 'canceling' ? 'Podés volver a suscribirte para continuar.' : 'Verificá tu medio de pago para evitar interrupciones.'}</p></div>}
     {['grace_period', 'expired', 'canceled', 'paused'].includes(status.state) && <div className="billing-notice billing-notice--urgent" role="alert"><Clock3 size={20} /><p>El acceso de edición está suspendido. Elegí un plan para volver a trabajar en el estudio.</p></div>}
-    {verifying && <div className="billing-notice" role="status"><Clock3 size={20} /><div><p>Mercado Pago está verificando el pago de {names[status.subscription?.plan || ''] || 'tu plan'}. Tu prueba sigue disponible mientras tanto.</p>{Date.now() - status.subscription!.created >= 120_000 && <button type="button" className="billing-retry" disabled={busy} onClick={async () => { setBusy(true); try { const response = await fetch('/api/billing/reset-pending', { method: 'POST' }); const result = await response.json() as { error?: string }; if (!response.ok) throw new Error(result.error || 'No se pudo cancelar el intento.'); sessionStorage.removeItem('fabrica-payment-pending'); setPendingPayment(false); setMessage('El intento anterior se canceló. Podés ingresar una tarjeta nueva.'); await refreshStatus(); } catch (error) { setMessage(error instanceof Error ? error.message : 'No se pudo reintentar.'); await refreshStatus(); } finally { setBusy(false); } }}>Cancelar intento y volver a probar</button>}</div></div>}
+    {verifying && <div className="billing-notice" role="status"><Clock3 size={20} /><div><p>Mercado Pago está verificando el pago de {names[status.subscription?.plan || ''] || 'tu plan'}. Tu prueba sigue disponible mientras tanto.</p>{Date.now() - status.subscription!.created >= 120_000 && <button type="button" className="billing-retry" disabled={busy} onClick={async () => { setBusy(true); try { const response = await fetch('/api/billing/reset-pending', { method: 'POST' }); const result = await response.json() as { error?: string }; if (!response.ok) throw new Error(result.error || 'No se pudo cancelar el intento.'); sessionStorage.removeItem('fabrica-payment-pending'); setPendingPayment(false); setMessage('El intento anterior se canceló. Podés ingresar una tarjeta nueva.'); await refreshStatus(true); } catch (error) { setMessage(error instanceof Error ? error.message : 'No se pudo reintentar.'); await refreshStatus(true); } finally { setBusy(false); } }}>Cancelar intento y volver a probar</button>}</div></div>}
     {message && <output className="billing-message" role="status">{message}</output>}
 
     <section className="billing-section billing-current"><div className="billing-section-heading"><p className="workspace-eyebrow">01 / CAPACIDAD</p><h2>Uso del estudio</h2><p>Se cuentan los archivos de la mesa de trabajo, los modelos 3D y los planos vinculados a tus proyectos.</p></div><div className="billing-usage-card">
@@ -135,7 +140,7 @@ export default function BillingPage() {
       <Usage label="Clientes" used={status.usage.clients} limit={status.rights.clients} />
     </div></section>
 
-    <section className="billing-section"><div className="billing-section-heading"><p className="workspace-eyebrow">02 / PLANES</p><h2>Elegí tu capacidad</h2><p>Precios y límites vigentes. Podés cambiar de plan desde acá.</p></div><div className="billing-plans">{plans.filter((plan) => plan.key !== 'prueba').map((plan) => {
+    <section className="billing-section" id="planes"><div className="billing-section-heading"><p className="workspace-eyebrow">02 / PLANES</p><h2>Elegí tu capacidad</h2><p>Precios y límites vigentes. Podés cambiar de plan desde acá.</p></div>{plansError && <p role="alert">{plansError}</p>}<div className="billing-plans">{plans.filter((plan) => plan.key !== 'prueba').map((plan) => {
       const current = plan.key === status.plan && ['active', 'canceling'].includes(status.state);
       const overLimit = plan.rights.projects < status.usage.projects || plan.rights.storageBytes < status.usage.storageBytes || plan.rights.professionals < status.usage.professionals || (plan.rights.clients !== null && plan.rights.clients < status.usage.clients);
       return <article className={`billing-plan ${plan.key === 'estudio' ? 'billing-plan--featured' : ''} ${selectedPlan?.id === plan.id ? 'billing-plan--selected' : ''}`} key={plan.id}>
@@ -150,8 +155,8 @@ export default function BillingPage() {
       {active ? <button className="billing-primary" type="button" disabled={busy} onClick={() => void changePlan()}>{busy ? 'Actualizando…' : 'Confirmar cambio'} <ArrowRight size={17} /></button> : <>{testMode && <p className="billing-test-note">Entorno de prueba: usá una cuenta compradora y una tarjeta de prueba de Mercado Pago.</p>}{sdkReady && publicKey ? <BillingCardForm key={selectedPlan.id} plan={selectedPlan.key} amountCents={selectedPlan.amountCents} publicKey={publicKey} onComplete={onPaymentSubmitted} /> : <p>Cargando formulario seguro…</p>}</>}
     </section>}
 
-    <section className="billing-footer"><div><h2>Próximo cobro</h2><p>{status.subscription?.nextChargeAt ? `${date(status.subscription.nextChargeAt)} · ${money(status.subscription.amountCents, status.subscription.currency)}` : 'Todavía no hay un cobro programado.'}</p><small>{status.lastCharge ? `Último movimiento: ${status.lastCharge.status === 'approved' ? 'aprobado' : status.lastCharge.status} · ${date(status.lastCharge.occurredAt)}` : 'Aún no hay pagos registrados.'}</small></div>{active && <button type="button" disabled={busy} onClick={async () => { if (!window.confirm('¿Cancelar la renovación? Conservás el acceso hasta el final del período abonado.')) return; setBusy(true); try { const response = await fetch('/api/billing/cancel', { method: 'POST' }); const result = await response.json() as { error?: string }; if (!response.ok) throw new Error(result.error || 'No se pudo cancelar.'); await refreshStatus(); setMessage('La renovación fue cancelada. Conservás el acceso hasta el final del período abonado.'); } catch (error) { setMessage(error instanceof Error ? error.message : 'No se pudo cancelar.'); } finally { setBusy(false); } }}>Cancelar renovación</button>}</section>
+    <section className="billing-footer"><div><h2>Próximo cobro</h2><p>{status.subscription?.nextChargeAt ? `${date(status.subscription.nextChargeAt)} · ${money(status.subscription.amountCents, status.subscription.currency)}` : 'Todavía no hay un cobro programado.'}</p><small>{status.lastCharge ? `Último movimiento: ${status.lastCharge.status === 'approved' ? 'aprobado' : status.lastCharge.status} · ${date(status.lastCharge.occurredAt)}` : 'Aún no hay pagos registrados.'}</small></div>{active && <button type="button" disabled={busy} onClick={async () => { if (!window.confirm('¿Cancelar la renovación? Conservás el acceso hasta el final del período abonado.')) return; setBusy(true); try { const response = await fetch('/api/billing/cancel', { method: 'POST' }); const result = await response.json() as { error?: string }; if (!response.ok) throw new Error(result.error || 'No se pudo cancelar.'); await refreshStatus(true); setMessage('La renovación fue cancelada. Conservás el acceso hasta el final del período abonado.'); } catch (error) { setMessage(error instanceof Error ? error.message : 'No se pudo cancelar.'); } finally { setBusy(false); } }}>Cancelar renovación</button>}</section>
     {!publicKey && <p className="billing-test-note">Los pagos no están configurados en este entorno.</p>}
-    {successOpen && <div className="billing-modal-backdrop" role="presentation" onMouseDown={() => setSuccessOpen(false)}><div className="billing-success-modal" role="dialog" aria-modal="true" aria-labelledby="billing-success-title" onMouseDown={(event) => event.stopPropagation()}><CheckCircle2 size={48} aria-hidden="true" /><p className="workspace-eyebrow">PAGO CONFIRMADO</p><h2 id="billing-success-title">Todo salió bien.</h2><a href="/estudio" onClick={hardNavigate} className="billing-primary">Ir al estudio <ArrowRight size={18} /></a></div></div>}
+    {successOpen && <div className="billing-modal-backdrop" role="presentation" onMouseDown={() => setSuccessOpen(false)}><div className="billing-success-modal" role="dialog" aria-modal="true" aria-labelledby="billing-success-title" onMouseDown={(event) => event.stopPropagation()}><CheckCircle2 size={48} aria-hidden="true" /><p className="workspace-eyebrow">PAGO CONFIRMADO</p><h2 id="billing-success-title">Todo salió bien.</h2><a href="/estudio/panel" onClick={hardNavigate} className="billing-primary">Ir al estudio <ArrowRight size={18} /></a></div></div>}
   </main>;
 }

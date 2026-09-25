@@ -1,50 +1,16 @@
-import Studio from '@/components/fabrica/studio';
-import { getFabricaUser } from '@/features/auth/server';
-import { ownerAccessBlocked } from '@/features/billing/access';
 import { redirect } from 'next/navigation';
-import './studio.css';
-export const dynamic = 'force-dynamic';
 
-export default async function StudioPage({
+export default async function StudioEntryPage({
   searchParams,
 }: {
-  searchParams?: Promise<{
-    share?: string;
-    project?: string;
-    auth_error?: string;
-    account?: string;
-  }>;
+  searchParams?: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const params = await searchParams;
-  const sharedToken = params?.share || '';
-  const authError =
-    params?.auth_error === 'google_unavailable'
-      ? 'El acceso con Google todavía no está configurado.'
-      : params?.auth_error === 'google_cancelled'
-        ? 'No se completó el acceso con Google.'
-        : params?.auth_error === 'google_failed'
-          ? 'No pudimos ingresar con Google. Intentá nuevamente.'
-          : '';
-  const user = await getFabricaUser();
-  if (user && !sharedToken && await ownerAccessBlocked(user.userId))
-    redirect('/estudio/facturacion');
-  return (
-    <Studio
-      localPreview={import.meta.env.DEV}
-      initialSharedToken={sharedToken}
-      initialProject={params?.project || ''}
-      initialAuthError={authError}
-      initialAccountOpen={params?.account === '1'}
-      user={
-        user
-          ? {
-              name: user.displayName,
-              email: user.email,
-              provider: user.provider,
-              created: user.created,
-            }
-          : null
-      }
-    />
-  );
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(params || {})) {
+    if (typeof value === 'string') query.set(key, value);
+    else if (Array.isArray(value)) value.forEach((item) => query.append(key, item));
+  }
+  const suffix = query.toString();
+  redirect(`/estudio/panel${suffix ? `?${suffix}` : ''}`);
 }
