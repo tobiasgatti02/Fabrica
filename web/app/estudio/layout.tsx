@@ -3,6 +3,7 @@ import { getFabricaUser } from '@/features/auth/server';
 import { StudioTour } from '@/components/fabrica/studio-tour';
 import { RenewalReminder } from '@/components/billing/renewal-reminder';
 import { StudioChrome, StudioAccountRegistration } from '@/components/fabrica/studio-chrome';
+import { AnalyticsIdentity } from '@/app/analytics';
 import { Suspense } from 'react';
 import './studio.css';
 import './studio-shell.css';
@@ -18,6 +19,7 @@ export const metadata: Metadata = {
 async function StudioAccountExtras() {
   const user = await getFabricaUser();
   return <>
+    <AnalyticsIdentity userId={user?.userId || null} provider={user?.provider} />
     <StudioAccountRegistration account={user ? {
       name: user.displayName,
       email: user.email,
