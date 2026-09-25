@@ -9,6 +9,12 @@ const SITE_CREATOR_PLACEHOLDER_DATABASE_ID =
 
 const { d1, r2 } = hostingConfig;
 const isTestDeployment = process.env.FABRICA_DEPLOY_TARGET === 'test';
+const isProductionDeployment = process.env.FABRICA_DEPLOY_TARGET === 'production';
+const deploymentDomain = isTestDeployment
+  ? 'test.f4brica.app'
+  : isProductionDeployment
+    ? 'f4brica.app'
+    : null;
 
 // macOS Seatbelt blocks FSEvents, so Codex previews need polling for HMR.
 const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === 'seatbelt';
@@ -23,9 +29,9 @@ const localBindingConfig = {
       ? 'https://test.f4brica.app/api/auth/google/callback'
       : 'https://f4brica.app/api/auth/google/callback',
   },
-  ...(isTestDeployment
+  ...(deploymentDomain
     ? {
-        routes: [{ pattern: 'test.f4brica.app', custom_domain: true }],
+        routes: [{ pattern: deploymentDomain, custom_domain: true }],
       }
     : {}),
   observability: {
