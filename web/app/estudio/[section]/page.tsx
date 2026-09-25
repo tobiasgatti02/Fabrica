@@ -67,6 +67,7 @@ export default async function WorkspacePage({
   }
   return (
     <Workspace
+      key={section}
       section={section as WorkspaceSection}
       initialData={initialData}
       initialProject={query.project || ''}
