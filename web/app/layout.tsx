@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { Instrument_Sans, Space_Grotesk } from 'next/font/google';
 import { Toaster } from '@/components/ui/toast';
+import { Analytics } from './analytics';
 import { absoluteUrl, site } from '@/lib/site';
 import './globals.css';
 import './buttons.css';
@@ -69,6 +70,7 @@ export default function RootLayout({
   return (
     <html lang="es">
       <body className={`${sans.variable} ${display.variable}`}>
+        <Analytics />
         <script
           type="application/ld+json"
           dangerouslySetInnerHTML={{
