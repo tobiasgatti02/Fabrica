@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect } from 'react';
+import { usePathname } from 'next/navigation';
 import posthog from 'posthog-js';
 
 // PostHog project tokens are public ingestion identifiers, not API secrets.
@@ -10,7 +11,7 @@ if (typeof window !== 'undefined' && ['f4brica.app', 'www.f4brica.app'].includes
   posthog.init(PROJECT_TOKEN, {
     api_host: 'https://us.i.posthog.com',
     defaults: '2026-06-25',
-    capture_pageview: 'history_change',
+    capture_pageview: false,
     capture_pageleave: true,
     capture_exceptions: true,
     autocapture: true,
@@ -18,6 +19,11 @@ if (typeof window !== 'undefined' && ['f4brica.app', 'www.f4brica.app'].includes
 }
 
 export function Analytics() {
+  const pathname = usePathname();
+  useEffect(() => {
+    if (!['f4brica.app', 'www.f4brica.app'].includes(location.hostname)) return;
+    posthog.capture('$pageview');
+  }, [pathname]);
   return null;
 }
 
