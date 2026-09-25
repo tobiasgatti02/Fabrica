@@ -109,7 +109,7 @@ export function StudioChrome({ children }: { children: ReactNode }) {
     if (value) params.set(key, value);
   }
   const query = params.toString();
-  const navigationKey = `${pathname}?${query}`;
+  const navigationKey = query;
   const access = navigationAccess?.key === navigationKey ? navigationAccess.value : null;
   useEffect(() => {
     if (!isWorkspace) return;
@@ -178,7 +178,6 @@ export function StudioChrome({ children }: { children: ReactNode }) {
             href={`${path}${query ? `?${query}` : ''}`}
             data-tour={id}
             prefetch={false}
-            onClickCapture={path === pathname ? undefined : hardNavigate}
             aria-current={path === pathname ? 'page' : undefined}
           ><Icon size={16} aria-hidden="true" /><span>{label}</span></Link>)}
         </div>
