@@ -112,6 +112,10 @@ export function createSubscription(input: {
   }, input.idempotencyKey);
 }
 
+export function getSubscriptionPlan(plan: string) {
+  return request(`/preapproval_plan/${encodeURIComponent(planIdFor(plan))}`);
+}
+
 export function getSubscription(id: string) {
   return request(`/preapproval/${encodeURIComponent(id)}`);
 }

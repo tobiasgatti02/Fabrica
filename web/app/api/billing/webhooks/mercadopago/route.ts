@@ -1,8 +1,9 @@
 import { env } from 'cloudflare:workers';
-import { eq } from 'drizzle-orm';
+import { desc, eq } from 'drizzle-orm';
 import { billingAccounts, billingCharges, billingPriceVersions, billingSubscriptions, billingWebhookEvents } from '@/db/schema';
 import { getAuthorizedPayment, getSubscription, MercadoPagoRequestError, verifyWebhook } from '@/features/billing/mercadopago';
 import { billingDb } from '@/features/billing/http';
+import { GRACE_DAYS } from '@/features/billing/core';
 
 type Notification = { type?: string; action?: string; data?: { id?: string | number } };
 
@@ -69,6 +70,17 @@ export async function POST(request: Request) {
     const [account] = await db.select().from(billingAccounts)
       .where(eq(billingAccounts.id, subscription.account)).limit(1);
     if (!account) throw new Error('billing_account_unavailable');
+    const [latestSubscription] = await db.select({ id: billingSubscriptions.id }).from(billingSubscriptions)
+      .where(eq(billingSubscriptions.account, subscription.account))
+      .orderBy(desc(billingSubscriptions.created)).limit(1);
+    // A delayed charge from an older subscription must not restore its plan or
+    // extend access after the customer has started a newer subscription.
+    const isCurrentSubscription = latestSubscription?.id === subscription.id;
+    const [latestCharge] = payment ? await db.select({ occurredAt: billingCharges.occurredAt }).from(billingCharges)
+      .where(eq(billingCharges.subscription, subscription.id))
+      .orderBy(desc(billingCharges.occurredAt)).limit(1) : [];
+    const paymentOccurredAt = payment ? dateValue(payment.date_created) || now : null;
+    const isNewestPayment = !payment || !latestCharge || (paymentOccurredAt !== null && paymentOccurredAt >= latestCharge.occurredAt);
 
     let state = account.state;
     let subscriptionState = subscription.state;
@@ -86,8 +98,13 @@ export async function POST(request: Request) {
       state = nextPaidThrough && nextPaidThrough > now ? 'active' : 'pending';
       subscriptionState = state;
       if (state === 'active') graceEnds = null;
-    } else if (paymentStatus === 'rejected' && (!account.paidThrough || account.paidThrough <= now)) {
-      state = account.trialEnds > now ? 'trialing' : 'expired';
+    } else if (paymentStatus === 'rejected') {
+      if (account.paidThrough) {
+        graceEnds = Math.max(account.paidThrough, now) + GRACE_DAYS * 86_400_000;
+        state = account.paidThrough > now ? 'active' : 'grace_period';
+      } else {
+        state = account.trialEnds > now ? 'trialing' : 'expired';
+      }
       subscriptionState = 'rejected';
     }
 
@@ -98,7 +115,7 @@ export async function POST(request: Request) {
     const [price] = state === 'active'
       ? await db.select().from(billingPriceVersions).where(eq(billingPriceVersions.id, subscription.priceVersion)).limit(1)
       : [];
-    await db.update(billingAccounts).set({
+    if (isCurrentSubscription && isNewestPayment) await db.update(billingAccounts).set({
       state, graceEnds, paidThrough: nextPaidThrough, updated: now,
       ...(price ? { plan: price.plan, priceVersion: price.id } : {}),
     }).where(eq(billingAccounts.id, subscription.account));
@@ -107,9 +124,9 @@ export async function POST(request: Request) {
       externalId: resourceValue(payment.id) || resourceId, providerStatus: paymentStatus || 'pending',
       amountCents: Math.round(Number(payment.transaction_amount || 0) * 100),
       currency: resourceValue(payment.currency_id) || subscription.currency,
-      occurredAt: dateValue(payment.date_created) || now, created: now,
+      occurredAt: paymentOccurredAt || now, created: now,
     }).onConflictDoUpdate({ target: billingCharges.externalId, set: { providerStatus: paymentStatus || 'pending' } });
-    await db.update(billingWebhookEvents).set({ processedAt: now, outcome: 'processed' })
+    await db.update(billingWebhookEvents).set({ processedAt: now, outcome: !isCurrentSubscription ? 'older_subscription' : !isNewestPayment ? 'older_payment' : 'processed' })
       .where(eq(billingWebhookEvents.externalKey, externalKey));
     return Response.json({ ok: true });
   } catch (error) {
