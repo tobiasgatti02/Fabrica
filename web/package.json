@@ -9,6 +9,8 @@
     "dev": "vinext dev",
     "build": "vinext build",
     "deploy": "wrangler deploy --keep-vars --config dist/server/wrangler.json",
+    "build:production": "FABRICA_DEPLOY_TARGET=production vinext build",
+    "deploy:production": "npm run build:production && wrangler deploy --keep-vars --config dist/server/wrangler.json --name fabrica",
     "build:test": "FABRICA_DEPLOY_TARGET=test vinext build",
     "deploy:test": "npm run build:test && wrangler deploy --keep-vars --config dist/server/wrangler.json --name fabrica-test",
     "start": "wrangler dev --config dist/server/wrangler.json",
