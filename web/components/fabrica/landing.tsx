@@ -129,7 +129,7 @@ export default function Landing() {
       <div className="story-stage">
         <div className={`scene-backdrop ${ready && !failed ? 'is-ready' : ''}`} aria-hidden="true">
           <picture className="scene-poster">
-            <source media="(max-width: 759px)" srcSet="/images/landing-first-frame-mobile.webp" />
+            <source media="(max-width: 759px)" srcSet="/images/landing-first-frame-mobile.webp" width="390" height="844" />
             <img src="/images/landing-first-frame-desktop.webp" width="1600" height="1000" alt="" fetchPriority="high" decoding="async" />
           </picture>
           {failed && <FallbackHouse progress={progress} />}

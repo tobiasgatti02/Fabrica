@@ -26,6 +26,10 @@ a{color:inherit;text-decoration:none}button,input,textarea{font:inherit}button{c
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}*,*::before,*::after{animation:none!important;transition:none!important}.story-scroll{height:550svh}}
 
 /* Rendered from the same Blender asset as the live scene. */
+.scene-poster{overflow:hidden;background:#e6e3db}
+.scene-poster img{position:absolute;top:0;left:50%;width:auto;height:100%;max-width:none;object-fit:unset;transform:translateX(-50%)}
+.scene-backdrop>div{transition:opacity .55s ease}
+.scene-backdrop.is-ready .scene-poster{visibility:visible}
 .fallback-render{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
 .scene-vignette{background:linear-gradient(90deg,#e8e6deed 0%,#e8e6de9c 29%,#e8e6de10 55%,transparent 75%)}
 @media(max-width:759px){.fallback-render{object-fit:cover;object-position:61% center}.scene-vignette{background:linear-gradient(#e8e6def2 0%,#e8e6decb 29%,#e8e6de00 58%)}.story-stage{min-height:0;height:100svh}.story-copy{top:105px}.chapter-description{max-width:290px}.round-link{margin-top:6px}}

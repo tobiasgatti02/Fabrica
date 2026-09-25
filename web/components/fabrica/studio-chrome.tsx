@@ -9,7 +9,6 @@ import { hardNavigate } from './hard-navigation';
 import { readBillingStatus } from '@/features/billing/client';
 import { AccountSettings, type Account } from './account-settings';
 import { StudioAuthPanel } from './studio-auth-panel';
-import { WorkspaceSkeleton } from './workspace-skeleton';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 
 type ChromeControls = {
@@ -99,7 +98,6 @@ export function StudioChrome({ children }: { children: ReactNode }) {
   const [shareEnabled, setShareEnabled] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [accountDialogOpen, setAccountDialogOpen] = useState(false);
-  const [pendingArea, setPendingArea] = useState<string | null>(null);
   const [account, setAccount] = useState<Account | null | undefined>(undefined);
   const [navigationAccess, setNavigationAccess] = useState<{ key: string; value: NavigationAccess } | null>(null);
   const profileRef = useRef<HTMLDivElement>(null);
@@ -158,17 +156,6 @@ export function StudioChrome({ children }: { children: ReactNode }) {
     };
   }, [profileOpen]);
 
-  useEffect(() => {
-    const frame = window.requestAnimationFrame(() => setPendingArea(null));
-    return () => window.cancelAnimationFrame(frame);
-  }, [pathname]);
-
-  useEffect(() => {
-    if (!pendingArea) return;
-    const timeout = window.setTimeout(() => setPendingArea(null), 15_000);
-    return () => window.clearTimeout(timeout);
-  }, [pendingArea]);
-
   return <StudioChromeControls.Provider value={controls}>
     {isWorkspace && <header className="studio-shared-header studio-static-header">
       <div className="studio-shared-header-leading">
@@ -190,7 +177,8 @@ export function StudioChrome({ children }: { children: ReactNode }) {
             key={id}
             href={`${path}${query ? `?${query}` : ''}`}
             data-tour={id}
-            onNavigate={() => setPendingArea(path !== pathname && path !== '/estudio/modelo' ? path : null)}
+            prefetch={false}
+            onClickCapture={path === pathname ? undefined : hardNavigate}
             aria-current={path === pathname ? 'page' : undefined}
           ><Icon size={16} aria-hidden="true" /><span>{label}</span></Link>)}
         </div>
@@ -223,9 +211,6 @@ export function StudioChrome({ children }: { children: ReactNode }) {
       </div>
     </header>}
     {children}
-    {pendingArea && pendingArea !== pathname && <div className="studio-route-pending" aria-busy="true">
-      <WorkspaceSkeleton />
-    </div>}
     <Dialog open={accountDialogOpen} onOpenChange={setAccountDialogOpen}>
       <DialogContent className={`role-dialog ${!account ? 'auth-dialog' : ''}`}>
         <DialogTitle>{account ? 'Tu cuenta' : 'Bienvenido a Fabrica'}</DialogTitle>
