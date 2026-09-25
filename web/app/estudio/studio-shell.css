@@ -514,29 +514,3 @@
   .studio-static-header:has(.studio-storage-usage) ~ .workspace-app { min-height: calc(100dvh - 154px); }
 }
 @media (prefers-reduced-motion: reduce) { .studio-storage-skeleton { animation: none; } }
-
-.studio-route-pending {
-  position: fixed;
-  z-index: 39;
-  inset: 68px 0 0;
-  overflow: auto;
-  background: #f0f1ea;
-}
-.studio-route-pending .workspace-skeleton {
-  max-width: 1380px;
-  margin: 35px auto;
-  display: grid;
-  gap: 20px;
-  padding: 0 30px;
-}
-.studio-route-pending .workspace-skeleton span {
-  display: block;
-  height: 100px;
-  background: linear-gradient(90deg, #e6e9df, #f6f7f2, #e6e9df);
-  background-size: 200% 100%;
-  animation: ws-shimmer 1.2s linear infinite;
-}
-.studio-route-pending .workspace-skeleton span:first-child { height: 250px; }
-@media (max-width: 900px) { .studio-route-pending { top: 114px; } }
-@media (max-width: 600px) { .studio-route-pending { top: 154px; } }
-@media (prefers-reduced-motion: reduce) { .studio-route-pending .workspace-skeleton span { animation: none; } }
