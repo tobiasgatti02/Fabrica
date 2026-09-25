@@ -1,11 +1,12 @@
 import { env } from 'cloudflare:workers';
 import { and, asc, eq, gt, inArray, isNull, or } from 'drizzle-orm';
 import { randomToken, sha256, validRequestOrigin } from '@/features/auth/core';
-import { getFabricaUser } from '@/features/auth/server';
+import { getFabricaUser, type FabricaUser } from '@/features/auth/server';
 import { getDb } from '@/db';
 import { createStarterProject } from '@/features/studio/server/seed';
 import { safeReferenceUrl } from '@/features/workspace/inspiration-scene';
 import { INSPIRATION_FILE_LIMIT } from '@/features/files/validation';
+import { assertBillingAllowance, assertBillingWritable, getBillingStatus } from '@/features/billing/server';
 import {
   studioAssets,
   studioAssetUploads,
@@ -13,6 +14,7 @@ import {
   studioClients,
   studioInspiration,
   studioInspirationComments,
+  studioInspirationReactions,
   studioWorktables,
   studioProjects,
   studioProposalFeedback,
@@ -114,6 +116,12 @@ const required = (value: unknown, max = 200) => {
   if (!result) throw new Error('400');
   return result;
 };
+const clientGeneratedId = (value: unknown) => {
+  if (value === undefined) return crypto.randomUUID();
+  if (typeof value !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value))
+    throw new Error('400');
+  return value;
+};
 const choice = (value: unknown, options: string[]) => {
   if (typeof value !== 'string' || !options.includes(value))
     throw new Error('400');
@@ -147,6 +155,13 @@ const url = (value: unknown) => {
   }
 };
 function fail(error: unknown) {
+  const billingError = (error as Error).message;
+  if (billingError === 'billing_read_only')
+    return json({ error: 'Tu plan está en modo lectura. Cambiá de plan para continuar.' }, 403);
+  if (billingError.startsWith('billing_limit_'))
+    return json({ error: 'Alcanzaste el límite de tu plan. Cambiá de plan para continuar.' }, 409);
+  if (billingError === 'billing_feature_team_permissions')
+    return json({ error: 'Los permisos personalizados están disponibles en Estudio y Equipo.' }, 403);
   if ((error as Error).message === 'INSPIRATION_FILE_LIMIT')
     return json(
       { error: 'Cada archivo de la mesa de trabajo puede pesar hasta 20 MB.' },
@@ -177,7 +192,7 @@ function fail(error: unknown) {
   );
 }
 
-export async function context(request: Request) {
+export async function context(request: Request, knownUser?: FabricaUser | null) {
   const db = database();
   const params = new URL(request.url).searchParams;
   const share = params.get('share');
@@ -269,7 +284,7 @@ export async function context(request: Request) {
       role: 'external',
     };
   }
-  const authenticated = await getFabricaUser(request);
+  const authenticated = knownUser === undefined ? await getFabricaUser(request) : knownUser;
   const user =
     authenticated ||
     (import.meta.env.DEV
@@ -375,11 +390,17 @@ export async function context(request: Request) {
   };
 }
 
-export async function GET(request: Request) {
+async function getWorkspaceView(request: Request, knownUser?: FabricaUser | null) {
   try {
-    const ctx = await context(request);
+    const ctx = await context(request, knownUser);
     const db = database();
     const params = new URL(request.url).searchParams;
+    if (params.get('view') === 'nav') return json({
+      accountOwner: ctx.accountOwner,
+      guest: ctx.guest,
+      external: ctx.external,
+      permissions: ctx.permissions,
+    });
     if (params.has('asset')) {
       if (ctx.permissions.inspiracion === 'none') throw new Error('403');
       const [asset] = await db
@@ -461,6 +482,7 @@ export async function GET(request: Request) {
       tasks,
       inspiration,
       inspirationComments,
+      inspirationReactions,
       worktables,
       allProposals,
       allOptions,
@@ -490,6 +512,10 @@ export async function GET(request: Request) {
             .from(studioInspirationComments)
             .where(eq(studioInspirationComments.project, ctx.project.id))
             .orderBy(asc(studioInspirationComments.created))
+        : Promise.resolve([]),
+      inspirationView
+        ? db.select().from(studioInspirationReactions)
+            .where(eq(studioInspirationReactions.project, ctx.project.id))
         : Promise.resolve([]),
       inspirationView
         ? db
@@ -616,7 +642,14 @@ export async function GET(request: Request) {
       projectStats,
       inspiration,
       worktables,
-      inspirationComments,
+      inspirationComments: inspirationComments.map(({ actor, ...comment }) => ({
+        ...comment,
+        mine: actor !== null && actor === (ctx.userId || `invite:${ctx.name}`),
+      })),
+      inspirationReactions: inspirationReactions.map(({ actor, ...reaction }) => ({
+        ...reaction,
+        mine: actor === (ctx.userId || `invite:${ctx.name}`),
+      })),
       proposals: visibleProposals,
       options,
       feedback: allFeedback
@@ -645,6 +678,16 @@ export async function GET(request: Request) {
   } catch (error) {
     return fail(error);
   }
+}
+
+export function GET(request: Request) {
+  return getWorkspaceView(request);
+}
+
+// The page already resolved the current user's session for the billing gate.
+// Reuse that server-only result instead of making the same database lookup again.
+export function getWorkspaceViewForUser(request: Request, user: FabricaUser | null) {
+  return getWorkspaceView(request, user);
 }
 
 export async function POST(request: Request) {
@@ -680,6 +723,7 @@ export async function POST(request: Request) {
       if (invite.accepted) throw new Error('409');
       if (invite.email.toLowerCase() !== user.email.toLowerCase())
         throw new Error('403');
+      await assertBillingAllowance(db, invite.owner, 'professionals');
       await db
         .update(studioTeamMembers)
         .set({
@@ -704,6 +748,7 @@ export async function POST(request: Request) {
     const ctx = await context(request);
     const project = ctx.project;
     const action = string(body.action);
+    await assertBillingWritable(db, project.owner);
     const actionArea: Record<string, AreaKey> = {
       'update-project': 'panel',
       'save-task': 'panel',
@@ -713,6 +758,10 @@ export async function POST(request: Request) {
       'add-inspiration': 'inspiracion',
       'create-worktable': 'inspiracion',
       'add-inspiration-comment': 'inspiracion',
+      'delete-inspiration-comment': 'inspiracion',
+      'delete-canvas-element-comments': 'inspiracion',
+      'add-inspiration-reaction': 'inspiracion',
+      'set-inspiration-reaction': 'inspiracion',
       'update-inspiration': 'inspiracion',
       'replace-inspiration-image': 'inspiracion',
       'edit-inspiration': 'inspiracion',
@@ -756,7 +805,7 @@ export async function POST(request: Request) {
     }
     if (action === 'add-inspiration') {
       const worktable = string(body.worktable);
-      if (worktable) {
+      if (worktable && worktable !== 'default') {
         const [board] = await db
           .select({ id: studioWorktables.id })
           .from(studioWorktables)
@@ -782,7 +831,7 @@ export async function POST(request: Request) {
       // Empty post-its are valid: the editor is opened directly on the card.
       if (!asset && !link && !string(body.note) && body.sticky !== true)
         throw new Error('400');
-      const id = crypto.randomUUID();
+      const id = clientGeneratedId(body.id);
       await db.insert(studioInspiration).values({
         id,
         project: project.id,
@@ -790,7 +839,7 @@ export async function POST(request: Request) {
         note: string(body.note, 2000),
         url: link,
         asset: asset || null,
-        worktable: worktable || null,
+        worktable: worktable === 'default' ? null : worktable || null,
         category: choice(body.category || 'general', categories),
         status: 'idea',
         author: ctx.name,
@@ -837,29 +886,88 @@ export async function POST(request: Request) {
       return json({ ok: true });
     }
     if (action === 'add-inspiration-comment') {
-      const inspiration = required(body.inspiration);
+      const inspiration = string(body.inspiration);
+      const element = string(body.element);
+      const worktable = string(body.worktable);
+      if (Boolean(inspiration) === Boolean(element)) throw new Error('400');
       const text = required(body.text, 2000);
-      const [item] = await db
-        .select({ id: studioInspiration.id })
-        .from(studioInspiration)
-        .where(
-          and(
-            eq(studioInspiration.id, inspiration),
-            eq(studioInspiration.project, project.id),
-          ),
-        )
-        .limit(1);
-      if (!item) throw new Error('404');
-      const id = crypto.randomUUID();
+      if (inspiration) {
+        const [item] = await db.select({ id: studioInspiration.id }).from(studioInspiration)
+          .where(and(eq(studioInspiration.id, inspiration), eq(studioInspiration.project, project.id))).limit(1);
+        if (!item) throw new Error('404');
+      } else {
+        if (!worktable || element.length > 100) throw new Error('400');
+        if (worktable !== 'default') {
+          const [table] = await db.select({ id: studioWorktables.id }).from(studioWorktables)
+            .where(and(eq(studioWorktables.id, worktable), eq(studioWorktables.project, project.id))).limit(1);
+          if (!table) throw new Error('404');
+        }
+      }
+      const id = clientGeneratedId(body.id);
       await db.insert(studioInspirationComments).values({
         id,
         project: project.id,
-        inspiration,
+        inspiration: inspiration || null,
+        element: element || null,
+        worktable: element ? worktable : null,
         author: ctx.name,
+        actor: ctx.userId || `invite:${ctx.name}`,
         text,
         created: Date.now(),
       });
       return json({ ok: true, id }, 201);
+    }
+    if (action === 'delete-inspiration-comment') {
+      const id = required(body.id);
+      const [comment] = await db.select().from(studioInspirationComments)
+        .where(and(eq(studioInspirationComments.id, id), eq(studioInspirationComments.project, project.id)))
+        .limit(1);
+      if (!comment) throw new Error('404');
+      const actor = ctx.userId || `invite:${ctx.name}`;
+      if (!ctx.accountOwner && comment.actor !== actor)
+        throw new Error('403');
+      await db.delete(studioInspirationComments)
+        .where(and(eq(studioInspirationComments.id, id), eq(studioInspirationComments.project, project.id)));
+      return json({ ok: true });
+    }
+    if (action === 'delete-canvas-element-comments') {
+      const elements = Array.isArray(body.elements) ? body.elements : [body.element];
+      if (!elements.length || elements.length > 1000 || elements.some((value) => typeof value !== 'string' || !value || value.length > 100)) throw new Error('400');
+      const worktable = required(body.worktable);
+      await db.delete(studioInspirationComments).where(and(
+        eq(studioInspirationComments.project, project.id),
+        inArray(studioInspirationComments.element, elements as string[]),
+        eq(studioInspirationComments.worktable, worktable),
+      ));
+      return json({ ok: true });
+    }
+    if (action === 'add-inspiration-reaction' || action === 'set-inspiration-reaction') {
+      const inspiration = required(body.inspiration);
+      const emoji = action === 'set-inspiration-reaction' && body.emoji === null
+        ? null : choice(body.emoji, ['👍', '❤️', '🎉', '👀', '💡', '✅']);
+      const [item] = await db.select({ id: studioInspiration.id })
+        .from(studioInspiration)
+        .where(and(eq(studioInspiration.id, inspiration), eq(studioInspiration.project, project.id)))
+        .limit(1);
+      if (!item) throw new Error('404');
+      const actor = ctx.userId || `invite:${ctx.name}`;
+      if (!actor || actor === 'invite:') throw new Error('401');
+      const [existing] = await db.select().from(studioInspirationReactions)
+        .where(and(eq(studioInspirationReactions.inspiration, inspiration), eq(studioInspirationReactions.actor, actor)))
+        .limit(1);
+      if ((action === 'set-inspiration-reaction' && !emoji) || (action === 'add-inspiration-reaction' && existing?.emoji === emoji)) {
+        await db.delete(studioInspirationReactions)
+          .where(and(eq(studioInspirationReactions.inspiration, inspiration), eq(studioInspirationReactions.actor, actor)));
+      } else if (existing && emoji && existing.emoji !== emoji) {
+        await db.update(studioInspirationReactions).set({ emoji, created: Date.now() })
+          .where(and(eq(studioInspirationReactions.inspiration, inspiration), eq(studioInspirationReactions.actor, actor)));
+      } else if (!existing && emoji) {
+        await db.insert(studioInspirationReactions).values({
+          id: crypto.randomUUID(), project: project.id, inspiration,
+          actor, emoji, created: Date.now(),
+        }).onConflictDoNothing({ target: [studioInspirationReactions.inspiration, studioInspirationReactions.actor] });
+      }
+      return json({ ok: true });
     }
     if (action === 'proposal-feedback') {
       const proposal = await proposalInProject(
@@ -910,6 +1018,7 @@ export async function POST(request: Request) {
       throw new Error('403');
     if (action === 'create-client') {
       if (!ctx.accountOwner) throw new Error('403');
+      await assertBillingAllowance(db, ctx.userId, 'clients');
       const email = string(body.email, 254).toLowerCase();
       if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
         throw new Error('400');
@@ -924,6 +1033,7 @@ export async function POST(request: Request) {
       return json({ client: id }, 201);
     } else if (action === 'create-project') {
       if (!ctx.accountOwner) throw new Error('403');
+      await assertBillingAllowance(db, ctx.userId, 'projects');
       const clientId = string(body.client) || null;
       if (clientId) {
         const [client] = await db
@@ -1123,6 +1233,14 @@ export async function POST(request: Request) {
           ),
         );
       await db
+        .delete(studioInspirationReactions)
+        .where(
+          and(
+            eq(studioInspirationReactions.inspiration, required(body.id)),
+            eq(studioInspirationReactions.project, project.id),
+          ),
+        );
+      await db
         .delete(studioInspiration)
         .where(
           and(
@@ -1219,6 +1337,7 @@ export async function POST(request: Request) {
       const size = Number(body.size);
       const name = required(body.name, 240);
       if (!Number.isSafeInteger(size) || size < 1) throw new Error('400');
+      if (ctx.accountOwner) await assertBillingAllowance(db, ctx.userId, 'storageBytes', size);
       if (body.scope === 'inspiration' && size > INSPIRATION_FILE_LIMIT)
         throw new Error('INSPIRATION_FILE_LIMIT');
       if (size > MAX_ASSET) throw new Error('413');
@@ -1399,6 +1518,8 @@ export async function POST(request: Request) {
       return json({ invite: token });
     } else if (action === 'update-member-permissions') {
       if (!ctx.accountOwner) throw new Error('403');
+      const billing = await getBillingStatus(db, ctx.userId);
+      if (!billing.rights.teamPermissions) throw new Error('billing_feature_team_permissions');
       const id = required(body.id);
       const raw = body.permissions;
       if (!raw || typeof raw !== 'object' || Array.isArray(raw))
@@ -1464,6 +1585,10 @@ export async function POST(request: Request) {
           ]),
         ]),
       );
+      const billing = await getBillingStatus(db, ctx.userId);
+      if (!billing.rights.teamPermissions &&
+        JSON.stringify(permissions) !== JSON.stringify(defaultPermissionsForRole(role)))
+        throw new Error('billing_feature_team_permissions');
       const identityChanged =
         email !== member.email ||
         (role === 'external') !== (member.role === 'external');
@@ -1510,6 +1635,7 @@ export async function PUT(request: Request) {
     if (ctx.permissions.inspiracion !== 'edit' && !ctx.guest)
       throw new Error('403');
     const db = database();
+    await assertBillingWritable(db, ctx.project.owner);
     const params = new URL(request.url).searchParams;
     const [upload] = await db
       .select()

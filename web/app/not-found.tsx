@@ -11,7 +11,7 @@ export default function NotFound() {
         <p>La página que buscás cambió de lugar o nunca estuvo en este proyecto.</p>
         <div className="not-found-actions">
           <Link className="solid-link" href="/"><ArrowLeft size={18} /> Volver al inicio</Link>
-          <Link href="/estudio">Entrar al estudio <ArrowUpRight size={17} /></Link>
+          <Link href="/estudio/panel">Entrar al estudio <ArrowUpRight size={17} /></Link>
         </div>
       </section>
     </main>

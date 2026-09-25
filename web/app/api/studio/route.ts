@@ -6,14 +6,26 @@ import { getDb } from '@/db';
 import {
   studioClients,
   studioComments,
+  studioAssets,
+  studioAssetUploads,
+  studioBudgetItems,
+  studioInspiration,
+  studioInspirationComments,
+  studioInspirationReactions,
   studioMeasurements,
   studioPlans,
   studioProjects,
+  studioProposalFeedback,
+  studioProposalOptions,
+  studioProposals,
+  studioTasks,
   studioTeamMembers,
   studioUploads,
   studioVersions,
+  studioWorktables,
 } from '@/db/schema';
 import { createStarterProject } from '@/features/studio/server/seed';
+import { assertBillingAllowance, assertBillingWritable, BillingLimitError } from '@/features/billing/server';
 
 const PART = 8 * 1024 * 1024;
 const MAX_FILE = 5 * 1024 ** 3;
@@ -87,6 +99,29 @@ const json = (value: unknown, status = 200) =>
 
 function db() {
   return getDb(env.DATABASE_URL);
+}
+
+async function guestCommentsBelongToViewer(
+  database: ReturnType<typeof db>,
+  clientId: string | null,
+  userId: string,
+) {
+  if (!clientId) return false;
+  const [client] = await database
+    .select({ id: studioClients.id })
+    .from(studioClients)
+    .where(and(eq(studioClients.id, clientId), eq(studioClients.account, userId)))
+    .limit(1);
+  return Boolean(client);
+}
+
+function commentBelongsToViewer(
+  comment: { actor: string | null },
+  userId: string,
+  guestActor: string | null,
+) {
+  return comment.actor !== null &&
+    (comment.actor === userId || comment.actor === guestActor);
 }
 
 export async function context(request: Request) {
@@ -269,6 +304,8 @@ export async function context(request: Request) {
 }
 
 function failure(error: unknown) {
+  if (error instanceof BillingLimitError)
+    return json({ error: error.resource === 'read_only' ? 'Tu acceso de edición está suspendido. Revisá tu plan en Facturación.' : 'Alcanzaste el límite de tu plan. Revisá Facturación.' }, error.resource === 'read_only' ? 403 : 409);
   const code = Number((error as Error).message);
   if ([400, 401, 403, 404, 413].includes(code)) {
     return json(
@@ -355,7 +392,8 @@ export async function GET(request: Request) {
           eq(studioVersions.published, 1),
         ),
       );
-    const versions = await database
+    const [versions, comments, measurements, plans] = await Promise.all([
+      database
       .select()
       .from(studioVersions)
       .where(
@@ -366,8 +404,8 @@ export async function GET(request: Request) {
               eq(studioVersions.published, 1),
             ),
       )
-      .orderBy(asc(studioVersions.sequence), asc(studioVersions.created));
-    const comments = await database
+      .orderBy(asc(studioVersions.sequence), asc(studioVersions.created)),
+      database
       .select()
       .from(studioComments)
       .where(
@@ -381,8 +419,8 @@ export async function GET(request: Request) {
               ),
             ),
       )
-      .orderBy(asc(studioComments.created));
-    const measurements = await database
+      .orderBy(asc(studioComments.created)),
+      database
       .select()
       .from(studioMeasurements)
       .where(
@@ -393,8 +431,8 @@ export async function GET(request: Request) {
               inArray(studioMeasurements.version, publishedVersionIds),
             ),
       )
-      .orderBy(asc(studioMeasurements.created));
-    const plans = await database
+      .orderBy(asc(studioMeasurements.created)),
+      database
       .select()
       .from(studioPlans)
       .where(
@@ -405,11 +443,18 @@ export async function GET(request: Request) {
               inArray(studioPlans.version, publishedVersionIds),
             ),
       )
-      .orderBy(asc(studioPlans.created));
+      .orderBy(asc(studioPlans.created)),
+    ]);
 
+    const guestActor = await guestCommentsBelongToViewer(database, project.client, identity.userId)
+      ? `guest:${project.id}`
+      : null;
     return json({
       versions,
-      comments,
+      comments: comments.map(({ actor, ...comment }) => ({
+        ...comment,
+        mine: commentBelongsToViewer({ actor }, identity.userId, guestActor),
+      })),
       measurements,
       plans,
       share:
@@ -459,6 +504,7 @@ export async function POST(request: Request) {
       throw new Error('400');
     }
     const body = (await request.json()) as StudioBody;
+    await assertBillingWritable(database, project.owner);
 
     if (body.action === 'comment') {
       const scope = body.scope === 'project' ? 'project' : 'point';
@@ -542,6 +588,7 @@ export async function POST(request: Request) {
         project: project.id,
         version: commentVersion,
         author: identity.displayName,
+        actor: identity.userId,
         text: body.text.trim(),
         anchor,
         parent:
@@ -555,12 +602,77 @@ export async function POST(request: Request) {
         state: 'abierto',
         created: Date.now(),
       });
+      return json({ ok: true, anchor });
+    }
+
+    if (body.action === 'delete-comment') {
+      if (typeof body.id !== 'string' || !body.id) throw new Error('400');
+      const [comment] = await database
+        .select({ id: studioComments.id, actor: studioComments.actor, author: studioComments.author })
+        .from(studioComments)
+        .where(and(eq(studioComments.project, project.id), eq(studioComments.id, body.id)))
+        .limit(1);
+      if (!comment) throw new Error('404');
+      const guestActor = await guestCommentsBelongToViewer(database, project.client, identity.userId)
+        ? `guest:${project.id}`
+        : null;
+      if (!commentBelongsToViewer(comment, identity.userId, guestActor))
+        throw new Error('403');
+      await database.delete(studioComments).where(and(
+        eq(studioComments.project, project.id),
+        eq(studioComments.id, comment.id),
+        comment.actor ? eq(studioComments.actor, comment.actor) : isNull(studioComments.actor),
+      ));
       return json({ ok: true });
     }
 
     if (!owner) throw new Error('403');
-    if (body.action === 'create-client') {
+    if (body.action === 'delete-project') {
+      if (!accountOwner || body.id !== project.id) throw new Error('403');
+      const [assets, assetUploads, uploads, plans, proposals] = await Promise.all([
+        database.select({ key: studioAssets.key }).from(studioAssets).where(eq(studioAssets.project, project.id)),
+        database.select({ key: studioAssetUploads.key, uploadId: studioAssetUploads.uploadId }).from(studioAssetUploads).where(eq(studioAssetUploads.project, project.id)),
+        database.select({ key: studioUploads.key, uploadId: studioUploads.uploadId, completed: studioUploads.completed }).from(studioUploads).where(eq(studioUploads.project, project.id)),
+        database.select({ key: studioPlans.key }).from(studioPlans).where(eq(studioPlans.project, project.id)),
+        database.select({ id: studioProposals.id }).from(studioProposals).where(eq(studioProposals.project, project.id)),
+      ]);
+      const proposalIds = proposals.map((item) => item.id);
+      if (proposalIds.length) {
+        const options = await database.select({ id: studioProposalOptions.id }).from(studioProposalOptions)
+          .where(inArray(studioProposalOptions.proposal, proposalIds));
+        const optionIds = options.map((item) => item.id);
+        if (optionIds.length) await database.delete(studioProposalFeedback).where(inArray(studioProposalFeedback.option, optionIds));
+        await database.delete(studioProposalFeedback).where(inArray(studioProposalFeedback.proposal, proposalIds));
+        await database.delete(studioProposalOptions).where(inArray(studioProposalOptions.proposal, proposalIds));
+        await database.delete(studioProposals).where(inArray(studioProposals.id, proposalIds));
+      }
+      await database.delete(studioInspirationComments).where(eq(studioInspirationComments.project, project.id));
+      await database.delete(studioInspirationReactions).where(eq(studioInspirationReactions.project, project.id));
+      await database.delete(studioInspiration).where(eq(studioInspiration.project, project.id));
+      await database.delete(studioWorktables).where(eq(studioWorktables.project, project.id));
+      await database.delete(studioAssets).where(eq(studioAssets.project, project.id));
+      await database.delete(studioAssetUploads).where(eq(studioAssetUploads.project, project.id));
+      await database.delete(studioComments).where(eq(studioComments.project, project.id));
+      await database.delete(studioMeasurements).where(eq(studioMeasurements.project, project.id));
+      await database.delete(studioPlans).where(eq(studioPlans.project, project.id));
+      await database.delete(studioVersions).where(eq(studioVersions.project, project.id));
+      await database.delete(studioUploads).where(eq(studioUploads.project, project.id));
+      await database.delete(studioTasks).where(eq(studioTasks.project, project.id));
+      await database.delete(studioBudgetItems).where(eq(studioBudgetItems.project, project.id));
+      await database.delete(studioTeamMembers).where(eq(studioTeamMembers.project, project.id));
+      await database.delete(studioProjects).where(eq(studioProjects.id, project.id));
+      for (const upload of assetUploads) {
+        await env.FILES.resumeMultipartUpload(upload.key, upload.uploadId).abort().catch(() => {});
+      }
+      for (const upload of uploads) {
+        if (!upload.completed) await env.FILES.resumeMultipartUpload(upload.key, upload.uploadId).abort().catch(() => {});
+      }
+      const keys = new Set([...assets.map((item) => item.key), ...assetUploads.map((item) => item.key), ...uploads.map((item) => item.key), ...plans.flatMap((item) => item.key ? [item.key] : [])]);
+      for (const key of keys) await env.FILES.delete(key).catch((error: unknown) => console.error('Project object cleanup failed', key, error));
+      return json({ ok: true });
+    } else if (body.action === 'create-client') {
       if (!accountOwner) throw new Error('403');
+      await assertBillingAllowance(database, identity.userId, 'clients');
       if (
         typeof body.name !== 'string' ||
         !body.name.trim() ||
@@ -595,6 +707,7 @@ export async function POST(request: Request) {
       );
     } else if (body.action === 'create-project') {
       if (!accountOwner) throw new Error('403');
+      await assertBillingAllowance(database, identity.userId, 'projects');
       if (
         typeof body.name !== 'string' ||
         !body.name.trim() ||
@@ -686,6 +799,8 @@ export async function POST(request: Request) {
         throw new Error('400');
       }
       if (body.size > MAX_FILE) throw new Error('413');
+      if (accountOwner)
+        await assertBillingAllowance(database, identity.userId, 'storageBytes', body.size);
       const id = crypto.randomUUID();
       const key = `${project.id}/${id}`;
       const upload = await env.FILES.createMultipartUpload(key);
@@ -1037,13 +1152,18 @@ export async function POST(request: Request) {
       return json({ id }, 201);
     } else if (body.action === 'delete-version') {
       if (typeof body.id !== 'string' || !body.id) throw new Error('400');
-      const [version] = await database.select({ id: studioVersions.id })
+      const [version] = await database.select({ id: studioVersions.id, files: studioVersions.files })
         .from(studioVersions)
         .where(and(eq(studioVersions.id, body.id), eq(studioVersions.project, project.id)))
         .limit(1);
       if (!version) throw new Error('404');
-      // Atomic metadata deletion. Original uploads can be shared by derived
-      // versions, so they remain in storage rather than breaking those models.
+      const removedPlans = await database.select({ key: studioPlans.key }).from(studioPlans)
+        .where(and(eq(studioPlans.project, project.id), eq(studioPlans.version, version.id)));
+      const removedKeys = new Set<string>(removedPlans.flatMap((plan) => plan.key ? [plan.key] : []));
+      try {
+        const files = JSON.parse(version.files) as { key?: string }[];
+        for (const file of files) if (typeof file.key === 'string') removedKeys.add(file.key);
+      } catch { /* Old malformed version data must not stop metadata deletion. */ }
       await database.batch([
         database.delete(studioComments).where(and(eq(studioComments.project, project.id), eq(studioComments.version, version.id))),
         database.delete(studioMeasurements).where(and(eq(studioMeasurements.project, project.id), eq(studioMeasurements.version, version.id))),
@@ -1051,6 +1171,25 @@ export async function POST(request: Request) {
         database.update(studioVersions).set({ sourceVersion: null }).where(and(eq(studioVersions.project, project.id), eq(studioVersions.sourceVersion, version.id))),
         database.delete(studioVersions).where(and(eq(studioVersions.project, project.id), eq(studioVersions.id, version.id))),
       ]);
+      const [remainingVersions, remainingPlans] = await Promise.all([
+        database.select({ files: studioVersions.files }).from(studioVersions).where(eq(studioVersions.project, project.id)),
+        database.select({ key: studioPlans.key }).from(studioPlans).where(eq(studioPlans.project, project.id)),
+      ]);
+      const retainedKeys = new Set<string>(remainingPlans.flatMap((plan) => plan.key ? [plan.key] : []));
+      for (const remaining of remainingVersions) {
+        try {
+          const files = JSON.parse(remaining.files) as { key?: string }[];
+          for (const file of files) if (typeof file.key === 'string') retainedKeys.add(file.key);
+        } catch { /* Do not remove unknown keys when legacy data cannot be read. */ }
+      }
+      for (const key of removedKeys) {
+        if (retainedKeys.has(key)) continue;
+        const [upload] = await database.select({ id: studioUploads.id }).from(studioUploads)
+          .where(and(eq(studioUploads.project, project.id), eq(studioUploads.key, key), eq(studioUploads.completed, 1))).limit(1);
+        if (!upload) continue;
+        await env.FILES.delete(key);
+        await database.delete(studioUploads).where(eq(studioUploads.id, upload.id));
+      }
     } else if (body.action === 'publish') {
       if (typeof body.id !== 'string' || !body.id) throw new Error('400');
       await database
@@ -1082,6 +1221,7 @@ export async function PUT(request: Request) {
     const { project, owner } = await context(request);
     if (!owner) throw new Error('403');
     const database = db();
+    await assertBillingWritable(database, project.owner);
     const params = new URL(request.url).searchParams;
     const [upload] = await database
       .select()

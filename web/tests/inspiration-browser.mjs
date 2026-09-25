@@ -294,6 +294,32 @@ try {
   await page.getByRole('button', { name: 'Ver todas las referencias' }).click();
   console.log('PASS drag, keyboard movement, pan, zoom and fit');
 
+  const photo = savedCards.first();
+  assert.equal(await photo.locator('.inspiration-comment-bubble').count(), 0);
+  await photo.locator('img').click();
+  const photoToolbar = page.getByRole('toolbar', { name: /Acciones de/ });
+  await photoToolbar.getByRole('button', { name: 'Comentarios de la foto' }).click();
+  assert.equal(await page.locator('.inspiration-dialog').count(), 0);
+  await photo.locator('.inspiration-sticky-thread').waitFor();
+  await photo.locator('.inspiration-sticky-thread-close').click();
+  console.log('PASS photo selection opens its toolbar and comments stay beside the photo');
+
+  await page.getByRole('button', { name: 'Mover lienzo', exact: true }).click();
+  const photoPosition = await photo.evaluate((node) => ({
+    x: node.style.left,
+    y: node.style.top,
+  }));
+  const photoBounds = await photo.locator('img').boundingBox();
+  const handTransform = await page.locator('.inspiration-world').getAttribute('style');
+  await page.mouse.move(photoBounds.x + photoBounds.width / 2, photoBounds.y + photoBounds.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(photoBounds.x + photoBounds.width / 2 + 100, photoBounds.y + photoBounds.height / 2 + 60, { steps: 5 });
+  await page.mouse.up();
+  assert.notEqual(await page.locator('.inspiration-world').getAttribute('style'), handTransform);
+  assert.deepEqual(await photo.evaluate((node) => ({ x: node.style.left, y: node.style.top })), photoPosition);
+  await page.getByRole('button', { name: 'Seleccionar', exact: true }).click();
+  console.log('PASS hand pans over a photo without moving the card');
+
   // A failed reference save can retry the completed upload without sending its bytes again.
   failNextAdd = true;
   await board.click({ position: { x: 30, y: 500 } });

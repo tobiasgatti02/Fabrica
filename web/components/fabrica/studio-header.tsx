@@ -1,7 +1,9 @@
 'use client';
 
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
-import { Check, ChevronDown, UserRound } from 'lucide-react';
+import { useEffect, useEffectEvent, useId, useRef, useState, type ReactNode } from 'react';
+import { usePathname } from 'next/navigation';
+import { Check, ChevronDown } from 'lucide-react';
+import { useStudioChromeControls } from './studio-chrome';
 
 export type HeaderProject = { id: string; name: string };
 export type HeaderProjectGroup = {
@@ -138,66 +140,30 @@ export function StudioProjectSwitcher({
 
 export function StudioHeader({
   project,
-  actions,
-  account,
+  label,
+  shareEnabled,
+  loading = false,
+  projectSignature,
 }: {
   project: ReactNode;
-  actions?: ReactNode;
-  account: ReactNode;
+  label: string;
+  shareEnabled: boolean;
+  loading?: boolean;
+  projectSignature: string;
 }) {
-  return (
-    <header className="studio-shared-header">
-      <div className="studio-shared-header-leading">
-        <a
-          href="/"
-          className="studio-shared-brand"
-          aria-label="Fabrica, volver al inicio"
-        >
-          <span className="wordmark">
-            fabrica<span aria-hidden="true">®</span>
-          </span>
-        </a>
-        <span className="studio-shared-divider" aria-hidden="true" />
-        {project}
-      </div>
-      <div className="studio-shared-header-actions">
-        {actions}
-        {account}
-      </div>
-    </header>
-  );
-}
-
-export function StudioAccount({
-  name,
-  href,
-  onClick,
-}: {
-  name: string;
-  href?: string;
-  onClick?: () => void;
-}) {
-  const content = (
-    <>
-      <span className="studio-account-avatar">
-        <UserRound size={16} aria-hidden="true" />
-      </span>
-      <span className="studio-account-name">{name}</span>
-    </>
-  );
-  const label = 'Abrir perfil y configuración';
-  return href ? (
-    <a href={href} className="studio-account-control" aria-label={label}>
-      {content}
-    </a>
-  ) : (
-    <button
-      type="button"
-      className="studio-account-control"
-      aria-label={label}
-      onClick={onClick}
-    >
-      {content}
-    </button>
-  );
+  const chrome = useStudioChromeControls();
+  const pathname = usePathname();
+  const setProjectLabel = chrome?.setProjectLabel;
+  const setShareEnabled = chrome?.setShareEnabled;
+  const setProjectRegistration = chrome?.setProjectRegistration;
+  useEffect(() => { setProjectLabel?.(label); }, [setProjectLabel, label]);
+  useEffect(() => { setShareEnabled?.(shareEnabled); }, [setShareEnabled, shareEnabled]);
+  useEffect(() => () => { setShareEnabled?.(false); }, [setShareEnabled]);
+  const registerProject = useEffectEvent(() => {
+    if (!loading) setProjectRegistration?.({ node: project, path: pathname });
+  });
+  useEffect(() => {
+    registerProject();
+  }, [setProjectRegistration, loading, pathname, projectSignature]);
+  return null;
 }

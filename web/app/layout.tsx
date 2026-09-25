@@ -1,18 +1,17 @@
 import type { Metadata } from 'next';
-import { DM_Sans, Instrument_Serif } from 'next/font/google';
+import { Instrument_Sans, Space_Grotesk } from 'next/font/google';
 import { Toaster } from '@/components/ui/toast';
 import { absoluteUrl, site } from '@/lib/site';
 import './globals.css';
-const sans = DM_Sans({
+import './buttons.css';
+const sans = Instrument_Sans({
   variable: '--font-sans-fabrica',
   subsets: ['latin'],
   display: 'swap',
 });
-const serif = Instrument_Serif({
-  variable: '--font-serif-fabrica',
+const display = Space_Grotesk({
+  variable: '--font-display-fabrica',
   subsets: ['latin'],
-  weight: '400',
-  style: ['normal', 'italic'],
   display: 'swap',
 });
 export const metadata: Metadata = {
@@ -69,7 +68,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="es">
-      <body className={`${sans.variable} ${serif.variable}`}>
+      <body className={`${sans.variable} ${display.variable}`}>
         <script
           type="application/ld+json"
           dangerouslySetInnerHTML={{

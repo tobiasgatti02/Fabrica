@@ -184,6 +184,23 @@ assert.equal(
   ).author,
   clientName,
 );
+const guestComment = (await request(undefined, owner)).comments.find(
+  (comment) => comment.text === 'Comentario sin crear una cuenta',
+);
+assert.equal(guestComment.mine, false);
+assert.equal((await guestRequest(undefined, shared)).comments.find(
+  (comment) => comment.id === guestComment.id,
+).mine, true);
+await request({ action: 'delete-comment', id: guestComment.id }, owner, 403);
+const linkedDelete = await fetch(base + shared, {
+  method: 'POST',
+  headers: { cookie: clientCookie, 'Content-Type': 'application/json' },
+  body: JSON.stringify({ action: 'delete-comment', id: guestComment.id }),
+});
+assert.equal(linkedDelete.status, 200, await linkedDelete.text());
+assert(!(await request(undefined, owner)).comments.some(
+  (comment) => comment.id === guestComment.id,
+));
 await request(
   {
     action: 'view',
@@ -308,6 +325,10 @@ await request({ action: 'resolve', id: draftComment.id }, shared, 403);
 await request({ action: 'resolve', id: draftComment.id }, owner);
 const comments = (await request(undefined, owner)).comments;
 assert.equal(comments.find((c) => c.id === draftComment.id).state, 'resuelto');
+assert.equal(comments.find((c) => c.id === draftComment.id).mine, true);
+await guestRequest({ action: 'delete-comment', id: draftComment.id }, shared, 403);
+await request({ action: 'delete-comment', id: draftComment.id }, owner);
+assert(!(await request(undefined, owner)).comments.some((c) => c.id === draftComment.id));
 assert.equal(
   comments.find((c) => c.version === v1.id && c.text === 'Customer review')
     .state,

@@ -1,6 +1,7 @@
 import { env } from 'cloudflare:workers';
 import { and, eq, gt } from 'drizzle-orm';
 import { headers } from 'next/headers';
+import { cache } from 'react';
 import { getChatGPTUser, type ChatGPTUser } from '@/app/chatgpt-auth';
 import { getDb } from '@/db';
 import { studioSessions, studioUsers } from '@/db/schema';
@@ -11,7 +12,7 @@ export type FabricaUser = ChatGPTUser & {
   created?: number;
 };
 
-export async function getFabricaUser(
+async function resolveFabricaUser(
   request?: Request,
 ): Promise<FabricaUser | null> {
   const requestHeaders = request?.headers || (await headers());
@@ -58,3 +59,6 @@ export async function getFabricaUser(
 
   return chatgpt ? { ...chatgpt, provider: 'chatgpt' } : null;
 }
+
+// The layout and page both need the same identity during one server render.
+export const getFabricaUser = cache(resolveFabricaUser);

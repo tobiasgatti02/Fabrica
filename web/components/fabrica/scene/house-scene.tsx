@@ -6,11 +6,13 @@ import { Environment, useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
 import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLightUniformsLib.js';
 RectAreaLightUniformsLib.init();
-import { range } from '../timeline';
+import { range, INTERIOR_START } from '../timeline';
 import { advanceProgress, assemblyPose, cameraPose, constructionProgress } from './camera-path';
+import BlueprintGrid from './blueprint-grid';
 
 const Interior = lazy(() => import('./interior'));
 const EXTERIOR = '/models/casa-patio-exterior.glb';
+const COMPACT_SCENE_WIDTH = 900;
 export const INTERIOR = '/models/casa-patio-interior.glb';
 export const DRACO = '/draco/';
 export type SceneController = { progress: number; invalidate: () => void; reduced: boolean };
@@ -46,7 +48,7 @@ export function prepareModel(source: THREE.Group, mobile: boolean) {
 
 function Model({ controller }: Pick<Props, 'controller'>) {
   const gltf = useGLTF(EXTERIOR, DRACO);
-  const mobile = useThree(s => s.size.width < 760);
+  const mobile = useThree(s => s.size.width < COMPACT_SCENE_WIDTH);
   const prepared = useMemo(() => prepareModel(gltf.scene, mobile), [gltf.scene, mobile]);
   const assembly = useMemo(() => {
     const result: Assembly[] = [];
@@ -108,7 +110,7 @@ function FirstFrameReady({ onReady }: Pick<Props, 'onReady'>) {
 
 function Scene({ controller, onReady, onProgress }: Omit<Props, 'onError'>) {
   const { camera, invalidate, size, setDpr } = useThree();
-  useEffect(() => { setDpr(Math.min(window.devicePixelRatio || 1, size.width < 760 ? 1.25 : 1.5)); }, [setDpr, size.width]);
+  useEffect(() => { setDpr(Math.min(window.devicePixelRatio || 1, size.width < COMPACT_SCENE_WIDTH ? 1.25 : 1.5)); }, [setDpr, size.width]);
   const smooth = useRef(0);
   const reported = useRef(-1);
   const interiorLoaded = useRef(false);
@@ -123,7 +125,7 @@ function Scene({ controller, onReady, onProgress }: Omit<Props, 'onError'>) {
     controller.current.invalidate = invalidate;
     invalidate();
     const move = (e: PointerEvent) => {
-      if (e.pointerType !== 'mouse' || controller.current.progress < .965 || controller.current.reduced) return;
+      if (e.pointerType !== 'mouse' || controller.current.progress < INTERIOR_START || controller.current.reduced) return;
       pointer.current.set((e.clientX / window.innerWidth - .5) * 2, (e.clientY / window.innerHeight - .5) * 2);
       invalidate();
     };
@@ -142,11 +144,11 @@ function Scene({ controller, onReady, onProgress }: Omit<Props, 'onError'>) {
     actual.current.progress = smooth.current;
     actual.current.reduced = controller.current.reduced;
     if (raw > .48 && !interiorReady) { useGLTF.preload(INTERIOR, DRACO); setInteriorReady(true); }
-    const pose = cameraPose(smooth.current, size.width < 760, controller.current.reduced);
+    const pose = cameraPose(smooth.current, size.width < COMPACT_SCENE_WIDTH, controller.current.reduced);
     destination.set(...pose.position); focus.set(...pose.target);
-    if (controller.current.reduced || raw < .965) pointer.current.set(0, 0);
+    if (controller.current.reduced || raw < INTERIOR_START) pointer.current.set(0, 0);
     currentPointer.current.lerp(pointer.current, 1 - Math.exp(-5 * dt));
-    const inside = range(smooth.current, .96, 1);
+    const inside = range(smooth.current, INTERIOR_START, 1);
     focus.x += currentPointer.current.x * .13 * inside;
     focus.y -= currentPointer.current.y * .07 * inside;
     camera.position.copy(destination); camera.lookAt(focus);
@@ -159,8 +161,9 @@ function Scene({ controller, onReady, onProgress }: Omit<Props, 'onError'>) {
     <fog attach="fog" args={['#e6e3db', 32, 95]} />
     <Environment files="/environment/rosendal-plains-1k.hdr" environmentIntensity={.65} environmentRotation={[0, 1.8, 0]} />
     <hemisphereLight args={['#e8eef4', '#a49175', .28]} />
-    <directionalLight position={[-7, 11, 8]} intensity={3.2} color="#fff0d9" castShadow shadow-mapSize={size.width < 760 ? [1024, 1024] : [2048, 2048]} shadow-camera-left={-11} shadow-camera-right={11} shadow-camera-top={10} shadow-camera-bottom={-9} shadow-camera-near={.5} shadow-camera-far={40} shadow-normalBias={.022} shadow-bias={-.00008} shadow-radius={3} />
+    <directionalLight position={[-7, 11, 8]} intensity={3.2} color="#fff0d9" castShadow shadow-mapSize={size.width < COMPACT_SCENE_WIDTH ? [1024, 1024] : [2048, 2048]} shadow-camera-left={-11} shadow-camera-right={11} shadow-camera-top={10} shadow-camera-bottom={-9} shadow-camera-near={.5} shadow-camera-far={40} shadow-normalBias={.022} shadow-bias={-.00008} shadow-radius={3} />
     <Model controller={actual} />
+    <BlueprintGrid controller={actual} />
     <FirstFrameReady onReady={onReady} />
     {interiorReady && <Suspense fallback={null}><Interior controller={actual} onReady={markInteriorLoaded} /></Suspense>}
     {interiorReady && <>
@@ -175,7 +178,7 @@ function Scene({ controller, onReady, onProgress }: Omit<Props, 'onError'>) {
 function InitialCamera() {
   const { camera, size } = useThree();
   useLayoutEffect(() => {
-    const mobile = size.width < 760;
+    const mobile = size.width < COMPACT_SCENE_WIDTH;
     camera.position.set(mobile ? 19.24 : 13, mobile ? 12 : 10, mobile ? 26.64 : 18);
     camera.lookAt(mobile ? .3 : -2.5, mobile ? 4.2 : .7, 0);
     const perspective = camera as THREE.PerspectiveCamera;

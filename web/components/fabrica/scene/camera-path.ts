@@ -1,4 +1,4 @@
-import { clamp, range } from '../timeline';
+import { clamp, range, INTERIOR_START } from '../timeline';
 type Vec3 = [number, number, number];
 type Shot = { at: number; position: Vec3; target: Vec3; fov: number };
 const mix = (a: number, b: number, t: number) => a + (b - a) * t;
@@ -28,28 +28,41 @@ function shotsFor(mobile: boolean): Shot[] {
   return [
     { at: 0, position: exterior([13, 10, 18]), target: target(.7), fov: mobile ? 45 : 39 },
     { at: .12, position: exterior([12, 8.8, 17.5]), target: target(.5), fov: mobile ? 45 : 39 },
-    { at: .27, position: exterior([10.4, 8, 17]), target: target(1.3), fov: mobile ? 45 : 40 },
+    { at: .29, position: exterior([10.4, 8, 17]), target: target(1.3), fov: mobile ? 45 : 40 },
     { at: .43, position: exterior([8.2, 9, 16.5]), target: target(2.1), fov: mobile ? 46 : 41 },
-    { at: .55, position: exterior([5.9, 8.4, 16.5]), target: target(2.4), fov: mobile ? 46 : 41 },
+    { at: .57, position: exterior([5.9, 8.4, 16.5]), target: target(2.4), fov: mobile ? 46 : 41 },
     { at: .68, position: exterior([3.4, 6.5, 16]), target: target(1.4), fov: mobile ? 45 : 39 },
-    { at: .76, position: exterior([1.8, 4.6, 14]), target: target(1), fov: mobile ? 45 : 40 },
-    { at: .85, position: [.18, 2.5, 8.8], target: [0, 1.6, -1.5], fov: mobile ? 60 : 54 },
-    { at: .92, position: [.03, 1.76, 4.4], target: [.04, 1.52, -2.8], fov: mobile ? 75 : 69 },
+    { at: .78, position: exterior([1.8, 4.6, 14]), target: target(1), fov: mobile ? 45 : 40 },
+    { at: .82, position: [.18, 2.5, 8.8], target: [0, 1.6, -1.5], fov: mobile ? 60 : 54 },
+    { at: .86, position: [.03, 1.76, 4.4], target: [.04, 1.52, -2.8], fov: mobile ? 75 : 69 },
+    { at: INTERIOR_START, position: [.03, 1.76, 1.30], target: [.04, 1.52, -2.8], fov: mobile ? 78 : 72 },
     { at: 1, position: [.03, 1.76, 1.30], target: [.04, 1.52, -2.8], fov: mobile ? 78 : 72 },
   ];
 }
 const desktopShots = shotsFor(false), mobileShots = shotsFor(true);
 export function cameraPose(progress: number, mobile: boolean, reduced = false) {
   const p = clamp(progress), shots = mobile ? mobileShots : desktopShots;
-  if (reduced) return p >= .965 ? shots[shots.length - 1] : shots[0];
+  if (reduced) return p >= INTERIOR_START ? shots[shots.length - 1] : shots[0];
   const index = Math.min(shots.length - 2, Math.max(0, shots.findIndex(shot => shot.at > p) - 1));
   const segment = p === 1 ? shots.length - 2 : index;
   const vector = (key: 'position' | 'target'): Vec3 => [0, 1, 2].map(axis => sample(shots, segment, p, shot => shot[key][axis])) as Vec3;
   return { position: vector('position'), target: vector('target'), fov: sample(shots, segment, p, shot => shot.fov) };
 }
 
-// Preserve the authored order, leaving the final quarter for the approach inside.
-export const constructionProgress = (progress: number) => clamp(progress / .9);
+// Group the authored parts into foundations, structure/roof and finishes.
+// The last fifth of the scroll stays free for the approach into the interior.
+const assemblyTiming = [[0, 0], [.1, .145], [.28, .295], [.57, .615], [.78, .79], [1, 1]] as const;
+export function constructionProgress(progress: number) {
+  const p = clamp(progress);
+  for (let i = 1; i < assemblyTiming.length; i++) {
+    const [end, value] = assemblyTiming[i];
+    if (p <= end) {
+      const [start, previous] = assemblyTiming[i - 1];
+      return mix(previous, value, (p - start) / (end - start));
+    }
+  }
+  return 1;
+}
 export function assemblyPose(progress: number, start: number, end: number, lift: number, reduced = false) {
   if (reduced) return { offset: 0, opacity: Number(progress >= end) };
   const t = clamp((progress - start) / (end - start));
@@ -63,7 +76,7 @@ export function assemblyPose(progress: number, start: number, end: number, lift:
 export function advanceProgress(current: number, target: number, delta: number, reduced = false) {
   if (reduced) return target;
   const dt = Math.min(delta, .05);
-  const step = (target - current) * (1 - Math.exp(-5 * dt));
-  const limit = mix(.22, .13, range(current, .72, .88)) * dt;
+  const step = (target - current) * (1 - Math.exp(-7 * dt));
+  const limit = mix(.4, .26, range(current, .72, .88)) * dt;
   return Math.abs(target - current) < .00001 ? target : current + Math.max(-limit, Math.min(limit, step));
 }

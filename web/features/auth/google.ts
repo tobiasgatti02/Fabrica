@@ -22,15 +22,15 @@ export type GoogleProfile = {
 
 export function safeReturnTo(value: string | null) {
   if (!value || !value.startsWith('/') || value.startsWith('//')) {
-    return '/estudio';
+    return '/estudio/panel';
   }
   try {
     const parsed = new URL(value, 'https://app.local');
     return parsed.origin === 'https://app.local'
       ? `${parsed.pathname}${parsed.search}${parsed.hash}`
-      : '/estudio';
+      : '/estudio/panel';
   } catch {
-    return '/estudio';
+    return '/estudio/panel';
   }
 }
 
@@ -92,7 +92,7 @@ export function readGoogleOAuthState(
 export function authErrorRedirect(
   request: Request,
   error: 'google_unavailable' | 'google_cancelled' | 'google_failed',
-  returnTo = '/estudio',
+  returnTo = '/estudio/panel',
 ) {
   const target = new URL(safeReturnTo(returnTo), request.url);
   target.searchParams.set('auth_error', error);

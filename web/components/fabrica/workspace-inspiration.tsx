@@ -23,6 +23,7 @@ import {
   Bold,
   Eraser,
   FileText,
+  FileUp,
   Frame,
   GripHorizontal,
   Hand,
@@ -36,8 +37,8 @@ import {
   Link2,
   LockKeyhole,
   UnlockKeyhole,
-  LoaderCircle,
   MessageCircle,
+  MoreHorizontal,
   Minus,
   MousePointer2,
   PencilLine,
@@ -292,7 +293,7 @@ type StickyMeta = {
 const defaultStickyMeta = (color: string = stickyColors[0]): StickyMeta => ({
   color,
   width: 260,
-  height: 240,
+  height: 260,
   tags: [],
   reactions: {},
   fontSize: 18,
@@ -313,7 +314,7 @@ function readStickyMetadata(project: string): Record<string, StickyMeta> {
             ? item.color
             : stickyColors[0];
         const width = Math.min(800, Math.max(180, Number(item.width) || 260));
-        const height = Math.min(800, Math.max(180, Number(item.height) || 240));
+        const height = Math.min(800, Math.max(180, Number(item.height) || 260));
         const tags = Array.isArray(item.tags)
           ? item.tags
               .filter((tag): tag is string => typeof tag === 'string')
@@ -432,25 +433,91 @@ function CommentBubble({
   count,
   title,
   onClick,
+  latest,
+  sticky = false,
+  position,
+  zoom = 1,
+  onMove,
 }: {
   count: number;
   title: string;
   onClick: () => void;
+  latest?: { author: string; text: string; created: number };
+  sticky?: boolean;
+  position?: Point;
+  zoom?: number;
+  onMove?: (point: Point) => void;
 }) {
+  const drag = useRef<{ pointer: number; x: number; y: number; start: Point; moved: boolean } | null>(null);
+  const suppressClick = useRef(false);
   return (
     <button
       type="button"
       className="inspiration-comment-bubble"
+      data-comment-bubble
+      style={position ? { left: position.x, top: position.y, right: 'auto', bottom: 'auto' } : undefined}
       aria-label={`Ver comentarios de ${title}. ${count} comentarios.`}
-      onPointerDown={(event) => event.stopPropagation()}
+      onPointerDown={(event) => {
+        event.stopPropagation();
+        if (!onMove || event.button !== 0) return;
+        drag.current = {
+          pointer: event.pointerId,
+          x: event.clientX,
+          y: event.clientY,
+          start: position || { x: event.currentTarget.offsetLeft, y: event.currentTarget.offsetTop },
+          moved: false,
+        };
+        event.currentTarget.setPointerCapture(event.pointerId);
+      }}
+      onPointerMove={(event) => {
+        const active = drag.current;
+        if (!active || active.pointer !== event.pointerId || !onMove) return;
+        event.stopPropagation();
+        const dx = (event.clientX - active.x) / zoom;
+        const dy = (event.clientY - active.y) / zoom;
+        if (Math.hypot(dx, dy) > 3) active.moved = true;
+        if (active.moved) onMove({ x: active.start.x + dx, y: active.start.y + dy });
+      }}
+      onPointerUp={(event) => {
+        event.stopPropagation();
+        suppressClick.current = Boolean(drag.current?.moved);
+        drag.current = null;
+        window.setTimeout(() => { suppressClick.current = false; }, 0);
+      }}
+      onPointerCancel={(event) => { event.stopPropagation(); drag.current = null; }}
       onClick={(event) => {
         event.stopPropagation();
+        if (suppressClick.current) { suppressClick.current = false; return; }
         onClick();
       }}
+      onDoubleClick={(event) => event.stopPropagation()}
     >
-      <MessageCircle size={15} /> <span>{count}</span>
+      {sticky && latest ? (
+        <span className="inspiration-comment-avatar" aria-hidden="true">
+          {latest.author.trim().charAt(0).toUpperCase() || '?'}
+        </span>
+      ) : (
+        <><MessageCircle size={15} /> {!sticky && <span>{count}</span>}</>
+      )}
+      {latest && (
+        <span className="inspiration-comment-preview" aria-hidden="true">
+          <span className="inspiration-comment-preview-avatar">{latest.author.trim().charAt(0).toUpperCase() || '?'}</span>
+          <span className="inspiration-comment-preview-content">
+            <span className="inspiration-comment-preview-heading"><strong>{latest.author}</strong><time>{shortDate(latest.created)}</time></span>
+            <span className="inspiration-comment-preview-text">{latest.text}</span>
+            {count > 1 && <span className="inspiration-comment-preview-count">{count - 1} {count === 2 ? 'respuesta' : 'respuestas'}</span>}
+          </span>
+        </span>
+      )}
     </button>
   );
+}
+
+function commentTimestamp(value: number) {
+  const date = new Date(value);
+  const today = new Date();
+  const time = new Intl.DateTimeFormat('es-AR', { hour: '2-digit', minute: '2-digit' }).format(date);
+  return date.toDateString() === today.toDateString() ? `Hoy, ${time}` : `${shortDate(value)}, ${time}`;
 }
 
 function Media({
@@ -458,6 +525,7 @@ function Media({
   project,
   share,
   invite,
+  alt,
   fullFrame = false,
   resizable = false,
   zoom = 1,
@@ -466,6 +534,7 @@ function Media({
   project: string;
   share: string;
   invite?: string;
+  alt?: string;
   fullFrame?: boolean;
   resizable?: boolean;
   zoom?: number;
@@ -473,7 +542,6 @@ function Media({
   const maxPhotoDimension = 2000;
   const ref = useRef<HTMLDivElement>(null);
   const [near, setNear] = useState(false);
-  const [loaded, setLoaded] = useState(false);
   const [failed, setFailed] = useState(false);
   const photoSizeKey = `fabrica:photo-size:${project}:${asset.id}`;
   const photoRatio = useRef(1);
@@ -584,23 +652,16 @@ function Media({
       )}
       {image && !failed ? (
         <>
-          {!loaded && (
-            <div className="inspiration-media-loading">
-              <LoaderCircle size={20} className="inspiration-spin" />
-              <span>Cargando imagen…</span>
-            </div>
-          )}
           {near && (
             <Image
               src={source}
-              alt={asset.name}
+              alt={alt || asset.name}
               width={600}
               height={400}
               unoptimized
               loading="lazy"
               draggable={false}
               onLoad={(event) => {
-                setLoaded(true);
                 if (fullFrame) {
                   const ratio =
                     event.currentTarget.naturalWidth /
@@ -667,12 +728,9 @@ function PhotoFrame({
   invite,
   selected,
   canEdit,
+  locked,
   zoom,
-  commentCount,
   onDrag,
-  onSelect,
-  onComments,
-  onEditImage,
 }: {
   item: WorkspaceInspiration;
   asset: WorkspaceAsset;
@@ -681,69 +739,98 @@ function PhotoFrame({
   invite: string;
   selected: boolean;
   canEdit: boolean;
+  locked: boolean;
   zoom: number;
-  commentCount: number;
   onDrag: (event: PointerEvent<HTMLElement>, id: string) => void;
-  onSelect: (id: string) => void;
-  onComments: () => void;
-  onEditImage: () => void;
 }) {
   return (
-    <div className="inspiration-photo-frame">
+    <div
+      className="inspiration-photo-frame"
+      onPointerDown={(event) => {
+        if ((event.target as HTMLElement).closest('button, a')) return;
+        onDrag(event, item.id);
+      }}
+    >
       <Media
         key={asset.id}
         asset={asset}
         project={project}
         share={share}
         invite={invite}
+        alt={item.note || item.title}
         fullFrame
-        resizable={selected}
+        resizable={selected && canEdit && !locked}
         zoom={zoom}
       />
-      <button
-        className="inspiration-drag-handle inspiration-photo-handle"
-        aria-label={'Seleccionar y mover ' + item.title}
-        aria-pressed={selected}
-        onPointerDown={(event) => onDrag(event, item.id)}
-        onClick={() => onSelect(item.id)}
-      >
-        <GripHorizontal size={19} />
-      </button>
-      <CommentBubble
-        count={commentCount}
-        title={item.title}
-        onClick={onComments}
+    </div>
+  );
+}
+
+function PendingPhoto({ entry, project, zoom, selected }: {
+  entry: Pending;
+  project: string;
+  zoom: number;
+  selected: boolean;
+}) {
+  const sizeKey = `fabrica:photo-size:${project}:${entry.id}`;
+  const [size, setSize] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(sizeKey) || 'null');
+      if (Number.isFinite(saved?.width) && Number.isFinite(saved?.height)) return saved;
+    } catch { /* Use the initial photo size. */ }
+    return { width: 300, height: 200 };
+  });
+  const ratio = useRef(1.5);
+  const resize = useRef<{ pointer: number; x: number; width: number } | null>(null);
+  const saveSize = (width: number) => {
+    const next = { width, height: width / ratio.current };
+    setSize(next);
+    try { localStorage.setItem(sizeKey, JSON.stringify(next)); } catch { /* Keep the session size. */ }
+  };
+  return (
+    <div className="inspiration-media inspiration-photo-media" style={size}>
+      <Image
+        src={entry.preview!}
+        alt={entry.draft.title}
+        width={600}
+        height={400}
+        unoptimized
+        draggable={false}
+        onLoad={(event) => {
+          const naturalRatio = event.currentTarget.naturalWidth / event.currentTarget.naturalHeight;
+          if (!Number.isFinite(naturalRatio) || naturalRatio <= 0) return;
+          ratio.current = naturalRatio;
+          let savedWidth: number | undefined;
+          try {
+            const saved = JSON.parse(localStorage.getItem(sizeKey) || 'null');
+            if (Number.isFinite(saved?.width)) savedWidth = saved.width;
+          } catch { /* Use the natural image size. */ }
+          saveSize(savedWidth ?? Math.min(320, Math.max(180, 420 * naturalRatio)));
+        }}
       />
-      <div className="inspiration-photo-details">
-        {item.note && <p className="inspiration-note-text">{item.note}</p>}
-        <div className="inspiration-photo-meta">
-          {shortDate(item.created)} · Por {item.author} ·{' '}
-          {formatBytes(asset.size)}
-        </div>
-        <div className="inspiration-photo-actions">
-          {canEdit && (
-            <button type="button" onClick={onEditImage}>
-              <Pencil size={15} /> Editar
-            </button>
-          )}
-          <a
-            href={assetUrl(asset.id, project, share, invite)}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Abrir foto <ArrowUpRight size={15} />
-          </a>
-          {safeReferenceUrl(item.url) && (
-            <a
-              href={safeReferenceUrl(item.url) || undefined}
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Enlace <ArrowUpRight size={15} />
-            </a>
-          )}
-        </div>
-      </div>
+      {selected && (
+        <button
+          type="button"
+          className="inspiration-photo-resize"
+          aria-label="Redimensionar foto"
+          onPointerDown={(event) => {
+            if (event.button !== 0) return;
+            event.preventDefault();
+            event.stopPropagation();
+            resize.current = { pointer: event.pointerId, x: event.clientX, width: size.width };
+            event.currentTarget.setPointerCapture(event.pointerId);
+          }}
+          onPointerMove={(event) => {
+            const start = resize.current;
+            if (!start || start.pointer !== event.pointerId) return;
+            const maxWidth = Math.min(2000, 2000 * ratio.current);
+            const minWidth = Math.min(maxWidth, Math.max(140, 100 * ratio.current));
+            saveSize(Math.min(maxWidth, Math.max(minWidth, start.width + (event.clientX - start.x) / zoom)));
+          }}
+          onPointerUp={() => { resize.current = null; }}
+          onPointerCancel={() => { resize.current = null; }}
+        />
+      )}
     </div>
   );
 }
@@ -753,16 +840,18 @@ function WorktableCanvas({
   project,
   share,
   invite,
-  busy,
-  run,
+  runCanvas,
   notify,
   board,
 }: WorkspaceViewProps & { board: WorkspaceWorktable | null }) {
-  const boardId = board?.id || '';
-  const storageKey = boardId ? `${project}:${boardId}` : project;
+  const boardId = board?.id || 'default';
+  const storageKey = board ? `${project}:${boardId}` : project;
   const canEdit = data.viewer.permissions.inspiracion === 'edit';
   const [selected, setSelected] = useState<string | null>(null);
   const [editingImage, setEditingImage] = useState<string | null>(null);
+  const [photoAltOpen, setPhotoAltOpen] = useState(false);
+  const [photoAltDraft, setPhotoAltDraft] = useState('');
+  const [photoMoreOpen, setPhotoMoreOpen] = useState(false);
   const [help, setHelp] = useState(false);
   const [storageError, setStorageError] = useState(false);
   const [viewportSize, setViewportSize] = useState({ width: 0, height: 0 });
@@ -806,6 +895,8 @@ function WorktableCanvas({
   >(null);
   const [tagDraft, setTagDraft] = useState('');
   const [linkDraft, setLinkDraft] = useState('');
+  const [newLinkOpen, setNewLinkOpen] = useState(false);
+  const [newLinkUrl, setNewLinkUrl] = useState('');
   const [penMenuOpen, setPenMenuOpen] = useState(false);
   const [selection, setSelection] = useState<string[]>([]);
   const [groups, setGroups] = useState<Record<string, string>>({});
@@ -859,10 +950,19 @@ function WorktableCanvas({
   const [pending, setPending] = useState<Pending[]>([]);
   const [commentTarget, setCommentTarget] = useState<string | null>(null);
   const [commentText, setCommentText] = useState('');
+  const [commentBubbleStore, setCommentBubbleStore] = useState<{ project: string; positions: Record<string, Point> }>({ project: '', positions: {} });
+  const commentBubblePositions = commentBubbleStore.project === storageKey ? commentBubbleStore.positions : {};
+  const commentInput = useRef<HTMLInputElement>(null);
   const viewport = useRef<HTMLDivElement>(null);
+  const canvasWrap = useRef<HTMLDivElement>(null);
+  const presencePanel = useRef<HTMLDivElement>(null);
+  const frameMenu = useRef<HTMLFieldSetElement>(null);
   const cardNodes = useRef(new Map<string, HTMLElement>());
   const frameTitleInput = useRef<HTMLInputElement>(null);
   const stickyLinkInput = useRef<HTMLInputElement>(null);
+  const notePointer = useRef<{ id: string; pointer: number; x: number; y: number } | null>(null);
+  const newLinkInput = useRef<HTMLInputElement>(null);
+  const externalFileInput = useRef<HTMLInputElement>(null);
   const gesture = useRef<Gesture | null>(null);
   const activeCanvasElement = useRef<ActiveCanvasElement | null>(null);
   const previewFrame = useRef<number | null>(null);
@@ -870,20 +970,54 @@ function WorktableCanvas({
   const moveFrame = useRef<number | null>(null);
   const queuedCanvasMove = useRef<CanvasElement | null>(null);
   const insertion = useRef<Point>({ x: 40, y: 50 });
-  const queue = useRef(Promise.resolve());
   const urls = useRef(new Set<string>());
-  const mounted = useRef(true);
-  const deleting = useRef(false);
-  const operations = useRef({ run, notify });
   useEffect(() => {
-    operations.current = { run, notify };
-  }, [run, notify]);
+    const wrap = canvasWrap.current;
+    const presence = presencePanel.current;
+    const menu = frameMenu.current;
+    if (!wrap || !presence) return;
+    const positionCanvasMenus = () => {
+      wrap.style.setProperty(
+        '--presence-menu-top',
+        `${presence.offsetTop + presence.offsetHeight + 8}px`,
+      );
+      if (menu) {
+        const presenceBounds = presence.getBoundingClientRect();
+        const menuBounds = menu.getBoundingClientRect();
+        wrap.classList.toggle(
+          'frame-menu-below-presence',
+          menuBounds.right + 8 > presenceBounds.left &&
+            menuBounds.left < presenceBounds.right + 8,
+        );
+      }
+    };
+    const observer = new ResizeObserver(positionCanvasMenus);
+    observer.observe(wrap);
+    observer.observe(presence);
+    if (menu) observer.observe(menu);
+    window.addEventListener('resize', positionCanvasMenus);
+    positionCanvasMenus();
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', positionCanvasMenus);
+      wrap.classList.remove('frame-menu-below-presence');
+    };
+  }, [frameMenuOpen]);
+  const mounted = useRef(true);
+  const deletingIds = useRef(new Set<string>());
+  const operations = useRef({ runCanvas, notify });
+  useEffect(() => {
+    operations.current = { runCanvas, notify };
+  }, [runCanvas, notify]);
   useEffect(() => {
     if (editingFrameTitle) frameTitleInput.current?.focus();
   }, [editingFrameTitle]);
   useEffect(() => {
     if (stickyPanel === 'link') stickyLinkInput.current?.focus();
   }, [stickyPanel]);
+  useEffect(() => {
+    if (newLinkOpen) newLinkInput.current?.focus();
+  }, [newLinkOpen]);
   useEffect(() => {
     mounted.current = true;
     const previews = urls.current;
@@ -918,6 +1052,18 @@ function WorktableCanvas({
         project: storageKey,
         items: readStickyMetadata(storageKey),
       });
+      try {
+        const saved = JSON.parse(localStorage.getItem('fabrica:comment-bubbles:' + storageKey) || '{}');
+        setCommentBubbleStore({
+          project: storageKey,
+          positions: saved && typeof saved === 'object' && !Array.isArray(saved)
+            ? Object.fromEntries(Object.entries(saved).filter(([key, point]) =>
+                /^(card|element):/.test(key) && validPoint(point))) as Record<string, Point>
+            : {},
+        });
+      } catch {
+        setCommentBubbleStore({ project: storageKey, positions: {} });
+      }
       stickyLinksProject.current = storageKey;
       setStickyLinks(readStickyLinks(storageKey));
       groupsProject.current = storageKey;
@@ -966,6 +1112,17 @@ function WorktableCanvas({
       setStorageError(true);
     }
   }, [storageKey, stickyStore]);
+  useEffect(() => {
+    if (commentBubbleStore.project !== storageKey) return;
+    try {
+      localStorage.setItem('fabrica:comment-bubbles:' + storageKey, JSON.stringify(commentBubbleStore.positions));
+    } catch { setStorageError(true); }
+  }, [storageKey, commentBubbleStore]);
+  function moveCommentBubble(key: string, point: Point) {
+    setCommentBubbleStore((current) => current.project === storageKey
+      ? { ...current, positions: { ...current.positions, [key]: point } }
+      : current);
+  }
   useEffect(() => {
     if (!canvasReady || stickyLinksProject.current !== storageKey) return;
     try {
@@ -1021,6 +1178,20 @@ function WorktableCanvas({
     };
   }, []);
   const items = data.inspiration;
+  useEffect(() => {
+    const saved = new Set(items.map((item) => item.id));
+    setPending((current) => {
+      const finished = current.filter((entry) => saved.has(entry.id));
+      if (!finished.length) return current;
+      finished.forEach((entry) => {
+        if (entry.preview) {
+          URL.revokeObjectURL(entry.preview);
+          urls.current.delete(entry.preview);
+        }
+      });
+      return current.filter((entry) => !saved.has(entry.id));
+    });
+  }, [items]);
   const assetMap = useMemo(
     () => new Map(data.assets.map((asset) => [asset.id, asset])),
     [data.assets],
@@ -1032,18 +1203,61 @@ function WorktableCanvas({
   const commentsByItem = useMemo(() => {
     const groups = new Map<string, typeof inspirationComments>();
     inspirationComments.forEach((comment) => {
+      if (!comment.inspiration) return;
       const comments = groups.get(comment.inspiration) || [];
       comments.push(comment);
       groups.set(comment.inspiration, comments);
     });
     return groups;
   }, [inspirationComments]);
+  const commentsByElement = useMemo(() => {
+    const groups = new Map<string, typeof inspirationComments>();
+    for (const comment of inspirationComments) {
+      if (!comment.element || comment.worktable !== boardId) continue;
+      const comments = groups.get(comment.element) || [];
+      comments.push(comment);
+      groups.set(comment.element, comments);
+    }
+    return groups;
+  }, [inspirationComments, boardId]);
+  const reactionsByItem = useMemo(() => {
+    const groups = new Map<string, Record<string, number>>();
+    for (const reaction of data.inspirationReactions || []) {
+      const counts = groups.get(reaction.inspiration) || {};
+      counts[reaction.emoji] = (counts[reaction.emoji] || 0) + 1;
+      groups.set(reaction.inspiration, counts);
+    }
+    return groups;
+  }, [data.inspirationReactions]);
+  const myReactions = useMemo(
+    () => new Map((data.inspirationReactions || []).filter((reaction) => reaction.mine).map((reaction) => [reaction.inspiration, reaction.emoji])),
+    [data.inspirationReactions],
+  );
   const selectedComments = commentTarget
-    ? commentsByItem.get(commentTarget) || []
+    ? commentsByItem.get(commentTarget) || commentsByElement.get(commentTarget) || []
     : [];
   const commentItem = commentTarget
     ? data.inspiration.find((item) => item.id === commentTarget)
     : undefined;
+  const commentElement = commentTarget
+    ? canvasElements.find((element) => element.id === commentTarget)
+    : undefined;
+  const commentItemIsNote = Boolean(commentItem && !commentItem.asset && (!commentItem.url || stickyMetadata[commentItem.id]));
+  const commentItemIsPhoto = Boolean(commentItem?.asset && /^image\/(jpeg|png|webp|avif)$/.test(assetMap.get(commentItem.asset)?.mime || ''));
+  useEffect(() => {
+    if (commentTarget && (commentItemIsNote || commentItemIsPhoto || commentElement)) commentInput.current?.focus({ preventScroll: true });
+  }, [commentTarget, commentItemIsNote, commentItemIsPhoto, commentElement]);
+  useEffect(() => {
+    if (!commentTarget || (!commentItemIsNote && !commentItemIsPhoto && !commentElement)) return;
+    const closeOnOutsidePointer = (event: globalThis.PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Element) || target.closest('[data-comment-bubble], [data-comment-thread]')) return;
+      setCommentTarget(null);
+      setCommentText('');
+    };
+    document.addEventListener('pointerdown', closeOnOutsidePointer);
+    return () => document.removeEventListener('pointerdown', closeOnOutsidePointer);
+  }, [commentTarget, commentItemIsNote, commentItemIsPhoto, commentElement]);
   // Default placement uses the full board order, so filtering never moves cards.
   const defaults = useMemo(
     () =>
@@ -1201,6 +1415,7 @@ function WorktableCanvas({
 
   function chooseTool(next: CanvasTool) {
     setTool(next);
+    setNewLinkOpen(false);
     setPenMenuOpen(
       ['draw', 'marker', 'smart', 'erase', 'erase-area', 'lasso'].includes(
         next,
@@ -1266,7 +1481,7 @@ function WorktableCanvas({
     setStickyStore((current) => {
       const items = current.project === storageKey ? current.items : {};
       return {
-        project,
+        project: storageKey,
         items: {
           ...items,
           [id]: update(items[id] || defaultStickyMeta()),
@@ -1501,10 +1716,15 @@ function WorktableCanvas({
   }
 
   function eraseAt(point: Point) {
-    if (!canEdit || busy) return;
+    if (!canEdit) return;
     const element = markAt(point);
     if (!element) return;
     dispatchCanvas({ type: 'remove', id: element.id });
+    setCommentTarget((current) => current === element.id ? null : current);
+    void runCanvas({ action: 'delete-canvas-element-comments', element: element.id, worktable: boardId }, (current) => ({
+      ...current,
+      inspirationComments: current.inspirationComments.filter((comment) => !(comment.element === element.id && comment.worktable === boardId)),
+    }), `element:${element.id}`).catch(() => {});
     setSelectedCanvasElement((current) =>
       current === element.id ? null : current,
     );
@@ -1512,7 +1732,7 @@ function WorktableCanvas({
   }
 
   function eraseAtPointer(event: PointerEvent<HTMLDivElement>) {
-    if (!canEdit || busy) return;
+    if (!canEdit) return;
     // Cards (photos, links and stickies) live in the DOM rather than in the
     // canvas spatial index, so resolve them from the pointer before checking
     // canvas marks. This keeps the object eraser consistent across both layers.
@@ -1625,98 +1845,125 @@ function WorktableCanvas({
 
   function saveComment(event: SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!commentTarget || !commentText.trim() || busy) return;
-    void run({
+    const text = commentText.trim();
+    if (!commentTarget || !text) return;
+    const target = commentTarget;
+    const id = crypto.randomUUID();
+    const inspiration = commentElement ? null : target;
+    const comment = {
+      id,
+      project,
+      inspiration,
+      element: commentElement ? target : null,
+      worktable: commentElement ? boardId : null,
+      author: data.viewer.name,
+      mine: true,
+      text,
+      created: Date.now(),
+    };
+    setCommentText('');
+    void runCanvas({
       action: 'add-inspiration-comment',
-      inspiration: commentTarget,
-      text: commentText.trim(),
-    })
-      .then(() => setCommentText(''))
-      // `run` already displays the API error. Catching here prevents the
-      // browser overlay from treating a rejected request as unhandled.
-      .catch(() => {});
-  }
-
-  function upload(entry: Pending) {
-    queue.current = queue.current.then(async () => {
-      if (!mounted.current) return;
-      let retryDraft = entry.draft;
-      try {
-        const draft = entry.draft;
-        let asset = draft.asset || '';
-        if (draft.file) {
-          const validationError = inspirationFileError(draft.file);
-          if (validationError) throw new Error(validationError);
-          const optimized =
-            (await createImagePreview(draft.file)) || draft.file;
-          asset = await uploadWorkspaceAsset(
-            optimized,
-            project,
-            share,
-            invite,
-            'inspiration',
-          );
-          // Retain the uploaded asset on retry; never upload it twice.
-          retryDraft = { ...draft, file: undefined, asset };
-        }
-        const result = await operations.current.run<{
-          ok: boolean;
-          id: string;
-        }>({
-          action: 'add-inspiration',
-          worktable: boardId,
-          title: draft.title.slice(0, 160),
-          note: draft.note || '',
-          url: draft.url || '',
-          asset,
-          sticky: Boolean(draft.sticky),
-          category: draft.category || 'general',
-        });
-        if (!mounted.current) return;
-        setPositions((current) => ({ ...current, [result.id]: entry.point }));
-        if (draft.sticky) {
-          setStickyStore((current) => ({
-            project: storageKey,
-            items: {
-              ...(current.project === storageKey ? current.items : {}),
-              [result.id]: draft.sticky!,
-            },
-          }));
-        }
-        if (draft.sequenceFrom && stickyLinksProject.current === storageKey) {
-          setStickyLinks((current) =>
-            [...current, { from: draft.sequenceFrom!, to: result.id }].slice(
-              -1000,
-            ),
-          );
-        }
-        selectCard(result.id);
-        setPending((current) => current.filter((item) => item.id !== entry.id));
-        if (entry.preview) {
-          URL.revokeObjectURL(entry.preview);
-          urls.current.delete(entry.preview);
-        }
-      } catch (error) {
-        const uploadError = (error as Error).message;
-        showErrorToast(uploadError, 'No pudimos subir el archivo');
-        if (mounted.current)
-          setPending((current) =>
-            current.map((item) =>
-              item.id === entry.id
-                ? {
-                    ...entry,
-                    draft: retryDraft,
-                    error: uploadError,
-                  }
-                : item,
-            ),
-          );
-      }
+      id,
+      ...(commentElement ? { element: target, worktable: boardId } : { inspiration: target }),
+      text,
+    }, (current) => ({
+      ...current,
+      inspirationComments: current.inspirationComments.some((entry) => entry.id === id)
+        ? current.inspirationComments : [...current.inspirationComments, comment],
+    }), `${commentElement ? 'element' : 'inspiration'}:${target}`).catch(() => {
+      setCommentText((current) => current || text);
     });
   }
 
+  function addReaction(inspiration: string, emoji: string) {
+    if (!canEdit) return;
+    const nextEmoji = myReactions.get(inspiration) === emoji ? null : emoji;
+    const id = crypto.randomUUID();
+    setStickyPanel(null);
+    void runCanvas({ action: 'set-inspiration-reaction', inspiration, emoji: nextEmoji }, (current) => ({
+      ...current,
+      inspirationReactions: [
+        ...current.inspirationReactions.filter((reaction) => !(reaction.inspiration === inspiration && reaction.mine)),
+        ...(nextEmoji ? [{ id, project, inspiration, emoji: nextEmoji, mine: true, created: Date.now() }] : []),
+      ],
+    }), `inspiration:${inspiration}`).catch(() => {});
+  }
+
+  function deleteComment(id: string) {
+    if (!canEdit) return;
+    const comment = inspirationComments.find((entry) => entry.id === id);
+    const scope = comment?.inspiration
+      ? `inspiration:${comment.inspiration}`
+      : comment?.element ? `element:${comment.element}` : `comment:${id}`;
+    void runCanvas({ action: 'delete-inspiration-comment', id }, (current) => ({
+      ...current,
+      inspirationComments: current.inspirationComments.filter((entry) => entry.id !== id),
+    }), scope).catch(() => {});
+  }
+
+  function draftRequest(entry: Pending, asset = '') {
+    return {
+      action: 'add-inspiration',
+      id: entry.id,
+      worktable: boardId,
+      title: entry.draft.title.slice(0, 160),
+      note: entry.draft.note || '',
+      url: entry.draft.url || '',
+      asset,
+      sticky: Boolean(entry.draft.sticky),
+      category: entry.draft.category || 'general',
+    };
+  }
+
+  function placeDraft(entry: Pending) {
+    const { draft } = entry;
+    setPositions((current) => ({ ...current, [entry.id]: current[entry.id] || entry.point }));
+    if (draft.sticky) {
+      setStickyStore((current) => ({
+        project: storageKey,
+        items: {
+          ...(current.project === storageKey ? current.items : {}),
+          [entry.id]: draft.sticky!,
+        },
+      }));
+    }
+    if (draft.sequenceFrom && stickyLinksProject.current === storageKey) {
+      setStickyLinks((current) => [...current, { from: draft.sequenceFrom!, to: entry.id }].slice(-1000));
+    }
+  }
+
+  function markUploadFailed(entry: Pending, retryDraft: Draft, message: string) {
+    setPending((current) => current.map((item) => item.id === entry.id
+      ? { ...entry, draft: retryDraft, error: message } : item));
+  }
+
+  async function upload(entry: Pending) {
+    if (!mounted.current) return;
+    let retryDraft = entry.draft;
+    try {
+      const draft = entry.draft;
+      let asset = draft.asset || '';
+      if (draft.file) {
+        const validationError = inspirationFileError(draft.file);
+        if (validationError) throw new Error(validationError);
+        const optimized = (await createImagePreview(draft.file)) || draft.file;
+        asset = await uploadWorkspaceAsset(optimized, project, share, invite, 'inspiration');
+        retryDraft = { ...draft, file: undefined, asset };
+      }
+      await operations.current.runCanvas(draftRequest(entry, asset), undefined, `inspiration:${entry.id}`);
+      if (!mounted.current) return;
+      placeDraft(entry);
+      selectCard(entry.id);
+      // The preview stays in place until the refreshed asset and card arrive.
+    } catch (error) {
+      const uploadError = (error as Error).message;
+      if (mounted.current) markUploadFailed(entry, retryDraft, uploadError);
+    }
+  }
+
   function addDrafts(drafts: Draft[], point = insertion.current) {
-    if (!canEdit || !drafts.length) return;
+    if (!canEdit || !drafts.length) return [];
     const acceptedDrafts = drafts.filter((draft) => {
       if (!draft.file) return true;
       const validationError = inspirationFileError(draft.file);
@@ -1724,7 +1971,7 @@ function WorktableCanvas({
       showErrorToast(validationError, 'Archivo no aceptado');
       return false;
     });
-    if (!acceptedDrafts.length) return;
+    if (!acceptedDrafts.length) return [];
     const entries = acceptedDrafts.map((draft, index): Pending => {
       const preview =
         draft.file && /^image\/(jpeg|png|webp|avif)$/.test(draft.file.type)
@@ -1738,10 +1985,72 @@ function WorktableCanvas({
         preview,
       };
     });
-    setPending((current) => [...current, ...entries]);
-    entries.forEach(upload);
+    const uploads = entries.filter((entry) => Boolean(entry.draft.file));
+    if (uploads.length) {
+      setPositions((current) => ({
+        ...current,
+        ...Object.fromEntries(uploads.map((entry) => [entry.id, entry.point])),
+      }));
+      setPending((current) => [...current, ...uploads]);
+    }
+    for (const entry of entries) {
+      if (entry.draft.file) {
+        void upload(entry);
+        continue;
+      }
+      placeDraft(entry);
+      const item: WorkspaceInspiration = {
+        id: entry.id,
+        project,
+        title: entry.draft.title.slice(0, 160),
+        note: entry.draft.note || '',
+        url: entry.draft.url || '',
+        asset: entry.draft.asset || null,
+        worktable: boardId === 'default' ? null : boardId,
+        category: entry.draft.category || 'general',
+        status: 'idea',
+        author: data.viewer.name,
+        created: Date.now(),
+      };
+      void runCanvas(draftRequest(entry, entry.draft.asset), (current) => ({
+        ...current,
+        inspiration: current.inspiration.some((saved) => saved.id === entry.id)
+          ? current.inspiration : [...current.inspiration, item],
+      }), `inspiration:${entry.id}`).catch(() => {
+        setPositions((current) => {
+          const next = { ...current };
+          delete next[entry.id];
+          return next;
+        });
+        setStickyStore((current) => {
+          if (current.project !== storageKey || !current.items[entry.id]) return current;
+          const items = { ...current.items };
+          delete items[entry.id];
+          return { ...current, items };
+        });
+        setStickyLinks((current) => current.filter((link) => link.to !== entry.id));
+        setSelected((current) => current === entry.id ? null : current);
+      });
+    }
     insertion.current = { x: point.x + 35, y: point.y + 35 };
     focusBoard();
+    return entries;
+  }
+
+  function addLinkFromToolbar() {
+    const url = safeReferenceUrl(newLinkUrl.trim());
+    if (!url) {
+      notify('Usá un enlace http o https válido.');
+      newLinkInput.current?.focus();
+      return;
+    }
+    const bounds = viewport.current?.getBoundingClientRect();
+    const point = bounds
+      ? worldPoint(bounds.left + bounds.width / 2, bounds.top + bounds.height / 2)
+      : insertion.current;
+    addDrafts([{ url, title: new URL(url).hostname.replace(/^www\./, '') }], point);
+    setNewLinkUrl('');
+    setNewLinkOpen(false);
   }
 
   function receive(transfer: DataTransfer, point: Point) {
@@ -1900,7 +2209,7 @@ function WorktableCanvas({
 
   function createPostItAt(point: Point) {
     setContextMenu(null);
-    addDrafts(
+    const [entry] = addDrafts(
       [
         {
           title: 'Post-it',
@@ -1912,11 +2221,17 @@ function WorktableCanvas({
     );
     setTool('select');
     setStickyPanel(null);
+    if (entry) {
+      selectCard(entry.id);
+      requestAnimationFrame(() => {
+        cardNodes.current.get(entry.id)?.querySelector<HTMLElement>('.inspiration-note-text')?.focus({ preventScroll: true });
+      });
+    }
   }
   function createNextPostIt(id: string) {
     const source = cardBounds(id);
     const sourceMeta = stickyMetadata[id] || defaultStickyMeta(stickyColor);
-    addDrafts(
+    const [entry] = addDrafts(
       [
         {
           title: 'Post-it',
@@ -1928,11 +2243,17 @@ function WorktableCanvas({
       { x: source.right + 150, y: source.top },
     );
     setStickyPanel(null);
+    if (entry) {
+      selectCard(entry.id);
+      requestAnimationFrame(() => {
+        cardNodes.current.get(entry.id)?.querySelector<HTMLElement>('.inspiration-note-text')?.focus({ preventScroll: true });
+      });
+    }
   }
   function saveStickyText(item: WorkspaceInspiration, text: string) {
     const original = item.note || (item.title !== 'Post-it' ? item.title : '');
     if (text === original) return;
-    void run({
+    void runCanvas({
       action: 'edit-inspiration',
       id: item.id,
       title: item.title,
@@ -1940,7 +2261,28 @@ function WorktableCanvas({
       url: item.url || '',
       sticky: true,
       category: item.category || 'general',
-    }).catch(() => {});
+    }, (current) => ({
+      ...current,
+      inspiration: current.inspiration.map((entry) => entry.id === item.id ? { ...entry, note: text } : entry),
+    }), `inspiration:${item.id}`).catch(() => {});
+  }
+
+  function savePhotoAlt(item: WorkspaceInspiration, text: string) {
+    const note = text.trim();
+    setPhotoAltOpen(false);
+    if (note === (item.note || '')) return;
+    void runCanvas({
+      action: 'edit-inspiration',
+      id: item.id,
+      title: item.title,
+      note,
+      url: item.url || '',
+      category: item.category || 'general',
+    }, (current) => ({
+      ...current,
+      inspiration: current.inspiration.map((entry) =>
+        entry.id === item.id ? { ...entry, note } : entry),
+    }), `inspiration:${item.id}`).catch(() => {});
   }
 
   function drop(event: DragEvent<HTMLDivElement>) {
@@ -2024,7 +2366,7 @@ function WorktableCanvas({
   }, []);
 
   function startGesture(event: PointerEvent<HTMLElement>, card?: string) {
-    if (event.button !== 0 && event.button !== 1) return;
+    if (event.button !== 0 && event.button !== 1 && event.buttons !== 1) return;
     setFollowPeerId(null);
     if (
       card &&
@@ -2468,30 +2810,34 @@ function WorktableCanvas({
   }
 
   function deleteInspiration(id: string) {
-    if (!canEdit || busy || deleting.current) return;
-    deleting.current = true;
-    void run({ action: 'delete-inspiration', id })
-      .then(() => {
-        setSelected((current) => (current === id ? null : current));
-        setStickyLinks((current) =>
-          current.filter((link) => link.from !== id && link.to !== id),
-        );
-        setStickyStore((current) => {
-          if (current.project !== storageKey || !current.items[id])
-            return current;
-          const items = { ...current.items };
-          delete items[id];
-          return { ...current, items };
-        });
-      })
-      .catch(() => {})
-      .finally(() => {
-        deleting.current = false;
-      });
+    if (!canEdit || deletingIds.current.has(id) || !items.some((item) => item.id === id)) return;
+    deletingIds.current.add(id);
+    const previousMeta = stickyMetadata[id];
+    const previousLinks = stickyLinks.filter((link) => link.from === id || link.to === id);
+    setSelected((current) => current === id ? null : current);
+    setSelection((current) => current.filter((key) => key !== `card:${id}`));
+    setCommentTarget((current) => current === id ? null : current);
+    setStickyLinks((current) => current.filter((link) => link.from !== id && link.to !== id));
+    setStickyStore((current) => {
+      if (current.project !== storageKey || !current.items[id]) return current;
+      const next = { ...current.items };
+      delete next[id];
+      return { ...current, items: next };
+    });
+    void runCanvas({ action: 'delete-inspiration', id }, (current) => ({
+      ...current,
+      inspiration: current.inspiration.filter((item) => item.id !== id),
+      inspirationComments: current.inspirationComments.filter((comment) => comment.inspiration !== id),
+      inspirationReactions: current.inspirationReactions.filter((reaction) => reaction.inspiration !== id),
+    }), `inspiration:${id}`).catch(() => {
+      if (previousMeta) setStickyStore((current) => current.project === storageKey
+        ? { ...current, items: { ...current.items, [id]: previousMeta } } : current);
+      if (previousLinks.length) setStickyLinks((current) => [...current, ...previousLinks]);
+    }).finally(() => deletingIds.current.delete(id));
   }
 
   function deleteSelected() {
-    if (!canEdit || busy) return;
+    if (!canEdit) return;
     if (selection.length > 1) {
       const cards = selection
         .filter((key) => key.startsWith('card:'))
@@ -2502,6 +2848,7 @@ function WorktableCanvas({
           .map((key) => key.slice(8)),
       );
       if (marks.size) {
+        setCommentTarget((current) => current && marks.has(current) ? null : current);
         dispatchCanvas({
           type: 'replace',
           elements: canvasElements.filter((element) => !marks.has(element.id)),
@@ -2510,15 +2857,12 @@ function WorktableCanvas({
           type: 'commit',
           before: { elements: canvasElements, positions },
         });
+        void runCanvas({ action: 'delete-canvas-element-comments', elements: [...marks], worktable: boardId }, (current) => ({
+          ...current,
+          inspirationComments: current.inspirationComments.filter((comment) => !(comment.element && marks.has(comment.element) && comment.worktable === boardId)),
+        })).catch(() => {});
       }
-      cards.forEach(
-        (id) => void run({ action: 'delete-inspiration', id }).catch(() => {}),
-      );
-      setStickyLinks((current) =>
-        current.filter(
-          (link) => !cards.includes(link.from) && !cards.includes(link.to),
-        ),
-      );
+      cards.forEach(deleteInspiration);
       setSelection([]);
       setSelected(null);
       setSelectedCanvasElement(null);
@@ -2530,11 +2874,19 @@ function WorktableCanvas({
     }
     if (selectedCanvasElement) {
       dispatchCanvas({ type: 'remove', id: selectedCanvasElement });
+      setCommentTarget((current) => current === selectedCanvasElement ? null : current);
+      void runCanvas({ action: 'delete-canvas-element-comments', element: selectedCanvasElement, worktable: boardId }, (current) => ({
+        ...current,
+        inspirationComments: current.inspirationComments.filter((comment) => !(comment.element === selectedCanvasElement && comment.worktable === boardId)),
+      }), `element:${selectedCanvasElement}`).catch(() => {});
       setSelectedCanvasElement(null);
     }
   }
 
   const selectedItem = data.inspiration.find((item) => item.id === selected);
+  const selectedPhoto = selectedItem?.asset &&
+    /^image\/(jpeg|png|webp|avif)$/.test(assetMap.get(selectedItem.asset)?.mime || '')
+      ? selectedItem : null;
   const selectedSticky =
     selectedItem &&
     !selectedItem.asset &&
@@ -2550,14 +2902,66 @@ function WorktableCanvas({
     [data.inspiration],
   );
 
+  function renderCommentThread(title: string, comments: typeof inspirationComments, bubble: Point, photo = false) {
+    return (
+      <section
+        className="inspiration-sticky-thread"
+        data-comment-thread
+        aria-label={`Comentarios de ${title}`}
+        style={photo
+          ? { left: 'calc(100% + 18px)', top: 0, bottom: 'auto' }
+          : { left: bubble.x + 78, top: bubble.y - 30, bottom: 'auto' }}
+        onPointerDown={(event) => event.stopPropagation()}
+      >
+        <div className="inspiration-sticky-thread-list">
+          {comments.map((comment) => (
+            <article className="inspiration-sticky-thread-comment" key={comment.id}>
+              <span className="inspiration-sticky-thread-avatar" aria-hidden="true">{comment.author.trim().charAt(0).toUpperCase() || '?'}</span>
+              <div className="inspiration-sticky-thread-content">
+                <div className="inspiration-sticky-thread-heading">
+                  <strong>{comment.author}</strong>
+                  <time dateTime={new Date(comment.created).toISOString()}>{commentTimestamp(comment.created)}</time>
+                  {canEdit && (comment.mine || data.viewer.accountOwner) && (
+                    <details className="inspiration-sticky-thread-menu">
+                      <summary aria-label={`Opciones del comentario de ${comment.author}`}><MoreHorizontal size={20} /></summary>
+                      <button type="button" onClick={() => deleteComment(comment.id)}><Trash2 size={15} /> Eliminar</button>
+                    </details>
+                  )}
+                </div>
+                <p>{comment.text}</p>
+              </div>
+            </article>
+          ))}
+        </div>
+        {canEdit && (
+          <form className="inspiration-sticky-thread-reply" onSubmit={saveComment}>
+            <input
+              ref={commentInput}
+              aria-label="Responder al comentario"
+              placeholder="Dejá una respuesta…"
+              maxLength={2000}
+              value={commentText}
+              onChange={(event) => setCommentText(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Escape') {
+                  setCommentTarget(null);
+                  setCommentText('');
+                }
+              }}
+            />
+            <button type="submit" disabled={!commentText.trim()} aria-label="Enviar respuesta"><ArrowRight size={20} /></button>
+          </form>
+        )}
+        <button type="button" className="inspiration-sticky-thread-close" aria-label="Cerrar comentarios" onClick={() => setCommentTarget(null)}><X size={16} /></button>
+      </section>
+    );
+  }
+
   return (
     <div className="workspace-content inspiration-page">
       <section className="workspace-section inspiration-board-section">
-        <div className="inspiration-command-bar">
-          <div className="inspiration-board-title">
-            <h1>{board?.title || 'Mesa principal'}</h1>
-          </div>
-          <div className="inspiration-presence" aria-label="Personas en esta mesa">
+        <div className="inspiration-canvas-wrap" ref={canvasWrap}>
+          <div className="inspiration-presence" ref={presencePanel} aria-label="Personas en esta mesa">
             <div className="inspiration-presence-heading">
               <UsersRound size={15} aria-hidden="true" />
               <span>{!presence.visible ? 'Presencia oculta' : presence.connected ? `${presence.peers.length + 1} en esta mesa` : 'Conectando presencia…'}</span>
@@ -2575,8 +2979,6 @@ function WorktableCanvas({
               </div>
             ))}
           </div>
-        </div>
-        <div className="inspiration-canvas-wrap">
           <div
             className="inspiration-tools"
             role="toolbar"
@@ -2587,6 +2989,7 @@ function WorktableCanvas({
               aria-label="Seleccionar"
               aria-pressed={tool === 'select' && !hand}
               onClick={() => {
+                setNewLinkOpen(false);
                 setHand(false);
                 setTool('select');
                 setPenMenuOpen(false);
@@ -2600,6 +3003,7 @@ function WorktableCanvas({
               aria-label="Mover lienzo"
               aria-pressed={hand}
               onClick={() => {
+                setNewLinkOpen(false);
                 setHand(true);
                 setTool('select');
                 focusBoard();
@@ -2715,9 +3119,83 @@ function WorktableCanvas({
                 >
                   <Type size={19} />
                 </button>
+                <button
+                  title="Agregar enlace"
+                  aria-label="Agregar enlace"
+                  aria-expanded={newLinkOpen}
+                  onClick={() => {
+                    setNewLinkOpen((open) => !open);
+                    setPenMenuOpen(false);
+                    setFrameMenuOpen(false);
+                    setStickyPanel(null);
+                    setTool('select');
+                    setHand(false);
+                  }}
+                >
+                  <Link2 size={19} />
+                </button>
+                <button
+                  type="button"
+                  title="Agregar archivo externo"
+                  aria-label="Agregar archivo externo"
+                  onClick={() => externalFileInput.current?.click()}
+                >
+                  <FileUp size={19} />
+                </button>
               </>
             )}
           </div>
+          {canEdit && (
+            <input
+              ref={externalFileInput}
+              type="file"
+              multiple
+              className="sr-only"
+              tabIndex={-1}
+              aria-label="Seleccionar archivos externos"
+              onChange={(event) => {
+                const files = Array.from(event.currentTarget.files || []);
+                event.currentTarget.value = '';
+                const bounds = viewport.current?.getBoundingClientRect();
+                const point = bounds
+                  ? worldPoint(bounds.left + bounds.width / 2, bounds.top + bounds.height / 2)
+                  : insertion.current;
+                addDrafts(files.map((file) => ({
+                  file,
+                  title: file.name.replace(/\.[^.]+$/, '') || file.name,
+                })), point);
+              }}
+            />
+          )}
+          {canEdit && newLinkOpen && (
+            <form
+              className="inspiration-new-link"
+              aria-label="Nuevo enlace"
+              onSubmit={(event) => {
+                event.preventDefault();
+                addLinkFromToolbar();
+              }}
+              onKeyDown={(event) => {
+                if (event.key === 'Escape') {
+                  event.stopPropagation();
+                  setNewLinkOpen(false);
+                  focusBoard();
+                }
+              }}
+            >
+              <label htmlFor="inspiration-new-link-url">Enlace</label>
+              <input
+                ref={newLinkInput}
+                id="inspiration-new-link-url"
+                type="url"
+                inputMode="url"
+                placeholder="https://ejemplo.com"
+                value={newLinkUrl}
+                onChange={(event) => setNewLinkUrl(event.target.value)}
+              />
+              <button type="submit">Agregar</button>
+            </form>
+          )}
           {canEdit && tool === 'sticky' && (
             <div
               className="inspiration-sticky-palette"
@@ -2803,6 +3281,7 @@ function WorktableCanvas({
           {canEdit && frameMenuOpen && (
             <fieldset
               className="inspiration-frame-menu"
+              ref={frameMenu}
               aria-label="Tamaño del frame"
             >
               <button
@@ -2874,7 +3353,87 @@ function WorktableCanvas({
                 </button>
               </div>
             )}
-          {(selection.length > 0 || selectedItem || selectedCanvasElement) &&
+          {selectedPhoto && selection.length === 1 && (
+            <div
+              className="inspiration-selection-actions inspiration-photo-toolbar"
+              role="toolbar"
+              aria-label={'Acciones de ' + selectedPhoto.title}
+              style={{
+                left: Math.max(12, Math.min(viewportSize.width - 600,
+                  positionFor(selectedPhoto.id).x * camera.zoom + camera.x)),
+                top: Math.max(12, positionFor(selectedPhoto.id).y * camera.zoom + camera.y - 64),
+                right: 'auto',
+              }}
+            >
+              <span title={selectedPhoto.title}>{selectedPhoto.title}</span>
+              {canEdit && (
+                <>
+                  <button
+                    type="button"
+                    aria-label="Texto alternativo de la foto"
+                    title="Texto alternativo"
+                    aria-expanded={photoAltOpen}
+                    onClick={() => {
+                      setPhotoAltDraft(selectedPhoto.note || '');
+                      setPhotoAltOpen((value) => !value);
+                      setPhotoMoreOpen(false);
+                    }}
+                  >ALT</button>
+                  <button
+                    type="button"
+                    aria-label="Editar foto"
+                    title="Editar foto"
+                    onClick={() => setEditingImage(selectedPhoto.id)}
+                  ><Pencil size={19} /></button>
+                </>
+              )}
+              <button
+                type="button"
+                aria-label="Comentarios de la foto"
+                title="Comentarios"
+                aria-expanded={commentTarget === selectedPhoto.id}
+                onClick={() => {
+                  setCommentTarget((current) => current === selectedPhoto.id ? null : selectedPhoto.id);
+                  setCommentText('');
+                }}
+              ><MessageCircle size={20} /></button>
+              {canEdit && (
+                <button
+                  type="button"
+                  aria-label={stickyMetadata[selectedPhoto.id]?.locked ? 'Desbloquear foto' : 'Bloquear foto'}
+                  title={stickyMetadata[selectedPhoto.id]?.locked ? 'Desbloquear foto' : 'Bloquear foto'}
+                  onClick={() => updateStickyMeta(selectedPhoto.id, (current) => ({ ...current, locked: !current.locked }))}
+                >{stickyMetadata[selectedPhoto.id]?.locked ? <LockKeyhole size={19} /> : <UnlockKeyhole size={19} />}</button>
+              )}
+              <button
+                type="button"
+                aria-label="Más opciones de la foto"
+                aria-expanded={photoMoreOpen}
+                title="Más opciones"
+                onClick={() => { setPhotoMoreOpen((value) => !value); setPhotoAltOpen(false); }}
+              ><MoreHorizontal size={21} /></button>
+              {photoAltOpen && canEdit && (
+                <form className="inspiration-photo-toolbar-popover" onSubmit={(event) => {
+                  event.preventDefault();
+                  savePhotoAlt(selectedPhoto, photoAltDraft);
+                }}>
+                  <label htmlFor="inspiration-photo-alt">Texto alternativo</label>
+                  <input id="inspiration-photo-alt" maxLength={2000} value={photoAltDraft}
+                    onChange={(event) => setPhotoAltDraft(event.target.value)}
+                    placeholder="Describí la foto" />
+                  <button type="submit">Guardar</button>
+                </form>
+              )}
+              {photoMoreOpen && (
+                <div className="inspiration-photo-toolbar-popover inspiration-photo-toolbar-more">
+                  <a href={assetUrl(selectedPhoto.asset!, project, share, invite)} target="_blank" rel="noopener noreferrer">Abrir foto <ArrowUpRight size={16} /></a>
+                  <button type="button" onClick={() => void copyFromMenu(selectedPhoto.id)}>Copiar referencia</button>
+                  {canEdit && <button type="button" onClick={deleteSelected}>Eliminar foto</button>}
+                </div>
+              )}
+            </div>
+          )}
+          {(selection.length > 0 || selectedItem || selectedCanvasElement) && !selectedPhoto &&
             canEdit && (
               <div
                 className={
@@ -2889,7 +3448,7 @@ function WorktableCanvas({
                         left: Math.max(
                           70,
                           Math.min(
-                            viewportSize.width - 630,
+                            viewportSize.width - 578,
                             positionFor(selectedItem.id).x * camera.zoom +
                               camera.x,
                           ),
@@ -2898,7 +3457,7 @@ function WorktableCanvas({
                           12,
                           positionFor(selectedItem.id).y * camera.zoom +
                             camera.y -
-                            64,
+                            50,
                         ),
                         right: 'auto',
                       }
@@ -2989,6 +3548,18 @@ function WorktableCanvas({
                       />
                     </label>
                   </>
+                )}
+                {selectedCanvasElement && selection.length === 1 && (
+                  <button
+                    aria-label="Comentar elemento"
+                    title="Comentar elemento"
+                    onClick={() => {
+                      setCommentTarget(selectedCanvasElement);
+                      setCommentText('');
+                    }}
+                  >
+                    <MessageCircle size={17} />
+                  </button>
                 )}
                 {selectedItem && selection.length === 1 && (
                   <>
@@ -3086,6 +3657,19 @@ function WorktableCanvas({
                           }
                         >
                           <SmilePlus size={18} />
+                        </button>
+                        <button
+                          aria-label="Comentar post-it"
+                          title="Comentar"
+                          aria-expanded={commentTarget === selectedItem.id}
+                          onClick={() => {
+                            setCommentTarget((current) =>
+                              current === selectedItem.id ? null : selectedItem.id,
+                            );
+                            setCommentText('');
+                          }}
+                        >
+                          <MessageCircle size={18} />
                         </button>
                         <button
                           aria-label="Adjuntar link"
@@ -3218,15 +3802,8 @@ function WorktableCanvas({
                       key={emoji}
                       type="button"
                       aria-label={`Reaccionar ${emoji}`}
-                      onClick={() =>
-                        updateStickyMeta(selectedItem.id, (current) => ({
-                          ...current,
-                          reactions: {
-                            ...current.reactions,
-                            [emoji]: (current.reactions[emoji] || 0) + 1,
-                          },
-                        }))
-                      }
+                      aria-pressed={myReactions.get(selectedItem.id) === emoji}
+                      onClick={() => addReaction(selectedItem.id, emoji)}
                     >
                       {emoji}
                     </button>
@@ -3242,16 +3819,18 @@ function WorktableCanvas({
                       notify('Usá un enlace http o https válido.');
                       return;
                     }
-                    void run({
+                    setStickyPanel(null);
+                    void runCanvas({
                       action: 'edit-inspiration',
                       id: selectedItem.id,
                       title: selectedItem.title,
                       note: selectedItem.note || '',
                       url,
                       category: selectedItem.category || 'general',
-                    })
-                      .then(() => setStickyPanel(null))
-                      .catch(() => {});
+                    }, (current) => ({
+                      ...current,
+                      inspiration: current.inspiration.map((item) => item.id === selectedItem.id ? { ...item, url } : item),
+                    }), `inspiration:${selectedItem.id}`).catch(() => {});
                   }}
                 >
                   <input
@@ -3871,6 +4450,10 @@ function WorktableCanvas({
                   : null;
                 const isPhoto =
                   asset && /^image\/(jpeg|png|webp|avif)$/.test(asset.mime);
+                const itemComments = commentsByItem.get(item.id) || [];
+                const itemReactions = { ...noteMeta?.reactions };
+                for (const [emoji, count] of Object.entries(reactionsByItem.get(item.id) || {}))
+                  itemReactions[emoji] = (itemReactions[emoji] || 0) + count;
                 return (
                   <article
                     data-card={item.id}
@@ -3883,6 +4466,8 @@ function WorktableCanvas({
                       'inspiration-card inspiration-board-card ' +
                       (isPhoto ? 'inspiration-photo-card ' : '') +
                       (isNote ? 'post-it post-it-' + (index % 3) : '') +
+                      (isNote && commentTarget === item.id ? ' commenting' : '') +
+                      (isPhoto && commentTarget === item.id ? ' commenting' : '') +
                       (selection.includes('card:' + item.id) ? ' selected' : '')
                     }
                     style={
@@ -3904,7 +4489,7 @@ function WorktableCanvas({
                     }
                   >
                     {isPhoto ? (
-                      <PhotoFrame
+                      <><PhotoFrame
                         item={item}
                         asset={asset}
                         project={project}
@@ -3912,21 +4497,11 @@ function WorktableCanvas({
                         invite={invite}
                         selected={selected === item.id}
                         canEdit={canEdit}
+                        locked={Boolean(stickyMetadata[item.id]?.locked)}
                         zoom={camera.zoom}
-                        commentCount={commentsByItem.get(item.id)?.length || 0}
                         onDrag={startGesture}
-                        onSelect={(id) => {
-                          if (!selection.includes('card:' + id))
-                            selectTarget('card:' + id);
-                          focusBoard();
-                        }}
-                        onComments={() => {
-                          setCommentTarget(item.id);
-                          setCommentText('');
-                          selectCard(item.id);
-                        }}
-                        onEditImage={() => setEditingImage(item.id)}
                       />
+                      {commentTarget === item.id && renderCommentThread(item.title, itemComments, { x: 0, y: 0 }, true)}</>
                     ) : (
                       <>
                         <button
@@ -3944,15 +4519,27 @@ function WorktableCanvas({
                         >
                           <GripHorizontal size={19} />
                         </button>
-                        <CommentBubble
-                          count={commentsByItem.get(item.id)?.length || 0}
-                          title={item.title}
-                          onClick={() => {
-                            setCommentTarget(item.id);
-                            setCommentText('');
-                            selectCard(item.id);
-                          }}
-                        />
+                        {(!isNote || itemComments.length > 0) && (
+                          <CommentBubble
+                            count={itemComments.length}
+                            title={item.title}
+                            sticky={isNote}
+                            latest={isNote ? itemComments.at(-1) : undefined}
+                            position={commentBubblePositions['card:' + item.id]}
+                            zoom={camera.zoom}
+                            onMove={canEdit ? (point) => moveCommentBubble('card:' + item.id, point) : undefined}
+                            onClick={() => {
+                              setCommentTarget((current) => current === item.id ? null : item.id);
+                              setCommentText('');
+                              if (!isNote) selectCard(item.id);
+                            }}
+                          />
+                        )}
+                        {isNote && commentTarget === item.id && renderCommentThread(
+                          item.title,
+                          itemComments,
+                          commentBubblePositions['card:' + item.id] || { x: (noteMeta?.width || 300) - 30, y: (noteMeta?.height || 240) - 62 },
+                        )}
                         {asset ? (
                           <Media
                             key={asset.id}
@@ -3994,13 +4581,38 @@ function WorktableCanvas({
                               aria-multiline="true"
                               contentEditable={canEdit && !noteMeta?.locked}
                               suppressContentEditableWarning
-                              data-placeholder="Escribí aquí…"
+                              data-placeholder=""
                               style={{
                                 fontSize: noteMeta?.fontSize,
                                 fontWeight: noteMeta?.bold ? 700 : 400,
                                 textAlign: noteMeta?.align,
                               }}
-                              onPointerDown={(event) => event.stopPropagation()}
+                              onPointerDown={(event) => {
+                                if (tool === 'erase') return;
+                                event.stopPropagation();
+                                if (tool === 'select' && canEdit && !noteMeta?.locked && event.button === 0) {
+                                  notePointer.current = {
+                                    id: item.id,
+                                    pointer: event.pointerId,
+                                    x: event.clientX,
+                                    y: event.clientY,
+                                  };
+                                }
+                              }}
+                              onPointerMove={(event) => {
+                                const pointer = notePointer.current;
+                                if (!pointer || pointer.id !== item.id || pointer.pointer !== event.pointerId) return;
+                                if (event.buttons !== 1) {
+                                  notePointer.current = null;
+                                  return;
+                                }
+                                if (Math.hypot(event.clientX - pointer.x, event.clientY - pointer.y) < 6) return;
+                                notePointer.current = null;
+                                window.getSelection()?.removeAllRanges();
+                                startGesture(event, item.id);
+                              }}
+                              onPointerUp={() => { notePointer.current = null; }}
+                              onPointerCancel={() => { notePointer.current = null; }}
                               onFocus={() => selectCard(item.id)}
                               onKeyDown={(event) => {
                                 if (
@@ -4075,31 +4687,20 @@ function WorktableCanvas({
                             </div>
                           )}
                           {noteMeta &&
-                            Object.keys(noteMeta.reactions).length > 0 && (
+                            Object.keys(itemReactions).length > 0 && (
                               <div
                                 className="inspiration-sticky-reactions"
                                 aria-label="Reacciones"
                               >
-                                {Object.entries(noteMeta.reactions).map(
+                                {Object.entries(itemReactions).map(
                                   ([emoji, count]) => (
                                     <button
                                       key={emoji}
                                       type="button"
                                       aria-label={`${emoji} ${count}`}
-                                      onClick={() =>
-                                        updateStickyMeta(
-                                          item.id,
-                                          (current) => ({
-                                            ...current,
-                                            reactions: {
-                                              ...current.reactions,
-                                              [emoji]:
-                                                (current.reactions[emoji] ||
-                                                  0) + 1,
-                                            },
-                                          }),
-                                        )
-                                      }
+                                      aria-pressed={myReactions.get(item.id) === emoji}
+                                      disabled={!canEdit}
+                                      onClick={() => addReaction(item.id, emoji)}
                                     >
                                       {emoji} <span>{count}</span>
                                     </button>
@@ -4123,21 +4724,62 @@ function WorktableCanvas({
                   </article>
                 );
               })}
+              {canvasElements.filter((element) =>
+                element.id === selectedCanvasElement || element.id === commentTarget || (commentsByElement.get(element.id)?.length || 0) > 0,
+              ).map((element) => {
+                const bounds = boundsForCanvasElement(element);
+                const comments = commentsByElement.get(element.id) || [];
+                const bubble = commentBubblePositions['element:' + element.id] || {
+                  x: Math.max(0, bounds.right - bounds.left) + 8,
+                  y: Math.max(0, bounds.bottom - bounds.top) / 2,
+                };
+                const title = element.type === 'frame' ? element.title || 'frame'
+                  : element.type === 'text' ? element.text.slice(0, 40) || 'texto'
+                  : element.type === 'stroke' ? 'trazo' : element.type === 'arrow' ? 'flecha'
+                  : element.type === 'circle' ? 'círculo' : 'rectángulo';
+                return (
+                  <div
+                    key={element.id}
+                    className={'inspiration-mark-comment' + (commentTarget === element.id ? ' commenting' : '')}
+                    style={{ left: bounds.left, top: bounds.top }}
+                  >
+                    <CommentBubble
+                      count={comments.length}
+                      title={title}
+                      latest={comments.at(-1)}
+                      sticky
+                      position={bubble}
+                      zoom={camera.zoom}
+                      onMove={canEdit ? (point) => moveCommentBubble('element:' + element.id, point) : undefined}
+                      onClick={() => {
+                        setCommentTarget((current) => current === element.id ? null : element.id);
+                        setCommentText('');
+                      }}
+                    />
+                    {commentTarget === element.id && renderCommentThread(title, comments, bubble)}
+                  </div>
+                );
+              })}
               {pending.map((entry) => (
                 <article
-                  data-card
+                  data-card={entry.id}
                   key={entry.id}
+                  ref={(node) => {
+                    if (node) cardNodes.current.set(entry.id, node);
+                    else cardNodes.current.delete(entry.id);
+                  }}
                   className={
                     'inspiration-card inspiration-board-card inspiration-pending' +
                     (entry.preview ? ' inspiration-pending-photo' : '') +
+                    (selected === entry.id ? ' selected' : '') +
                     (entry.draft.sticky
                       ? ' post-it inspiration-pending-sticky'
                       : '')
                   }
                   style={
                     {
-                      left: entry.point.x,
-                      top: entry.point.y,
+                      left: positionFor(entry.id).x,
+                      top: positionFor(entry.id).y,
                       ...(entry.draft.sticky
                         ? {
                             width: entry.draft.sticky.width,
@@ -4151,15 +4793,17 @@ function WorktableCanvas({
                         : {}),
                     } as CSSProperties
                   }
+                  onPointerDown={(event) => {
+                    if (entry.preview && !(event.target as HTMLElement).closest('button'))
+                      startGesture(event, entry.id);
+                  }}
                 >
                   {entry.preview && (
-                    <Image
-                      src={entry.preview}
-                      alt={entry.draft.title}
-                      width={300}
-                      height={180}
-                      unoptimized
-                      draggable={false}
+                    <PendingPhoto
+                      entry={entry}
+                      project={project}
+                      zoom={camera.zoom}
+                      selected={selected === entry.id}
                     />
                   )}
                   {(!entry.preview || entry.error) && (
@@ -4184,7 +4828,7 @@ function WorktableCanvas({
                                     : item,
                                 ),
                               );
-                              upload(entry);
+                              void upload(entry);
                             }}
                           >
                             Reintentar
@@ -4231,11 +4875,22 @@ function WorktableCanvas({
                       invite,
                       'inspiration',
                     );
-                    await run({
+                    await runCanvas({
                       action: 'replace-inspiration-image',
                       id: item.id,
                       asset: uploaded,
-                    });
+                    }, (current) => ({
+                      ...current,
+                      assets: [...current.assets, {
+                        id: uploaded,
+                        project,
+                        name: file.name,
+                        mime: file.type,
+                        size: file.size,
+                        created: Date.now(),
+                      }],
+                      inspiration: current.inspiration.map((entry) => entry.id === item.id ? { ...entry, asset: uploaded } : entry),
+                    }), `inspiration:${item.id}`);
                   }}
                 />
               ) : null;
@@ -4311,7 +4966,7 @@ function WorktableCanvas({
           </div>
         </div>
       </section>
-      {commentTarget && commentItem && (
+      {commentTarget && commentItem && !commentItemIsNote && !commentItemIsPhoto && (
         <dialog
           className="workspace-modal-backdrop inspiration-dialog"
           aria-label={'Comentarios de ' + commentItem.title}
@@ -4351,6 +5006,16 @@ function WorktableCanvas({
                   <article key={comment.id}>
                     <strong>{comment.author}</strong>
                     <time>{shortDate(comment.created)}</time>
+                    {canEdit && (comment.mine || data.viewer.accountOwner) && (
+                      <button
+                        type="button"
+                        className="inspiration-comment-delete"
+                        aria-label={`Eliminar comentario de ${comment.author}`}
+                        onClick={() => deleteComment(comment.id)}
+                      >
+                        <Trash2 size={15} aria-hidden="true" /> Eliminar
+                      </button>
+                    )}
                     <p>{comment.text}</p>
                   </article>
                 ))
@@ -4386,7 +5051,7 @@ function WorktableCanvas({
                   </button>
                   <button
                     className="workspace-primary"
-                    disabled={busy || !commentText.trim()}
+                    disabled={!commentText.trim()}
                   >
                     Comentar
                   </button>
@@ -4435,7 +5100,7 @@ export default function Inspiration(props: WorkspaceViewProps) {
       {
         id: 'default',
         project,
-        title: 'Mesa principal',
+        title: 'Mesa 1',
         template: 'blank',
         created: 0,
       },
@@ -4500,7 +5165,7 @@ export default function Inspiration(props: WorkspaceViewProps) {
       ...data,
       inspiration,
       inspirationComments: data.inspirationComments.filter((comment) =>
-        ids.has(comment.inspiration),
+        comment.inspiration ? ids.has(comment.inspiration) : comment.worktable === activeBoardId,
       ),
     };
   }, [data, activeBoardId]);

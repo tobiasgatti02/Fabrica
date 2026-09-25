@@ -40,6 +40,7 @@ import {
   LogOut,
   Box,
   CopyPlus,
+  ChevronDown,
   FileText,
   Files,
   Ruler,
@@ -47,19 +48,17 @@ import {
   X,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
-import { Input } from '@/components/ui/input';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription as AlertDialogDescriptionUi,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle as AlertDialogTitleUi,
-} from '@/components/ui/alert-dialog';
 import {
   Dialog,
   DialogContent,
@@ -88,10 +87,8 @@ import {
   viewFormats,
 } from './model-import';
 import { StudioAuthPanel } from './studio-auth-panel';
-import { StudioTourTrigger } from './studio-tour';
-import { StudioAreaNav } from './studio-area-nav';
+import { AccountSettings, type Account } from './account-settings';
 import {
-  StudioAccount,
   StudioHeader,
   StudioProjectSwitcher,
 } from './studio-header';
@@ -120,6 +117,7 @@ type Viewpoint = {
 
 type Comment = {
   id: string | number;
+  mine: boolean;
   anchor: string;
   parent?: string | null;
   author: string;
@@ -148,205 +146,6 @@ type Measurement = Omit<StoredMeasurement, 'startPoint' | 'endPoint'> & {
   endPoint: [number, number, number];
 };
 
-type Account = {
-  name: string;
-  email: string;
-  provider: 'chatgpt' | 'google' | 'fabrica';
-  created?: number;
-};
-
-function AccountSettings({
-  account,
-  onUpdated,
-}: {
-  account: Account;
-  onUpdated: (account: Account) => void;
-}) {
-  const [name, setName] = useState(account.name);
-  const [email, setEmail] = useState(account.email);
-  const [password, setPassword] = useState('');
-  const [confirmation, setConfirmation] = useState('');
-  const [message, setMessage] = useState('');
-  const [savingProfile, setSavingProfile] = useState(false);
-  const [savingPassword, setSavingPassword] = useState(false);
-  const [deleting, setDeleting] = useState(false);
-  const [deleteOpen, setDeleteOpen] = useState(false);
-
-  const request = async (body: Record<string, string>) => {
-    const response = await fetch('/api/account', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    const data = (await response.json()) as {
-      error?: string;
-      name?: string;
-      email?: string;
-    };
-    if (!response.ok)
-      throw new Error(data.error || 'No pudimos completar la acción.');
-    return data;
-  };
-
-  return (
-    <section className="account-settings" aria-label="Configuración de cuenta">
-      <div className="account-settings-heading">
-        <h3>Configuración</h3>
-        <p>Actualizá los datos con los que accedés a Fabrica.</p>
-        {typeof account.created === 'number' && (
-          <p>
-            Cuenta creada el{' '}
-            {new Intl.DateTimeFormat('es-AR', {
-              dateStyle: 'long',
-              timeZone: 'America/Argentina/Buenos_Aires',
-            }).format(account.created)}
-            .
-          </p>
-        )}
-      </div>
-      <form
-        className="account-settings-card"
-        onSubmit={(event) => {
-          event.preventDefault();
-          setSavingProfile(true);
-          setMessage('');
-          void request({ action: 'update-profile', name, email })
-            .then((data) => {
-              onUpdated({
-                ...account,
-                name: data.name || name,
-                email: data.email || email,
-              });
-              setMessage('Datos actualizados.');
-            })
-            .catch((error: Error) => setMessage(error.message))
-            .finally(() => setSavingProfile(false));
-        }}
-      >
-        <strong>Datos personales</strong>
-        <label>
-          Nombre
-          <Input
-            value={name}
-            onChange={(event) => setName(event.target.value)}
-            autoComplete="name"
-            required
-          />
-        </label>
-        <label>
-          Email
-          <Input
-            type="email"
-            value={email}
-            onChange={(event) => setEmail(event.target.value)}
-            autoComplete="email"
-            required
-          />
-        </label>
-        <Button type="submit" variant="outline" disabled={savingProfile}>
-          {savingProfile ? 'Guardando…' : 'Guardar cambios'}
-        </Button>
-      </form>
-      {account.provider === 'fabrica' ? (
-        <form
-          className="account-settings-card"
-          onSubmit={(event) => {
-            event.preventDefault();
-            setSavingPassword(true);
-            setMessage('');
-            void request({ action: 'update-password', password })
-              .then(() => {
-                setPassword('');
-                setMessage('Contraseña actualizada.');
-              })
-              .catch((error: Error) => setMessage(error.message))
-              .finally(() => setSavingPassword(false));
-          }}
-        >
-          <strong>Contraseña</strong>
-          <p>
-            Usá 10 o más caracteres, mayúsculas, minúsculas y un número o
-            símbolo.
-          </p>
-          <label>
-            Nueva contraseña
-            <Input
-              type="password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              autoComplete="new-password"
-              required
-            />
-          </label>
-          <Button type="submit" variant="outline" disabled={savingPassword}>
-            {savingPassword ? 'Actualizando…' : 'Cambiar contraseña'}
-          </Button>
-        </form>
-      ) : account.provider === 'google' ? (
-        <div className="account-settings-card account-provider-note">
-          <strong>Contraseña</strong>
-          <p>Tu cuenta usa Google. La contraseña se administra desde allí.</p>
-        </div>
-      ) : null}
-      <div className="account-settings-card account-danger">
-        <strong>Eliminar cuenta</strong>
-        <p>
-          Se eliminarán definitivamente tus proyectos, archivos y datos
-          asociados. Esta acción no se puede deshacer.
-        </p>
-        <Button
-          type="button"
-          variant="outline"
-          onClick={() => setDeleteOpen(true)}
-        >
-          Eliminar cuenta
-        </Button>
-      </div>
-      {message && (
-        <p className="account-settings-message" role="status">
-          {message}
-        </p>
-      )}
-      <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitleUi>¿Eliminar tu cuenta?</AlertDialogTitleUi>
-            <AlertDialogDescriptionUi>
-              Esta acción elimina todo el contenido de tu cuenta de forma
-              permanente. Escribí <strong>ELIMINAR</strong> para confirmarla.
-            </AlertDialogDescriptionUi>
-          </AlertDialogHeader>
-          <Input
-            value={confirmation}
-            onChange={(event) => setConfirmation(event.target.value)}
-            placeholder="ELIMINAR"
-            aria-label="Confirmación para eliminar cuenta"
-          />
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={deleting}>Cancelar</AlertDialogCancel>
-            <AlertDialogAction
-              type="button"
-              variant="destructive"
-              disabled={confirmation !== 'ELIMINAR' || deleting}
-              onClick={() => {
-                setDeleting(true);
-                void request({ action: 'delete-account', confirmation })
-                  .then(() => window.location.assign('/'))
-                  .catch((error: Error) => {
-                    setMessage(error.message);
-                    setDeleteOpen(false);
-                  })
-                  .finally(() => setDeleting(false));
-              }}
-            >
-              {deleting ? 'Eliminando…' : 'Eliminar definitivamente'}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </section>
-  );
-}
 
 const stages = [
   { number: '01', label: 'Idea', detail: 'Volumen y orientación' },
@@ -1360,7 +1159,6 @@ function HouseScene({
           ),
       )}
       <div className="canvas-help">
-        <MousePointer2 size={14} />
         {interactionMode === 'comment'
           ? 'Elegí el punto de referencia en una superficie'
           : interactionMode === 'measure'
@@ -1400,6 +1198,14 @@ export default function Studio({
   const [accountOpen, setAccountOpen] = useState(
     !accessMode || initialAccountOpen,
   );
+  useEffect(() => {
+    if (initialAccountOpen) setAccountOpen(true);
+  }, [initialAccountOpen]);
+  useEffect(() => {
+    const openAccount = () => setAccountOpen(true);
+    window.addEventListener('fabrica:open-account', openAccount);
+    return () => window.removeEventListener('fabrica:open-account', openAccount);
+  }, []);
   const [importOpen, setImportOpen] = useState(false);
   const [versions, setVersions] = useState<StoredVersion[]>([]);
   const [clients, setClients] = useState<StoredClient[]>([]);
@@ -1440,6 +1246,12 @@ export default function Studio({
   const [followPeerId, setFollowPeerId] = useState<string | null>(null);
   const [canEdit, setCanEdit] = useState(false);
   const [accountOwner, setAccountOwner] = useState(false);
+  useEffect(() => {
+    if (accessMode !== 'professional' || !accountOwner || !activeProject) return;
+    const openShare = () => setShareDialogOpen(true);
+    window.addEventListener('fabrica:open-share', openShare);
+    return () => window.removeEventListener('fabrica:open-share', openShare);
+  }, [accessMode, accountOwner, activeProject]);
   const [saving, setSaving] = useState(false);
   const [inspector, setInspector] = useState<
     'objects' | 'measurements' | 'plans' | null
@@ -1510,6 +1322,7 @@ export default function Studio({
             anchor: string;
             parent?: string | null;
             author: string;
+            mine: boolean;
             text: string;
             created: number;
             scope?: 'point' | 'project';
@@ -1585,6 +1398,27 @@ export default function Studio({
   const [draft, setDraft] = useState('');
   const [comments, setComments] = useState<Comment[]>([]);
   const [toast, setToast] = useState('');
+
+  useEffect(() => {
+    if (!panelOpen) return;
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      const target = event.target;
+      if (
+        target instanceof Element &&
+        target.closest('.comments-panel, .surface-pin, [data-comments-toggle]')
+      ) return;
+      setPanelOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setPanelOpen(false);
+    };
+    document.addEventListener('pointerdown', closeOnOutsidePointer, true);
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('pointerdown', closeOnOutsidePointer, true);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [panelOpen]);
 
   useEffect(() => {
     if (signedIn || localPreview || initialSharedToken)
@@ -1706,8 +1540,8 @@ export default function Studio({
       return;
     }
     setSelection(next);
-    if (interactionMode === 'navigate') return;
     setCommentScope('point');
+    if (interactionMode === 'navigate') return;
     setInteractionMode('navigate');
     setInspector(null);
     setPanelOpen(true);
@@ -1718,7 +1552,7 @@ export default function Studio({
       return;
     setSaving(true);
     try {
-      await studioRequest(
+      const result = await studioRequest(
         {
           action: 'comment',
           scope: commentScope,
@@ -1732,6 +1566,9 @@ export default function Studio({
         sharedToken,
         activeProject,
       );
+      if (commentScope === 'point' && selection && result.anchor) {
+        setSelection({ ...selection, anchor: result.anchor });
+      }
       setDraft('');
       await refresh(activeProject);
       showToast(
@@ -1756,6 +1593,23 @@ export default function Studio({
       );
       await refresh(activeProject);
       showToast('Comentario resuelto');
+    } catch (error) {
+      showToast((error as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+  const deleteComment = async (id: string | number) => {
+    if (saving) return;
+    setSaving(true);
+    try {
+      await studioRequest(
+        { action: 'delete-comment', id: String(id) },
+        sharedToken,
+        activeProject,
+      );
+      await refresh(activeProject);
+      showToast('Comentario eliminado');
     } catch (error) {
       showToast((error as Error).message);
     } finally {
@@ -1872,7 +1726,7 @@ export default function Studio({
       window.history.replaceState(
         {},
         '',
-        `/estudio?project=${encodeURIComponent(id)}`,
+        `/estudio/modelo?project=${encodeURIComponent(id)}`,
       );
       const available = (data.versions as StoredVersion[]).filter(
         (item) => item.published || accessMode === 'professional',
@@ -1909,6 +1763,43 @@ export default function Studio({
       await refresh(data.project.id, '');
       changeVersion('');
       showToast('Proyecto creado');
+    } catch (error) {
+      showToast((error as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  };
+  const deleteProject = async () => {
+    if (!activeProject || saving) return;
+    const name =
+      projects.find((item) => item.id === activeProject)?.name ||
+      'este proyecto';
+    if (
+      !window.confirm(
+        `¿Eliminar “${name}” y todos sus modelos, planos y archivos? Esta acción no se puede deshacer.`,
+      )
+    )
+      return;
+    setSaving(true);
+    try {
+      await studioRequest(
+        { action: 'delete-project', id: activeProject },
+        '',
+        activeProject,
+      );
+      const nextId =
+        projects.find((item) => item.id !== activeProject)?.id || '';
+      const next = await refresh(nextId, '');
+      const nextProject = next.project?.id || nextId;
+      window.history.replaceState(
+        {},
+        '',
+        nextProject
+          ? `/estudio/modelo?project=${encodeURIComponent(nextProject)}`
+          : '/estudio/modelo',
+      );
+      changeVersion((next.versions as StoredVersion[]).at(-1)?.id || '');
+      showToast('Proyecto y archivos eliminados');
     } catch (error) {
       showToast((error as Error).message);
     } finally {
@@ -2167,9 +2058,20 @@ export default function Studio({
         body: JSON.stringify({ action: 'logout' }),
       });
     } finally {
-      window.location.assign('/estudio');
+      window.location.assign('/estudio/panel');
     }
   };
+  useEffect(() => {
+    const handleLogout = () => {
+      if (account?.provider === 'chatgpt') {
+        window.location.assign('/signout-with-chatgpt?return_to=%2Festudio');
+      } else {
+        void logout();
+      }
+    };
+    window.addEventListener('fabrica:logout', handleLogout);
+    return () => window.removeEventListener('fabrica:logout', handleLogout);
+  }, [account]);
   const activeVersion = versions.find((item) => item.id === version);
   const professional = accessMode === 'professional' && canEdit;
   const shownVersions = versions.filter(
@@ -2272,9 +2174,13 @@ export default function Studio({
       }`}
     >
       <StudioHeader
+        label={account?.name || (accessMode === 'professional' ? 'Estudio local' : viewerName)}
+        shareEnabled={Boolean(professional && accountOwner && activeProject)}
+        loading={dataLoading}
+        projectSignature={JSON.stringify([account?.name, viewerName, activeProject, projects, clients, activeVersion?.name, professional, accountOwner])}
         project={
           <StudioProjectSwitcher
-            name={activeProjectName}
+            name={account?.name || viewerName || 'Estudio'}
             description={
               professional
                 ? `${activeClient?.name || 'Sin cliente asignado'} · ${activeVersion?.name || 'Sin entregas'}`
@@ -2328,81 +2234,22 @@ export default function Studio({
                       >
                         <FolderPlus /> Nuevo proyecto
                       </button>
+                      <button
+                        type="button"
+                        disabled={saving}
+                        onClick={() => {
+                          close();
+                          void deleteProject();
+                        }}
+                      >
+                        Eliminar proyecto actual
+                      </button>
                     </>
                   )
                 : undefined
             }
           />
         }
-        actions={
-          <>
-            {professional &&
-              accountOwner &&
-              !dataLoading &&
-              !storageError &&
-              activeProject && <StudioTourTrigger />}
-            {professional && canEdit && (
-              <>
-                <Button
-                  variant="outline"
-                  className="studio-new-version"
-                  data-tour="versions"
-                  disabled={!activeVersion}
-                  onClick={() => {
-                    setVersionName(
-                      activeVersion
-                        ? `Iteración ${String(activeVersion.sequence + 1).padStart(2, '0')}`
-                        : '',
-                    );
-                    setVersionDialogOpen(true);
-                  }}
-                >
-                  <CopyPlus /> Nueva versión
-                </Button>
-                <Button
-                  className="studio-import"
-                  data-tour="import"
-                  onClick={() => setImportOpen(true)}
-                >
-                  <Upload /> Importar modelo
-                </Button>
-              </>
-            )}
-            {!professional && !signedIn && sharedToken && (
-              <Button
-                variant="outline"
-                className="studio-share guest-account"
-                onClick={() => setAccountOpen(true)}
-              >
-                <UserPlus /> Crear cuenta
-              </Button>
-            )}
-          </>
-        }
-        account={
-          <StudioAccount
-            name={account?.name || viewerName}
-            onClick={() => setAccountOpen(true)}
-          />
-        }
-      />
-
-      <StudioAreaNav
-        area="modelo"
-        project={activeProject}
-        share={sharedToken}
-        action={
-          professional && accountOwner && activeProject ? (
-            <button
-              type="button"
-              className="studio-nav-share"
-              onClick={() => setShareDialogOpen(true)}
-            >
-              <Share2 aria-hidden="true" /> Compartir
-            </button>
-          ) : undefined
-        }
-        showTeam={accessMode === 'professional'}
       />
 
       <section className="studio-workspace">
@@ -2430,51 +2277,109 @@ export default function Studio({
             />
           </div>
 
-          <nav className="project-tool-tabs" aria-label="Datos de la versión">
-            {[
-              {
-                id: 'objects' as const,
-                label: 'Objetos',
-                icon: <Box />,
-                count: hiddenObjects.length,
-              },
-              {
-                id: 'measurements' as const,
-                label: 'Medidas',
-                icon: <Ruler />,
-                count: versionMeasurements.length,
-              },
-              {
-                id: 'plans' as const,
-                label: 'Planos',
-                icon: <Files />,
-                count: versionPlans.length,
-              },
-            ].map((item) => (
-              <button
-                type="button"
-                key={item.id}
-                className={inspector === item.id ? 'active' : ''}
-                disabled={
-                  !activeVersion || (item.id === 'objects' && !modelReady)
-                }
-                onClick={() => {
-                  setInspector((value) => (value === item.id ? null : item.id));
-                  setPanelOpen(false);
-                }}
-                aria-expanded={inspector === item.id}
-                aria-controls="version-inspector"
-              >
-                {item.icon}
-                <span>{item.label}</span>
-                {!!item.count && <b>{item.count}</b>}
-              </button>
-            ))}
-          </nav>
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              className="model-tools-trigger"
+              data-tour="model-tools"
+              aria-label="Abrir herramientas del modelo"
+            >
+              <Box size={17} aria-hidden="true" />
+              <span>Herramientas</span>
+              <ChevronDown
+                size={15}
+                className="model-tools-chevron"
+                aria-hidden="true"
+              />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              align="end"
+              sideOffset={8}
+              className="model-tools-menu"
+            >
+              <DropdownMenuGroup>
+                <DropdownMenuLabel>Modelo 3D</DropdownMenuLabel>
+                {[
+                  {
+                    id: 'objects' as const,
+                    label: 'Objetos',
+                    icon: <Box />,
+                    count: hiddenObjects.length,
+                  },
+                  {
+                    id: 'measurements' as const,
+                    label: 'Medidas',
+                    icon: <Ruler />,
+                    count: versionMeasurements.length,
+                  },
+                  {
+                    id: 'plans' as const,
+                    label: 'Planos',
+                    icon: <Files />,
+                    count: versionPlans.length,
+                  },
+                ].map((item) => (
+                  <DropdownMenuItem
+                    key={item.id}
+                    className="model-tools-item"
+                    disabled={
+                      !activeVersion || (item.id === 'objects' && !modelReady)
+                    }
+                    onClick={() => {
+                      setInspector((value) =>
+                        value === item.id ? null : item.id,
+                      );
+                      setPanelOpen(false);
+                    }}
+                  >
+                    {item.icon}
+                    <span>{item.label}</span>
+                    {!!item.count && (
+                      <b className="model-tools-count">{item.count}</b>
+                    )}
+                    {inspector === item.id && (
+                      <Check
+                        size={15}
+                        className="model-tools-check"
+                        aria-hidden="true"
+                      />
+                    )}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuGroup>
+              {professional && canEdit && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    className="model-tools-item"
+                    data-tour="versions"
+                    disabled={!activeVersion}
+                    onClick={() => {
+                      setVersionName(
+                        activeVersion
+                          ? `Iteración ${String(activeVersion.sequence + 1).padStart(2, '0')}`
+                          : '',
+                      );
+                      setVersionDialogOpen(true);
+                    }}
+                  >
+                    <CopyPlus /> Nueva versión
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    className="model-tools-item model-tools-import"
+                    data-tour="import"
+                    onClick={() => setImportOpen(true)}
+                  >
+                    <Upload /> Importar modelo
+                  </DropdownMenuItem>
+                </>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
 
           <button
             className="mobile-panel-toggle"
             data-tour="comments"
+            data-comments-toggle
             type="button"
             onClick={() => {
               setInspector(null);
@@ -3223,15 +3128,27 @@ export default function Studio({
                               : activeVersion?.name ||
                                 comment.version.toUpperCase()}
                           </span>
-                          {professional && comment.state === 'abierto' && (
-                            <button
-                              type="button"
-                              disabled={saving}
-                              onClick={() => void resolveComment(comment.id)}
-                            >
-                              <Check /> Resolver
-                            </button>
-                          )}
+                          <span className="comment-actions">
+                            {professional && comment.state === 'abierto' && (
+                              <button
+                                type="button"
+                                disabled={saving}
+                                onClick={() => void resolveComment(comment.id)}
+                              >
+                                <Check /> Resolver
+                              </button>
+                            )}
+                            {comment.mine && (
+                              <button
+                                type="button"
+                                disabled={saving}
+                                aria-label={`Eliminar comentario de ${comment.author}`}
+                                onClick={() => void deleteComment(comment.id)}
+                              >
+                                <Trash2 /> Eliminar
+                              </button>
+                            )}
+                          </span>
                         </div>
                       </div>
                     </article>
@@ -3393,8 +3310,8 @@ export default function Studio({
           <DialogTitle>Eliminar versión</DialogTitle>
           <DialogDescription>
             ¿Eliminar “{activeVersion?.name}”? Se borrarán sus comentarios,
-            medidas y planos. Las demás versiones y los comentarios generales
-            del proyecto se conservarán. Esta acción no se puede deshacer.
+            medidas, planos y archivos que ninguna otra versión use. Las demás
+            versiones se conservarán. Esta acción no se puede deshacer.
           </DialogDescription>
           <Button
             variant="outline"
@@ -3500,11 +3417,7 @@ export default function Studio({
               {account && account.provider !== 'chatgpt' && (
                 <AccountSettings account={account} onUpdated={setAccount} />
               )}
-              <p className="role-note">
-                {sharedToken
-                  ? 'El modo cliente sólo se habilita desde un enlace privado de revisión.'
-                  : 'El acceso sin enlace privado corresponde siempre al espacio profesional.'}
-              </p>
+
               <a className="role-back" href="/">
                 Volver a Fabrica
               </a>
