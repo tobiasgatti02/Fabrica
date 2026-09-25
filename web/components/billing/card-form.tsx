@@ -15,11 +15,12 @@ declare global {
   interface Window { MercadoPago?: MercadoPagoConstructor }
 }
 
-export function BillingCardForm({ plan, amountCents, publicKey, onComplete }: {
+export function BillingCardForm({ plan, amountCents, publicKey, onComplete, updatePaymentMethod = false }: {
   plan: string;
   amountCents: number;
   publicKey: string;
   onComplete: () => void;
+  updatePaymentMethod?: boolean;
 }) {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -60,7 +61,7 @@ export function BillingCardForm({ plan, amountCents, publicKey, onComplete }: {
           try {
             const { token, cardholderEmail } = cardForm.getCardFormData();
             if (!token || !cardholderEmail) throw new Error('Completá los datos de la tarjeta y el correo del comprador.');
-            const response = await fetch('/api/billing/subscribe', {
+            const response = await fetch(updatePaymentMethod ? '/api/billing/update-payment-method' : '/api/billing/subscribe', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ plan, cardTokenId: token, payerEmail: cardholderEmail }),
@@ -78,7 +79,7 @@ export function BillingCardForm({ plan, amountCents, publicKey, onComplete }: {
       },
     });
     return () => { disposed = true; cardForm.unmount?.(); };
-  }, [plan, amountCents, publicKey, onComplete]);
+  }, [plan, amountCents, publicKey, onComplete, updatePaymentMethod]);
 
   return <form id="billing-card-form" className="billing-card-form">
     <h3>Medio de pago</h3>
@@ -93,6 +94,6 @@ export function BillingCardForm({ plan, amountCents, publicKey, onComplete }: {
     <label>Número de documento<input id="billing-card-document-number" inputMode="numeric" required /></label>
     <label>Correo del comprador<input id="billing-card-email" type="email" autoComplete="email" required /></label>
     {error && <p role="alert" className="billing-alert">{error}</p>}
-    <button type="submit" disabled={busy}>{busy ? 'Procesando…' : 'Confirmar suscripción'}</button>
+    <button type="submit" disabled={busy}>{busy ? 'Procesando…' : updatePaymentMethod ? 'Actualizar tarjeta' : 'Confirmar suscripción'}</button>
   </form>;
 }

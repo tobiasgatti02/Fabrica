@@ -65,7 +65,7 @@ export function effectiveBillingState(account: {
   if (account.state === 'canceling')
     return account.paidThrough && now < account.paidThrough ? 'canceling' : 'canceled';
   if (account.state === 'active' && account.paidThrough && now >= account.paidThrough)
-    return 'expired';
+    return account.graceEnds && now < account.graceEnds ? 'grace_period' : 'expired';
   return account.state as BillingState;
 }
 
@@ -76,4 +76,14 @@ export function canWrite(state: BillingState) {
 
 export function allowedWithinLimit(used: number, addition: number, limit: number | null) {
   return limit === null || used + addition <= limit;
+}
+
+export function planMatchesPrice(provider: Record<string, unknown>, amountCents: number, currency: string) {
+  const recurring = provider.auto_recurring;
+  if (!recurring || typeof recurring !== 'object') return false;
+  const terms = recurring as Record<string, unknown>;
+  const amount = Number(terms.transaction_amount);
+  return provider.status === 'active' && terms.frequency === 1 &&
+    terms.frequency_type === 'months' && terms.currency_id === currency &&
+    Number.isFinite(amount) && Math.round(amount * 100) === amountCents;
 }

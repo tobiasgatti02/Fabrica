@@ -30,7 +30,9 @@ export function billingFailure(error: unknown) {
   if (code === 403) return billingJson({ error: 'Solo quien administra el estudio puede ver su facturación.' }, 403);
   if (error instanceof MercadoPagoRequestError && error.status === 400) {
     return billingJson({
-      error: 'Mercado Pago rechazó la suscripción. Revisá los datos del comprador y la tarjeta de prueba.',
+      error: env.MERCADOPAGO_TEST_MODE === 'true'
+        ? 'Mercado Pago rechazó la suscripción. Revisá los datos del comprador y la tarjeta de prueba.'
+        : 'Mercado Pago rechazó la operación. Revisá los datos del comprador y el medio de pago.',
       ...(env.MERCADOPAGO_TEST_MODE === 'true' && error.codes.length ? { providerCodes: error.codes } : {}),
       ...(env.MERCADOPAGO_TEST_MODE === 'true' && error.messages.length ? { providerMessages: error.messages } : {}),
     }, 422);

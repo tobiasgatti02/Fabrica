@@ -20,6 +20,7 @@
     "format": "oxfmt",
     "test:auth": "node --import tsx tests/auth-core.mts",
     "test:auth-api": "node tests/auth-api.mjs",
+    "test:billing": "node --import tsx tests/billing-core.mts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:seed": "node --import tsx db/seed.ts"

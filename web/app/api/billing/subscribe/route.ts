@@ -3,7 +3,8 @@ import { validRequestOrigin } from '@/features/auth/core';
 import { and, desc, eq } from 'drizzle-orm';
 import { billingPriceVersions, billingSubscriptions } from '@/db/schema';
 import { getBillingStatus } from '@/features/billing/server';
-import { createSubscription } from '@/features/billing/mercadopago';
+import { createSubscription, getSubscriptionPlan } from '@/features/billing/mercadopago';
+import { planMatchesPrice } from '@/features/billing/core';
 import { billingFailure, billingJson, requireBillingOwner } from '@/features/billing/http';
 
 export async function POST(request: Request) {
@@ -27,10 +28,15 @@ export async function POST(request: Request) {
       return billingJson({ error: 'Ya tenés una suscripción vigente. Cambiá de plan desde Facturación.' }, 409);
     if (latest?.state === 'pending')
       return billingJson({ error: 'Ya hay un pago en verificación. Esperá la confirmación o cancelá ese intento para volver a probar.' }, 409);
+    if (latest?.externalId && ['active', 'rejected', 'paused'].includes(latest.state))
+      return billingJson({ error: 'Ya existe una suscripción en Mercado Pago. Actualizá el medio de pago o cancelá la renovación antes de crear otra.' }, 409);
     const [price] = await db.select().from(billingPriceVersions).where(and(
       eq(billingPriceVersions.plan, body.plan), eq(billingPriceVersions.active, 1),
     )).limit(1);
     if (!price || price.plan === 'prueba') return billingJson({ error: 'El plan no está disponible.' }, 400);
+    const providerPlan = await getSubscriptionPlan(price.plan);
+    if (!planMatchesPrice(providerPlan, price.amountCents, price.currency))
+      throw new Error('billing_plan_price_mismatch');
     const externalReference = `fabrica:${status.account.id}:${crypto.randomUUID()}`;
     const subscriptionId = crypto.randomUUID();
     const subscription = await createSubscription({
